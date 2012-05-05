@@ -31,18 +31,18 @@
 #include <linux/lcd.h>
 #include <linux/backlight.h>
 #include <linux/serial_core.h>
-#include <linux/ld9040.h>
+#include <linux/platform_data/panel-ld9040.h>
 #include <linux/platform_device.h>
 #include <plat/hardware.h>
+#include <video/omapdss.h>
 #include <asm/mach-types.h>
-#include <plat/control.h>
-#include <plat/display.h>
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
 #include <mach/omap4-common.h>
 
-#define DEFAULT_GAMMA_LEVEL		10	//(aka. default brightness 120)
+/* aka. default brightness 120 */
+#define DEFAULT_GAMMA_LEVEL		10
 #define MAX_GAMMA_LEVEL		25
 #define GAMMA_TABLE_COUNT		21
 
@@ -62,12 +62,12 @@
 #define MAX_BL 255
 #define MAX_GAMMA_VALUE 24
 
-static bool panel_ld9040_enabled = false;
+static bool panel_ld9040_enabled;
 
 static unsigned int get_lcdtype;
 struct ld9040 *g_lcd; /* TBD need to decide right place - SHANKAR*/
 
-module_param_named(get_lcdtype, get_lcdtype, uint, 0444);
+module_param_named(get_lcdtype, get_lcdtype, uint, S_IRUGO);
 MODULE_PARM_DESC(get_lcdtype, " get_lcdtype  in Bootloader");
 struct ld9040 {
 	struct device			*dev;
@@ -80,13 +80,14 @@ struct ld9040 {
 	unsigned int			bl;
 	unsigned int			beforepower;
 	unsigned int			ldi_enable;
-	unsigned int 			acl_enable;
-	unsigned int 			cur_acl;
+	unsigned int			acl_enable;
+	unsigned int			cur_acl;
 	struct mutex	lock;
 	struct lcd_device		*ld;
 	struct backlight_device		*bd;
 	struct lcd_platform_data	*lcd_pd;
 	struct early_suspend    early_suspend;
+	struct class *lcd_class;
 };
 
 static int ld9040_spi_write_byte(struct ld9040 *lcd, int addr, int data)
@@ -147,15 +148,16 @@ static int ld9040_panel_send_sequence(struct ld9040 *lcd,
 
 static int get_gamma_value_from_bl(int bl)
 {
-	int gamma_value =0;
-	int gamma_val_x10 =0;
+	int gamma_value = 0;
+	int gamma_val_x10 = 0;
 
-	if(bl >= MIN_BL){
-		gamma_val_x10 = 10 *(MAX_GAMMA_VALUE-1)*bl/(MAX_BL-MIN_BL) + (10 - 10*(MAX_GAMMA_VALUE-1)*(MIN_BL)/(MAX_BL-MIN_BL));
-		gamma_value=(gamma_val_x10 +5)/10;
-	}else{
-		gamma_value =0;
-	}
+	if (bl >= MIN_BL) {
+		gamma_val_x10 = 10 * (MAX_GAMMA_VALUE - 1)
+			* bl/(MAX_BL-MIN_BL) + (10 - 10 * (MAX_GAMMA_VALUE - 1)
+			* (MIN_BL)/(MAX_BL-MIN_BL));
+		gamma_value = (gamma_val_x10 + 5)/10;
+	} else
+		gamma_value = 0;
 
 	return gamma_value;
 }
@@ -167,19 +169,15 @@ static int ld9040_gamma_ctl(struct ld9040 *lcd)
 	struct ld9040_panel_data *pdata = lcd->lcd_pd->pdata;
 
 	if (get_lcdtype == 1) { /* SM2 A2 */
-		if (lcd->gamma_mode) {
+		if (lcd->gamma_mode)
 			gamma = pdata->gamma_sm2_a2_19_table[lcd->bl];
-		}
-		else {
+		else
 			gamma = pdata->gamma_sm2_a2_22_table[lcd->bl];
-		}
 	} else { /* SM2 A1 */
-		if (lcd->gamma_mode) {
+		if (lcd->gamma_mode)
 			gamma = pdata->gamma_sm2_a1_19_table[lcd->bl];
-		}
-		else {
+		else
 			gamma = pdata->gamma_sm2_a1_22_table[lcd->bl];
-		}
 	}
 
 	ret = ld9040_panel_send_sequence(lcd, gamma);
@@ -199,39 +197,44 @@ static int ld9040_set_elvss(struct ld9040 *lcd)
 	int ret = 0;
 	struct ld9040_panel_data *pdata = lcd->lcd_pd->pdata;
 
-#if 1
 	if (get_lcdtype) {  /* for SM2 A2*/
 		switch (lcd->bl) {
 		case 0 ... 5: /* 30cd ~ 100cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[0]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[0]);
 			break;
 		case 6 ... 11: /* 110cd ~ 160cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[1]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[1]);
 			break;
 		case 12 ... 15: /* 170cd ~ 200cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[2]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[2]);
 			break;
 		case 16 ... 24: /* 210cd ~ 290cd (300cd) */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[3]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[3]);
 			break;
 		default:
 			break;
 		}
- 	} else
- #endif
- 	{/* for SM2 A1*/
+	} else {	/* for SM2 A1*/
 		switch (lcd->bl) {
 		case 0 ... 6: /* 30cd ~ 100cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[0]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[0]);
 			break;
 		case 7 ... 12: /* 110cd ~ 160cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[1]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[1]);
 			break;
 		case 13 ... 16: /* 170cd ~ 200cd */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[2]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[2]);
 			break;
 		case 17 ... 24: /* 210cd ~ 280cd (300cd) */
-			ret = ld9040_panel_send_sequence(lcd, pdata->elvss_sm2_table[3]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->elvss_sm2_table[3]);
 			break;
 		default:
 			break;
@@ -253,70 +256,88 @@ static int ld9040_set_acl(struct ld9040 *lcd)
 	struct ld9040_panel_data *pdata = lcd->lcd_pd->pdata;
 
 	if (lcd->acl_enable) {
-		if(lcd->cur_acl == 0) {
-			if(lcd->bl ==0 || lcd->bl ==1) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[0]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : off!!\n");
-			}
-			else {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_on);
+		if (lcd->cur_acl == 0) {
+			if (lcd->bl == 0 || lcd->bl == 1) {
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[0]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : off!!\n");
+			} else {
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_on);
 			}
 		}
 		switch (lcd->bl) {
 		case 0 ... 2: /* 30cd ~ 50cd */
 			if (lcd->cur_acl != 0) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[0]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : off!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[0]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : off!!\n");
 				lcd->cur_acl = 0;
 			}
 			break;
 		case 3 ... 14: /* 70cd ~ 180cd */
 			if (lcd->cur_acl != 40) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[1]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 40!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[1]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 40!!\n");
 				lcd->cur_acl = 40;
 			}
 			break;
 		case 15: /* 190cd */
 			if (lcd->cur_acl != 43) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[2]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 43!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[2]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 43!!\n");
 				lcd->cur_acl = 43;
 			}
 			break;
 		case 16: /* 200cd */
 			if (lcd->cur_acl != 45) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[3]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 45!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[3]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 45!!\n");
 				lcd->cur_acl = 45;
 			}
 			break;
 		case 17: /* 210cd */
 			if (lcd->cur_acl != 47) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[4]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 47!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[4]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 47!!\n");
 				lcd->cur_acl = 47;
 			}
 			break;
 		case 18: /* 220cd */
 			if (lcd->cur_acl != 48) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[5]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 48!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[5]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 48!!\n");
 				lcd->cur_acl = 48;
 			}
 			break;
 		default:
 			if (lcd->cur_acl != 50) {
-				ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[6]);
-				dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : 50!!\n");
+				ret = ld9040_panel_send_sequence(lcd,
+						pdata->acl_table[6]);
+				dev_dbg(lcd->dev,
+						"ACL_cutoff_set Percentage : 50!!\n");
 				lcd->cur_acl = 50;
 			}
 			break;
 		}
 	} else {
-			ret = ld9040_panel_send_sequence(lcd, pdata->acl_table[0]);
+			ret = ld9040_panel_send_sequence(lcd,
+					pdata->acl_table[0]);
 			lcd->cur_acl = 0;
-			dev_dbg(lcd->dev, "ACL_cutoff_set Percentage : off!!\n");
+			dev_dbg(lcd->dev,
+					"ACL_cutoff_set Percentage : off!!\n");
 	}
 
 	if (ret) {
@@ -438,12 +459,6 @@ static int ld9040_power_on(struct ld9040 *lcd)
 		pd->power_on(lcd->ld, 1);
 		mdelay(pd->power_on_delay);
 	}
-	if (!pd->gpio_cfg_lateresume) {
-		dev_err(lcd->dev, "gpio_cfg_lateresume is NULL.\n");
-		ret = -EFAULT;
-		goto err;
-	} else
-		pd->gpio_cfg_lateresume(lcd->ld);
 
 	if (!pd->reset) {
 		dev_err(lcd->dev, "reset is NULL.\n");
@@ -494,13 +509,6 @@ static int ld9040_power_off(struct ld9040 *lcd)
 	}
 	mdelay(pd->power_off_delay);
 
-	if (!pd->gpio_cfg_earlysuspend) {
-		dev_err(lcd->dev, "gpio_cfg_earlysuspend is NULL.\n");
-		ret = -EFAULT;
-		goto err;
-	} else
-		pd->gpio_cfg_earlysuspend(lcd->ld);
-
 	if (!pd->power_on) {
 		dev_err(lcd->dev, "power_on is NULL.\n");
 		ret = -EFAULT;
@@ -525,7 +533,8 @@ static int ld9040_power(struct ld9040 *lcd, int power)
 	else if (!POWER_IS_ON(power) && POWER_IS_ON(lcd->power))
 		ret = ld9040_power_off(lcd);
 	else
-		dev_err(lcd->dev, "[LCD] %s => [%d, %d] called\n", __func__, power, lcd->power);
+		dev_err(lcd->dev, "[LCD] %s => [%d, %d] called\n", __func__,
+				power, lcd->power);
 
 	if (!ret)
 		lcd->power = power;
@@ -572,26 +581,18 @@ static int ld9040_set_brightness(struct backlight_device *bd)
 	}
 
 	temp_bl = get_gamma_value_from_bl(bl);
-	//below print is causing kernel crash at suspend/resume auto test, disabling this it right now
-	// need to analyze it.
-	//if(lcd->bl != temp_bl)
-	//	printk(KERN_INFO "ld9040_set_brightness - %d, %d\n", bl, temp_bl);
 	lcd->bl = temp_bl;
 
 	if ((lcd->ldi_enable) && (lcd->current_brightness != lcd->bl)) {
 		ret = update_brightness(lcd);
-		dev_info(lcd->dev, "lcd_id=%d, brightness=%d, bl=%d\n", get_lcdtype, bd->props.brightness, lcd->bl);
+		dev_info(lcd->dev, "lcd_id=%d, brightness=%d, bl=%d\n",
+				get_lcdtype, bd->props.brightness, lcd->bl);
 		if (ret < 0)
 			dev_err(&bd->dev, "update brightness failed.\n");
 	}
 
 	return ret;
 }
-
-static struct lcd_ops ld9040_lcd_ops = {
-	.set_power = ld9040_set_power,
-	.get_power = ld9040_get_power,
-};
 
 static const struct backlight_ops ld9040_backlight_ops  = {
 	.get_brightness = ld9040_get_brightness,
@@ -620,10 +621,11 @@ static ssize_t ld9040_sysfs_backlihgt_level_test(struct device *dev,
 static DEVICE_ATTR(baktst, 0666,
 		NULL, ld9040_sysfs_backlihgt_level_test);
 #endif
-static ssize_t acl_set_show(struct device *dev, struct
+static ssize_t power_reduce_show(struct device *dev, struct
 device_attribute *attr, char *buf)
 {
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 	char temp[3];
 
 	sprintf(temp, "%d\n", lcd->acl_enable);
@@ -631,31 +633,33 @@ device_attribute *attr, char *buf)
 
 	return strlen(buf);
 }
-static ssize_t acl_set_store(struct device *dev, struct
+static ssize_t power_reduce_store(struct device *dev, struct
 device_attribute *attr, const char *buf, size_t size)
 {
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 	int value;
 	int rc;
 
-	rc = strict_strtoul(buf, (unsigned int) 0, (unsigned long *)&value);
+	rc = kstrtoint(buf, 0, &value);
 	if (rc < 0)
 		return rc;
 	else{
-		dev_info(dev, "acl_set_store - %d, %d\n", lcd->acl_enable, value);
+		dev_info(dev, "power_reduce_store - %d, %d\n",
+				lcd->acl_enable, value);
 		if (lcd->acl_enable != value) {
 			lcd->acl_enable = value;
 			if (lcd->ldi_enable)
 				ld9040_set_acl(lcd);
 		}
-		return 0;
+		return size;
 	}
 }
 
-static DEVICE_ATTR(acl_set, 0664,
-		acl_set_show, acl_set_store);
+static DEVICE_ATTR(power_reduce, S_IRUGO | S_IWUSR | S_IWGRP,
+		power_reduce_show, power_reduce_store);
 
-static ssize_t lcdtype_show(struct device *dev, struct
+static ssize_t lcd_type_show(struct device *dev, struct
 device_attribute *attr, char *buf)
 {
 
@@ -665,12 +669,13 @@ device_attribute *attr, char *buf)
 	return strlen(buf);
 }
 
-static DEVICE_ATTR(lcdtype, 0664,
-		lcdtype_show, NULL);
+static DEVICE_ATTR(lcd_type, S_IRUGO,
+		lcd_type_show, NULL);
 static ssize_t ld9040_sysfs_show_gamma_mode(struct device *dev,
 				      struct device_attribute *attr, char *buf)
 {
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 	char temp[10];
 
 	switch (lcd->gamma_mode) {
@@ -694,39 +699,40 @@ static ssize_t ld9040_sysfs_store_gamma_mode(struct device *dev,
 				       struct device_attribute *attr,
 				       const char *buf, size_t len)
 {
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 	int rc;
 
-	rc = strict_strtoul(buf, 0, (unsigned long *)&lcd->gamma_mode);
+	rc = kstrtouint(buf, 0, &lcd->gamma_mode);
 
 	if (rc < 0)
 		return rc;
 
-	if (lcd->gamma_mode > 1)
-	{
+	if (lcd->gamma_mode > 1) {
 		lcd->gamma_mode = 0;
 		dev_err(dev, "there are only 2 types of gamma mode(0:2.2, 1:1.9)\n");
-	}
-	else
-		dev_info(dev, "%s :: gamma_mode=%d\n", __FUNCTION__, lcd->gamma_mode);
+	} else
+		dev_info(dev, "%s :: gamma_mode=%d\n", __func__,
+				lcd->gamma_mode);
 
-	if (lcd->ldi_enable)
-	{
-		if((lcd->current_brightness == lcd->bl) && (lcd->current_gamma_mode == lcd->gamma_mode))
-			printk("there is no gamma_mode & brightness changed\n");
+	if (lcd->ldi_enable) {
+		if ((lcd->current_brightness == lcd->bl)
+				&& (lcd->current_gamma_mode == lcd->gamma_mode))
+			dev_dbg(dev, "there is no gamma_mode & brightness changed\n");
 		else
 			ld9040_gamma_ctl(lcd);
 	}
 	return len;
 }
 
-static DEVICE_ATTR(gamma_mode, 0664,
+static DEVICE_ATTR(gamma_mode, S_IRUGO | S_IWUSR | S_IWGRP,
 		ld9040_sysfs_show_gamma_mode, ld9040_sysfs_store_gamma_mode);
 
 static ssize_t ld9040_sysfs_show_gamma_table(struct device *dev,
 				      struct device_attribute *attr, char *buf)
 {
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 	char temp[3];
 
 	sprintf(temp, "%d\n", lcd->gamma_table_count);
@@ -735,7 +741,7 @@ static ssize_t ld9040_sysfs_show_gamma_table(struct device *dev,
 	return strlen(buf);
 }
 
-static DEVICE_ATTR(gamma_table, 0664,
+static DEVICE_ATTR(gamma_table, S_IRUGO,
 		ld9040_sysfs_show_gamma_table, NULL);
 
 
@@ -745,25 +751,24 @@ static ssize_t ld9040_sysfs_store_lcd_power(struct device *dev,
 {
 	int rc;
 	int lcd_enable;
-	struct ld9040 *lcd = dev_get_drvdata(dev);
+	struct spi_device *spi_dev = to_spi_device(dev_get_drvdata(dev));
+	struct ld9040 *lcd = dev_get_drvdata(&spi_dev->dev);
 
 	dev_info(dev, "ld9040_sysfs_store_lcd_power\n");
 
-	rc = strict_strtoul(buf, 0, (unsigned long *)&lcd_enable);
+	rc = kstrtoint(buf, 0, &lcd_enable);
 	if (rc < 0)
 		return rc;
 
-	if(lcd_enable) {
+	if (lcd_enable)
 		ld9040_power(lcd, FB_BLANK_UNBLANK);
-	}
-	else {
+	else
 		ld9040_power(lcd, FB_BLANK_POWERDOWN);
-	}
 
 	return len;
 }
 
-static DEVICE_ATTR(lcd_power, 0664,
+static DEVICE_ATTR(lcd_power, S_IRUGO | S_IWUSR | S_IWGRP,
 		NULL, ld9040_sysfs_store_lcd_power);
 
 #if 0
@@ -778,43 +783,45 @@ void ld9040_power_up(struct ld9040 *lcd)
 }
 #endif
 
-    /*
-	 * For Samsung LD9040 OCTA Display timing controller:
-	 * Signal                  			Min.       Typ.         Max
-	 * Frame Frequency(TV)         		815         -           850
-	 * Vertical Active Display Term(TVD)-           480         -
-	 * Horizontal Active Display Term(THD)     -           800            -
-	 * Condition : RGB 24bits, 16M color
-	 * - Frame rate = 60Hz
-	 *   - Dotclk = 25.07MHz
-	 *   - VLW = 2H
-	 *   - HLW = 2Dotclk
-	 *   - VBP = 6H
-	 *   - VFP = 10H
-	 *   - HBP = 16Dotclk
-	 *   - HFP = 16Dotclk
-	 *
-	 * Total clocks per line (TH) = hsw + hfp + columns (THD) + hbp
-	 *               		834  = 2  + 16  + 800          + 16
-	 *
-	 * Total LCD lines (TV)      = vsw + vfp + rows (TVD)  + vbp
-	 *          		   498   = 2   + 10   + 480     + 6
-	 *
-	 * From this data,
-	 *  - single line takes (2  + 16  + 800  + 16) clocks = 834 clocks/line
-	 *  - full frame takes (2   + 10   + 400     + 6) lines = 498 lines/frame
-	 *  - full frame in clocks = 834 *498 = 415332 clocks/frame
-	 *  - 24.9MHz, the LCD would refresh at 24.9M/348612 = 60Hz
-	 */
+/*
+ * For Samsung LD9040 OCTA Display timing controller:
+ * Signal					Min.	Typ.	Max
+ * Frame Frequency(TV)		815      -      850
+ * Vertical Active Display Term(TVD)
+ *							-       480     -
+ * Horizontal Active Display Term(THD)
+ *							-       800     -
+ * Condition : RGB 24bits, 16M color
+ * - Frame rate = 60Hz
+ *   - Dotclk = 25.07MHz
+ *   - VLW = 2H
+ *   - HLW = 2Dotclk
+ *   - VBP = 6H
+ *   - VFP = 10H
+ *   - HBP = 16Dotclk
+ *   - HFP = 16Dotclk
+ *
+ * Total clocks per line (TH) = hsw + hfp + columns (THD) + hbp
+ *				834  = 2  + 16  + 800          + 16
+ *
+ * Total LCD lines (TV)      = vsw + vfp + rows (TVD)  + vbp
+ *				498   = 2   + 10   + 480     + 6
+ *
+ * From this data,
+ *  - single line takes (2 + 16 + 800 + 16)clocks = 834 clocks/line
+ *  - full frame takes (2 + 10 + 400 + 6) lines = 498 lines/frame
+ *  - full frame in clocks = 834 *498 = 415332 clocks/frame
+ *  - 24.9MHz, the LCD would refresh at 24.9M/348612 = 60Hz
+ */
 
 #define LCD_XRES        480
 #define LCD_YRES        800
 #define LCD_HBP         16
 #define LCD_HFP         16
-#define LCD_HSW     	2
-#define LCD_VBP     	4	// 6
-#define LCD_VFP     	10
-#define LCD_VSW     	2
+#define LCD_HSW			2
+#define LCD_VBP			4
+#define LCD_VFP			10
+#define LCD_VSW			2
 
 #define LCD_PIXCLOCK_MAX          25600
 
@@ -823,22 +830,26 @@ void ld9040_power_up(struct ld9040 *lcd)
  */
 
 static struct omap_video_timings ld9040_panel_timings = {
-    /* 800 x 480 @ 60 Hz  Reduced blanking VESA CVT 0.31M3-R */
-    .x_res          = LCD_XRES,
-    .y_res          = LCD_YRES,
-    .pixel_clock    = LCD_PIXCLOCK_MAX,
-    .hfp            = LCD_HFP,
-    .hsw            = LCD_HSW,
-    .hbp            = LCD_HBP,
-    .vfp            = LCD_VFP,
-    .vsw            = LCD_VSW,
-    .vbp            = LCD_VBP,
+	/* 800 x 480 @ 60 Hz  Reduced blanking VESA CVT 0.31M3-R */
+	.x_res          = LCD_XRES,
+	.y_res          = LCD_YRES,
+	.pixel_clock    = LCD_PIXCLOCK_MAX,
+	.hfp            = LCD_HFP,
+	.hsw            = LCD_HSW,
+	.hbp            = LCD_HBP,
+	.vfp            = LCD_VFP,
+	.vsw            = LCD_VSW,
+	.vbp            = LCD_VBP,
 };
 
 static int ld9040_panel_probe(struct omap_dss_device *dssdev)
 {
-	dssdev->panel.config = OMAP_DSS_LCD_TFT | OMAP_DSS_LCD_IVS |OMAP_DSS_LCD_IEO |OMAP_DSS_LCD_IPC |
-				OMAP_DSS_LCD_IHS | OMAP_DSS_LCD_ONOFF ;
+	dssdev->panel.config = OMAP_DSS_LCD_TFT
+		| OMAP_DSS_LCD_IVS
+		| OMAP_DSS_LCD_IEO
+		| OMAP_DSS_LCD_IPC
+		| OMAP_DSS_LCD_IHS
+		| OMAP_DSS_LCD_ONOFF;
 
 	dssdev->panel.acb = 0;
 	dssdev->panel.timings = ld9040_panel_timings;
@@ -846,7 +857,8 @@ static int ld9040_panel_probe(struct omap_dss_device *dssdev)
 	if (NULL != g_lcd)
 		dev_set_drvdata(&dssdev->dev, g_lcd);
 	else {
-		printk(KERN_ERR " %s [%d] lcd struct is not allocated in ld9040_probe, probe failed \n", __func__, __LINE__);
+		printk(KERN_ERR " %s [%d]ld9040_probe, probe failed\n",
+				__func__, __LINE__);
 		return -1;
 	}
 	return 0;
@@ -857,7 +869,7 @@ static void ld9040_panel_remove(struct omap_dss_device *dssdev)
     /* TBD */
 }
 
-bool display_panel_enabled_aftboot()
+bool display_panel_enabled_aftboot(void)
 {
 	return panel_ld9040_enabled;
 }
@@ -866,8 +878,6 @@ static int ld9040_panel_enable(struct omap_dss_device *dssdev)
 {
 	struct ld9040 *lcd = dev_get_drvdata(&dssdev->dev);
 	int r = 0;
-
-	printk(KERN_INFO "+%s\n", __FUNCTION__);
 
 	spi_setup(lcd->spi);
 
@@ -880,15 +890,14 @@ static int ld9040_panel_enable(struct omap_dss_device *dssdev)
 	if (dssdev->platform_enable)
 		r = dssdev->platform_enable(dssdev);
 
-	if(!lcd->lcd_pd->lcd_enabled)
+	if (!lcd->lcd_pd->lcd_enabled)
 		ld9040_power(lcd, FB_BLANK_UNBLANK);
 
 	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
 
-	if(!panel_ld9040_enabled)
+	if (!panel_ld9040_enabled)
 		panel_ld9040_enabled = true;
 
-	printk(KERN_INFO "-%s\n", __FUNCTION__);
 
 	return r;
 }
@@ -900,7 +909,6 @@ static void ld9040_panel_disable(struct omap_dss_device *dssdev)
 	if (dssdev->state != OMAP_DSS_DISPLAY_ACTIVE)
 		return;
 
-	printk(KERN_INFO "+%s\n", __FUNCTION__);
 
 	spi_setup(lcd->spi);
 
@@ -914,63 +922,59 @@ static void ld9040_panel_disable(struct omap_dss_device *dssdev)
 	lcd->lcd_pd->lcd_enabled = 0;
 	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
 
-	printk(KERN_INFO "-%s\n", __FUNCTION__);
 }
 
 static int ld9040_panel_suspend(struct omap_dss_device *dssdev)
 {
-	struct ld9040 *lcd = dev_get_drvdata(&dssdev->dev);
 
-	printk(KERN_INFO " +++ ld9040_panel_suspend\n");
 
 	ld9040_panel_disable(dssdev);
 
 	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
 
-	dpll_cascading_blocker_release(lcd->dev);
-	
-	printk(KERN_INFO " --- ld9040_panel_suspend\n");
+	/* Shankar temp fix */
+	/* dpll_cascading_blocker_release(lcd->dev); */
+
 	return 0;
 }
 
 static int ld9040_panel_resume(struct omap_dss_device *dssdev)
 {
-	struct ld9040 *lcd = dev_get_drvdata(&dssdev->dev);	
-		
-	printk(KERN_INFO " +++ ld9040_panel_resume\n");
 
-	dpll_cascading_blocker_hold(lcd->dev);
+	/* Shankar temp fix */
+	/* dpll_cascading_blocker_hold(lcd->dev); */
 
 	ld9040_panel_enable(dssdev);
 
 	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
-	printk(KERN_INFO " --- ld9040_panel_resume\n");
 	return 0;
 }
 
 static void  ld9040_panel_get_resolution(struct omap_dss_device *dssdev,
-                u16 *xres, u16 *yres)
+		u16 *xres, u16 *yres)
 {
-        *xres = dssdev->panel.timings.x_res;
-        *yres = dssdev->panel.timings.y_res;
+
+	*xres = dssdev->panel.timings.x_res;
+	*yres = dssdev->panel.timings.y_res;
 }
 
 static void  ld9040_panel_set_timings(struct omap_dss_device *dssdev,
-                struct omap_video_timings *timings)
+		struct omap_video_timings *timings)
 {
-        dpi_set_timings(dssdev, timings);
+
+	dpi_set_timings(dssdev, timings);
 }
 
 static void  ld9040_panel_get_timings(struct omap_dss_device *dssdev,
-                struct omap_video_timings *timings)
+		struct omap_video_timings *timings)
 {
-        *timings = dssdev->panel.timings;
+	*timings = dssdev->panel.timings;
 }
 
 static int  ld9040_panel_check_timings(struct omap_dss_device *dssdev,
-                struct omap_video_timings *timings)
+		struct omap_video_timings *timings)
 {
-        return dpi_check_timings(dssdev, timings);
+	return dpi_check_timings(dssdev, timings);
 }
 
 
@@ -1027,22 +1031,12 @@ static int ld9040_probe(struct spi_device *spi)
 	}
 
 	lcd->spi = spi;
-	lcd->dev = &spi->dev;
 
 	lcd->lcd_pd = (struct lcd_platform_data *)spi->dev.platform_data;
 	if (!lcd->lcd_pd) {
 		dev_err(&spi->dev, "platform data is NULL.\n");
 		goto out_free_lcd;
 	}
-
-#if 0 /* Omap bsp use dss device register */
-	lcd->ld = lcd_device_register("ld9040", &spi->dev,
-		lcd, &ld9040_lcd_ops);
-	if (IS_ERR(lcd->ld)) {
-		ret = PTR_ERR(lcd->ld);
-		goto out_free_lcd;
-	}
-#endif
 
 	lcd->bd = backlight_device_register("pwm-backlight", &spi->dev,
 		lcd, &ld9040_backlight_ops, NULL);
@@ -1068,29 +1062,40 @@ static int ld9040_probe(struct spi_device *spi)
 	lcd->gamma_table_count =
 	   pdata->gamma_table_size / (MAX_GAMMA_LEVEL * sizeof(int));
 
-	ret = device_create_file(&(spi->dev), &dev_attr_gamma_mode);
-	if (ret < 0)
-		dev_err(&(spi->dev), "failed to add sysfs entries\n");
+	lcd->lcd_class = class_create(THIS_MODULE, "lcd");
+	if (IS_ERR(lcd->lcd_class))
+		dev_err(lcd->dev, "Failed to create lcd_class!");
 
-	ret = device_create_file(&(spi->dev), &dev_attr_gamma_table);
+	lcd->dev = device_create(lcd->lcd_class, NULL, 0, NULL, "panel");
+	if (IS_ERR(lcd->dev))
+		dev_err(lcd->dev, "Failed to create device(panel)!\n");
+
+	dev_set_drvdata(lcd->dev, &spi->dev);
+
+	ret = device_create_file(lcd->dev, &dev_attr_gamma_mode);
 	if (ret < 0)
-		dev_err(&(spi->dev), "failed to add sysfs entries\n");
+		dev_err(lcd->dev,  "failed to add sysfs entries\n");
+
+	ret = device_create_file(lcd->dev, &dev_attr_gamma_table);
+	if (ret < 0)
+		dev_err(lcd->dev,  "failed to add sysfs entries\n");
 #if 0
 	ret = device_create_file(&(spi->dev), &dev_attr_baktst);
 	if (ret < 0)
 		dev_err(&(spi->dev), "failed to add sysfs entries\n");
 #endif
-	ret = device_create_file(&(spi->dev), &dev_attr_acl_set);
+	ret = device_create_file(lcd->dev, &dev_attr_power_reduce);
 	if (ret < 0)
-		dev_err(&(spi->dev), "failed to add sysfs entries\n");
+		dev_err(lcd->dev,  "failed to add sysfs entries\n");
 
-	ret = device_create_file(&(spi->dev), &dev_attr_lcdtype);
+	ret = device_create_file(lcd->dev, &dev_attr_lcd_type);
 	if (ret < 0)
-		dev_err(&(spi->dev), "failed to add sysfs entries\n");
+		dev_err(lcd->dev,  "failed to add sysfs entries\n");
 
-	ret = device_create_file(&(spi->dev), &dev_attr_lcd_power);
+	ret = device_create_file(lcd->dev, &dev_attr_lcd_power);
 	if (ret < 0)
-		dev_err(&(spi->dev), "failed to add sysfs entries\n");
+		dev_err(lcd->dev,  "failed to add sysfs entries\n");
+
 
 /* Do not turn off lcd during booting */
 #ifndef CONFIG_FB_OMAP_BOOTLOADER_INIT
@@ -1112,10 +1117,13 @@ static int ld9040_probe(struct spi_device *spi)
 
 		ld9040_power(lcd, FB_BLANK_UNBLANK);
 	} else {
+		lcd->lcd_pd->power_on(lcd->ld, 1);
+		mdelay(lcd->lcd_pd->power_on_delay);
 		lcd->power = FB_BLANK_UNBLANK;
 		lcd->lcd_pd->lcd_enabled = 1;
 		lcd->ldi_enable = 1;
 	}
+
 
 	dev_set_drvdata(&spi->dev, lcd);
 
@@ -1124,10 +1132,10 @@ static int ld9040_probe(struct spi_device *spi)
 	/* Register this driver with OMAP4 DSS subsystem */
 	omap_dss_register_driver(&ld9040_omap_dss_driver);
 
-	if(get_lcdtype == 1) { /* SM2 A2 */
-		printk("[LD9040 PROBE LOG] LCDTYPE : SM2 A2 \n");
+	if (get_lcdtype == 1) { /* SM2 A2 */
+		printk(KERN_INFO "[LD9040 PROBE LOG] LCDTYPE : SM2 A2\n");
 	} else { /* SM2 A1 */
-		printk("[LD9040 PROBE LOG] LCDTYPE : SM2\n");
+		printk(KERN_INFO "[LD9040 PROBE LOG] LCDTYPE : SM2\n");
 	}
 
 	dev_info(&spi->dev, "ld9040 panel driver has been probed.\n");
@@ -1145,7 +1153,6 @@ static int __devexit ld9040_remove(struct spi_device *spi)
 	struct ld9040 *lcd = dev_get_drvdata(&spi->dev);
 
 	ld9040_power(lcd, FB_BLANK_POWERDOWN);
-	lcd_device_unregister(lcd->ld);
 	kfree(lcd);
 
 	return 0;
@@ -1186,4 +1193,3 @@ module_exit(ld9040_exit);
 MODULE_AUTHOR("Donghwa Lee <dh09.lee@samsung.com>");
 MODULE_DESCRIPTION("ld9040 LCD Driver");
 MODULE_LICENSE("GPL");
-

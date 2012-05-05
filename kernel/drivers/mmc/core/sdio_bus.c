@@ -23,7 +23,7 @@
 #include "sdio_cis.h"
 #include "sdio_bus.h"
 
-#ifdef CONFIG_TIWLAN_SDIO
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
 #include <linux/mmc/host.h>
 #endif
 
@@ -193,7 +193,7 @@ static int sdio_bus_remove(struct device *dev)
 
 	/* Then undo the runtime PM settings in sdio_bus_probe() */
 	if (func->card->host->caps & MMC_CAP_POWER_OFF_CARD)
-		pm_runtime_put_noidle(dev);
+		pm_runtime_put_sync(dev);
 
 out:
 	return ret;
@@ -264,14 +264,14 @@ static void sdio_release_func(struct device *dev)
 {
 	struct sdio_func *func = dev_to_sdio_func(dev);
 
-#ifdef CONFIG_TIWLAN_SDIO
-    /*
-     * If this device is embedded then we never allocated
-     * cis tables for this func
-     */
-    if (!func->card->host->embedded_sdio_data.funcs)
+#ifdef CONFIG_MMC_EMBEDDED_SDIO
+	/*
+	 * If this device is embedded then we never allocated
+	 * cis tables for this func
+	 */
+	if (!func->card->host->embedded_sdio_data.funcs)
 #endif
-	sdio_free_func_cis(func);
+		sdio_free_func_cis(func);
 
 	if (func->info)
 		kfree(func->info);

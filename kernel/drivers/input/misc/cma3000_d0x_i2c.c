@@ -1,6 +1,4 @@
 /*
- * cma3000_d0x_i2c.c
- *
  * Implements I2C interface for VTI CMA300_D0x Accelerometer driver
  *
  * Copyright (C) 2010 Texas Instruments
@@ -20,117 +18,126 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/i2c.h>
-#include <linux/i2c/cma3000.h>
+#include <linux/input/cma3000.h>
 #include "cma3000_d0x.h"
 
-int cma3000_set(struct cma3000_accl_data *accl, u8 reg, u8 val, char *msg)
+static int cma3000_i2c_set(struct device *dev,
+			   u8 reg, u8 val, char *msg)
 {
-	int ret = i2c_smbus_write_byte_data(accl->client, reg, val);
+	struct i2c_client *client = to_i2c_client(dev);
+	int ret;
+
+	ret = i2c_smbus_write_byte_data(client, reg, val);
 	if (ret < 0)
-		dev_err(&accl->client->dev,
-			"i2c_smbus_write_byte_data failed (%s)\n", msg);
+		dev_err(&client->dev,
+			"%s failed (%s, %d)\n", __func__, msg, ret);
 	return ret;
 }
 
-int cma3000_read(struct cma3000_accl_data *accl, u8 reg, char *msg)
+static int cma3000_i2c_read(struct device *dev, u8 reg, char *msg)
 {
-	int ret = i2c_smbus_read_byte_data(accl->client, reg);
+	struct i2c_client *client = to_i2c_client(dev);
+	int ret;
+
+	ret = i2c_smbus_read_byte_data(client, reg);
 	if (ret < 0)
-		dev_err(&accl->client->dev,
-			"i2c_smbus_read_byte_data failed (%s)\n", msg);
+		dev_err(&client->dev,
+			"%s failed (%s, %d)\n", __func__, msg, ret);
 	return ret;
 }
 
-static int __devinit cma3000_accl_probe(struct i2c_client *client,
+static const struct cma3000_bus_ops cma3000_i2c_bops = {
+	.bustype	= BUS_I2C,
+#define CMA3000_BUSI2C     (0 << 4)
+	.ctrl_mod	= CMA3000_BUSI2C,
+	.read		= cma3000_i2c_read,
+	.write		= cma3000_i2c_set,
+};
+
+static int __devinit cma3000_i2c_probe(struct i2c_client *client,
 					const struct i2c_device_id *id)
 {
-	int ret;
-	struct cma3000_accl_data *data = NULL;
+	struct cma3000_accl_data *data;
 
-	data = kzalloc(sizeof(*data), GFP_KERNEL);
-	if (data == NULL) {
-		ret = -ENOMEM;
-		goto err_op_failed;
-	}
+	data = cma3000_init(&client->dev, client->irq, &cma3000_i2c_bops);
+	if (IS_ERR(data))
+		return PTR_ERR(data);
 
-	data->client = client;
 	i2c_set_clientdata(client, data);
 
-	ret = cma3000_init(data);
-	if (ret)
-		goto err_op_failed;
-
 	return 0;
-
-err_op_failed:
-
-	if (data != NULL)
-		kfree(data);
-
-	return ret;
 }
 
-static int __devexit cma3000_accl_remove(struct i2c_client *client)
+static int __devexit cma3000_i2c_remove(struct i2c_client *client)
 {
 	struct cma3000_accl_data *data = i2c_get_clientdata(client);
-	int ret;
 
-	ret = cma3000_exit(data);
-	i2c_set_clientdata(client, NULL);
-	kfree(data);
+	cma3000_exit(data);
 
-	return ret;
+	return 0;
 }
 
 #ifdef CONFIG_PM
-static int cma3000_accl_suspend(struct i2c_client *client, pm_message_t mesg)
+static int cma3000_i2c_suspend(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct cma3000_accl_data *data = i2c_get_clientdata(client);
 
-	return cma3000_poweroff(data);
+	cma3000_suspend(data);
+
+	return 0;
 }
 
-static int cma3000_accl_resume(struct i2c_client *client)
+static int cma3000_i2c_resume(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct cma3000_accl_data *data = i2c_get_clientdata(client);
 
-	return cma3000_poweron(data);
+	cma3000_resume(data);
+
+	return 0;
 }
+
+static const struct dev_pm_ops cma3000_i2c_pm_ops = {
+	.suspend	= cma3000_i2c_suspend,
+	.resume		= cma3000_i2c_resume,
+};
 #endif
 
-static const struct i2c_device_id cma3000_id[] = {
-	{ "cma3000_accl", 0 },
+static const struct i2c_device_id cma3000_i2c_id[] = {
+	{ "cma3000_d01", 0 },
 	{ },
 };
 
-static struct i2c_driver cma3000_accl_driver = {
-	.probe		= cma3000_accl_probe,
-	.remove		= cma3000_accl_remove,
-	.id_table	= cma3000_id,
-#ifdef CONFIG_PM
-	.suspend	= cma3000_accl_suspend,
-	.resume		= cma3000_accl_resume,
-#endif
+MODULE_DEVICE_TABLE(i2c, cma3000_i2c_id);
+
+static struct i2c_driver cma3000_i2c_driver = {
+	.probe		= cma3000_i2c_probe,
+	.remove		= __devexit_p(cma3000_i2c_remove),
+	.id_table	= cma3000_i2c_id,
 	.driver = {
-		.name = "cma3000_accl"
+		.name	= "cma3000_i2c_accl",
+		.owner	= THIS_MODULE,
+#ifdef CONFIG_PM
+		.pm	= &cma3000_i2c_pm_ops,
+#endif
 	},
 };
 
-static int __init cma3000_accl_init(void)
+static int __init cma3000_i2c_init(void)
 {
-	return i2c_add_driver(&cma3000_accl_driver);
+	return i2c_add_driver(&cma3000_i2c_driver);
 }
 
-static void __exit cma3000_accl_exit(void)
+static void __exit cma3000_i2c_exit(void)
 {
-	i2c_del_driver(&cma3000_accl_driver);
+	i2c_del_driver(&cma3000_i2c_driver);
 }
 
-module_init(cma3000_accl_init);
-module_exit(cma3000_accl_exit);
+module_init(cma3000_i2c_init);
+module_exit(cma3000_i2c_exit);
 
-MODULE_DESCRIPTION("CMA3000-D0x Accelerometer Driver");
+MODULE_DESCRIPTION("CMA3000-D0x Accelerometer I2C Driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hemanth V <hemanthv@ti.com>");

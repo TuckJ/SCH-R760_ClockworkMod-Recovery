@@ -37,6 +37,10 @@
 #include <linux/kthread.h>
 #include <linux/i2c/twl.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
+#include <linux/reboot.h>
+
+#include "twl-core.h"
 
 /*
  * TWL6030 (unlike its predecessors, which had two level interrupt handling)
@@ -53,7 +57,7 @@
 static int twl6030_interrupt_mapping[24] = {
 	PWR_INTR_OFFSET,	/* Bit 0	PWRON			*/
 	PWR_INTR_OFFSET,	/* Bit 1	RPWRON			*/
-	PWR_INTR_OFFSET,	/* Bit 2	BAT_VLOW		*/
+	TWL_VLOW_INTR_OFFSET,	/* Bit 2	BAT_VLOW		*/
 	RTC_INTR_OFFSET,	/* Bit 3	RTC_ALARM		*/
 	RTC_INTR_OFFSET,	/* Bit 4	RTC_PERIOD		*/
 	HOTDIE_INTR_OFFSET,	/* Bit 5	HOT_DIE			*/
@@ -66,7 +70,7 @@ static int twl6030_interrupt_mapping[24] = {
 	MMCDETECT_INTR_OFFSET,	/* Bit 11	MMC			*/
 	RSV_INTR_OFFSET,  	/* Bit 12	Reserved		*/
 	MADC_INTR_OFFSET,	/* Bit 13	GPADC_RT_EOC		*/
-	GPADCSW_INTR_OFFSET,	/* Bit 14	GPADC_SW_EOC		*/
+	MADC_INTR_OFFSET,	/* Bit 14	GPADC_SW_EOC		*/
 	GASGAUGE_INTR_OFFSET,	/* Bit 15	CC_AUTOCAL		*/
 
 	USBOTG_INTR_OFFSET,	/* Bit 16	ID_WKUP			*/
@@ -74,15 +78,58 @@ static int twl6030_interrupt_mapping[24] = {
 	USBOTG_INTR_OFFSET,	/* Bit 18	ID			*/
 	USB_PRES_INTR_OFFSET,	/* Bit 19	VBUS			*/
 	CHARGER_INTR_OFFSET,	/* Bit 20	CHRG_CTRL		*/
-	CHARGER_INTR_OFFSET,	/* Bit 21	EXT_CHRG		*/
-	CHARGERFAULT_INTR_OFFSET,/* Bit 22	INT_CHRG		*/
+	CHARGERFAULT_INTR_OFFSET,	/* Bit 21	EXT_CHRG	*/
+	CHARGERFAULT_INTR_OFFSET,	/* Bit 22	INT_CHRG	*/
 	RSV_INTR_OFFSET,	/* Bit 23	Reserved		*/
 };
 /*----------------------------------------------------------------------*/
 
-static unsigned twl6030_irq_base;
+static unsigned twl6030_irq_base, twl6030_irq_end;
+static int twl_irq;
+static bool twl_irq_wake_enabled;
 
+static struct task_struct *task;
 static struct completion irq_event;
+static atomic_t twl6030_wakeirqs = ATOMIC_INIT(0);
+
+static u8 vbatmin_hi_threshold;
+
+static int twl6030_irq_pm_notifier(struct notifier_block *notifier,
+				   unsigned long pm_event, void *unused)
+{
+	int chained_wakeups;
+
+	switch (pm_event) {
+	case PM_SUSPEND_PREPARE:
+		chained_wakeups = atomic_read(&twl6030_wakeirqs);
+
+		if (chained_wakeups && !twl_irq_wake_enabled) {
+			if (enable_irq_wake(twl_irq))
+				pr_err("twl6030 IRQ wake enable failed\n");
+			else
+				twl_irq_wake_enabled = true;
+		} else if (!chained_wakeups && twl_irq_wake_enabled) {
+			disable_irq_wake(twl_irq);
+			twl_irq_wake_enabled = false;
+		}
+
+		disable_irq(twl_irq);
+		break;
+
+	case PM_POST_SUSPEND:
+		enable_irq(twl_irq);
+		break;
+
+	default:
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block twl6030_irq_pm_notifier_block = {
+	.notifier_call = twl6030_irq_pm_notifier,
+};
 
 /*
  * This thread processes interrupts reported by the Primary Interrupt Handler.
@@ -98,11 +145,11 @@ static int twl6030_irq_thread(void *data)
 
 	while (!kthread_should_stop()) {
 		int i;
-		int start_time = 0;
 		union {
 		u8 bytes[4];
 		u32 int_sts;
 		} sts;
+		u32 int_sts; /* sts.int_sts converted to CPU endianness */
 
 		/* Wait for IRQ, then read PIH irq status (also blocking) */
 		wait_for_completion_interruptible(&irq_event);
@@ -134,46 +181,28 @@ static int twl6030_irq_thread(void *data)
 		if (sts.bytes[2] & 0x10)
 			sts.bytes[2] |= 0x08;
 
-		for (i = 0; sts.int_sts; sts.int_sts >>= 1, i++) {
+		int_sts = le32_to_cpu(sts.int_sts);
+		for (i = 0; int_sts; int_sts >>= 1, i++) {
 			local_irq_disable();
-			if (sts.int_sts & 0x1) {
+			if (int_sts & 0x1) {
 				int module_irq = twl6030_irq_base +
 					twl6030_interrupt_mapping[i];
-				struct irq_desc *d = irq_to_desc(module_irq);
-
-				if (!d) {
-					pr_err("twl6030: Invalid SIH IRQ: %d\n",
-					       module_irq);
-					return -EINVAL;
-				}
-
-				/* this may be a wakeup event
-				 * d->status flag's are masked while we are
-				 * waking up, give some time for the
-				 * IRQ to be enabled.
-				 */
-				start_time = jiffies;
-				while ((d->status & IRQ_DISABLED) &&
-				       (jiffies_to_msecs(jiffies-start_time) < 100)) {
-					yield();
-				}
-
-				/* These can't be masked ... always warn
-				 * if we get any surprises.
-				 */
-				if (d->status & IRQ_DISABLED) {
-					pr_warning("twl handler not called, irq is disabled!\n");
-					note_interrupt(module_irq, d,
-							IRQ_NONE);
-				}
-				else
-					d->handle_irq(module_irq, d);
+				generic_handle_irq(module_irq);
 
 			}
 		local_irq_enable();
 		}
-		ret = twl_i2c_write(TWL_MODULE_PIH, sts.bytes,
-				REG_INT_STS_A, 3); /* clear INT_STS_A */
+
+		/* NOTE:
+		* Simulation confirms that documentation is wrong w.r.t the
+		* interrupt status clear operation. A single *byte* write to
+		* any one of STS_A to STS_C register results in all three
+		* STS registers being reset. Since it does not matter which
+		* value is written, all three registers are cleared on a
+		* single byte write, so we just use 0x0 to clear.
+		*/
+		ret = twl_i2c_write_u8(TWL_MODULE_PIH, 0x00,
+				REG_INT_STS_A);
 		if (ret)
 			pr_warning("twl6030: I2C error in clearing PIH ISR\n");
 
@@ -199,6 +228,24 @@ static irqreturn_t handle_twl6030_pih(int irq, void *devid)
 	return IRQ_HANDLED;
 }
 
+/*
+ * handle_twl6030_vlow() is a threaded BAT_VLOW interrupt handler. BAT_VLOW
+ * is a secondary interrupt generated in twl6030_irq_thread().
+ */
+static irqreturn_t handle_twl6030_vlow(int irq, void *unused)
+{
+	pr_err("twl6030: BAT_VLOW interrupt; threshold=%dmV\n",
+	       2300 + (vbatmin_hi_threshold - 0b110) * 50);
+
+#if 1 /* temporary */
+	WARN_ON_ONCE(1);
+#else
+	pr_emerg("handle_twl6030_vlow: kernel_power_off()\n");
+	kernel_power_off();
+#endif
+	return IRQ_HANDLED;
+}
+
 /*----------------------------------------------------------------------*/
 
 static inline void activate_irq(int irq)
@@ -210,8 +257,18 @@ static inline void activate_irq(int irq)
 	set_irq_flags(irq, IRQF_VALID);
 #else
 	/* same effect on other architectures */
-	set_irq_noprobe(irq);
+	irq_set_noprobe(irq);
 #endif
+}
+
+int twl6030_irq_set_wake(struct irq_data *d, unsigned int on)
+{
+	if (on)
+		atomic_inc(&twl6030_wakeirqs);
+	else
+		atomic_dec(&twl6030_wakeirqs);
+
+	return 0;
 }
 
 /*----------------------------------------------------------------------*/
@@ -221,8 +278,8 @@ static unsigned twl6030_irq_next;
 /*----------------------------------------------------------------------*/
 int twl6030_interrupt_unmask(u8 bit_mask, u8 offset)
 {
-	int ret = 0;
-	u8 unmask_value = 0;
+	int ret;
+	u8 unmask_value;
 	ret = twl_i2c_read_u8(TWL_MODULE_PIH, &unmask_value,
 			REG_INT_STS_A + offset);
 	unmask_value &= (~(bit_mask));
@@ -234,8 +291,8 @@ EXPORT_SYMBOL(twl6030_interrupt_unmask);
 
 int twl6030_interrupt_mask(u8 bit_mask, u8 offset)
 {
-	int ret = 0;
-	u8 mask_value = 0;
+	int ret;
+	u8 mask_value;
 	ret = twl_i2c_read_u8(TWL_MODULE_PIH, &mask_value,
 			REG_INT_STS_A + offset);
 	mask_value |= (bit_mask);
@@ -251,15 +308,12 @@ int twl6030_mmc_card_detect_config(void)
 	u8 reg_val = 0;
 
 	/* Unmasking the Card detect Interrupt line for MMC1 from Phoenix */
-	if (twl_class_is_6030()) {
-		twl6030_interrupt_unmask(TWL6030_MMCDETECT_INT_MASK,
-							REG_INT_MSK_LINE_B);
-		twl6030_interrupt_unmask(TWL6030_MMCDETECT_INT_MASK,
-							REG_INT_MSK_STS_B);
-	}
-
+	twl6030_interrupt_unmask(TWL6030_MMCDETECT_INT_MASK,
+						REG_INT_MSK_LINE_B);
+	twl6030_interrupt_unmask(TWL6030_MMCDETECT_INT_MASK,
+						REG_INT_MSK_STS_B);
 	/*
-	 * Intially Configuring MMC_CTRL for receving interrupts &
+	 * Initially Configuring MMC_CTRL for receiving interrupts &
 	 * Card status on TWL6030 for MMC1
 	 */
 	ret = twl_i2c_read_u8(TWL6030_MODULE_ID0, &reg_val, TWL6030_MMCCTRL);
@@ -271,17 +325,17 @@ int twl6030_mmc_card_detect_config(void)
 	reg_val |= SW_FC;
 	ret = twl_i2c_write_u8(TWL6030_MODULE_ID0, reg_val, TWL6030_MMCCTRL);
 	if (ret < 0) {
-		return ret;
 		pr_err("twl6030: Failed to write MMCCTRL, error %d\n", ret);
+		return ret;
 	}
 
 	/* Configuring PullUp-PullDown register */
 	ret = twl_i2c_read_u8(TWL6030_MODULE_ID0, &reg_val,
 						TWL6030_CFG_INPUT_PUPD3);
 	if (ret < 0) {
-		return ret;
 		pr_err("twl6030: Failed to read CFG_INPUT_PUPD3, error %d\n",
 									ret);
+		return ret;
 	}
 	reg_val &= ~(MMC_PU | MMC_PD);
 	ret = twl_i2c_write_u8(TWL6030_MODULE_ID0, reg_val,
@@ -291,6 +345,15 @@ int twl6030_mmc_card_detect_config(void)
 									ret);
 		return ret;
 	}
+
+	ret = twl_i2c_write_u8(TWL6030_MODULE_ID0, MMC_MEXT_DEB_MASK,
+						TWL6030_MMCDEBOUNCING);
+	if (ret < 0) {
+		pr_err("twl16030: Failed to write MMC_MEXT_DEB_MASK %d\n",
+								ret);
+		return ret;
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL(twl6030_mmc_card_detect_config);
@@ -299,33 +362,99 @@ int twl6030_mmc_card_detect(struct device *dev, int slot)
 {
 	int ret = -EIO;
 	u8 read_reg = 0;
-	struct platform_device *pdev = container_of(dev,
-					struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 
-	switch (pdev->id) {
-	case 0:
-		/*
-		 * BIT0 of REG_MMC_CTRL
-		 * 0 - Card not present ,1 - Card present
+	if (pdev->id) {
+		/* TWL6030 provide's Card detect support for
+		 * only MMC1 controller.
 		 */
-		ret = twl_i2c_read_u8(TWL6030_MODULE_ID0, &read_reg,
-							TWL6030_MMCCTRL);
-		if (ret >= 0)
-			ret = read_reg & STS_MMC;
-		break;
-	default:
-		pr_err("Unkown MMC controller %d in %s\n", pdev->id, __func__);
+		pr_err("Unknown MMC controller %d in %s\n", pdev->id, __func__);
+		return ret;
 	}
+	/*
+	 * BIT0 of MMC_CTRL on TWL6030 provides card status for MMC1
+	 * 0 - Card not present ,1 - Card present
+	 */
+	ret = twl_i2c_read_u8(TWL6030_MODULE_ID0, &read_reg,
+						TWL6030_MMCCTRL);
+	if (ret >= 0)
+		ret = read_reg & STS_MMC;
 	return ret;
 }
 EXPORT_SYMBOL(twl6030_mmc_card_detect);
+
+int twl6030_vlow_init(int vlow_irq)
+{
+	int status;
+	u8 val;
+
+	status = twl_i2c_read_u8(TWL_MODULE_PM_SLAVE_RES, &val,
+			REG_VBATMIN_HI_CFG_STATE);
+	if (status < 0) {
+		pr_err("twl6030: I2C err reading REG_VBATMIN_HI_CFG_STATE: %d\n",
+				status);
+		return status;
+	}
+
+	status = twl_i2c_write_u8(TWL_MODULE_PM_SLAVE_RES,
+			val | VBATMIN_VLOW_EN, REG_VBATMIN_HI_CFG_STATE);
+	if (status < 0) {
+		pr_err("twl6030: I2C err writing REG_VBATMIN_HI_CFG_STATE: %d\n",
+				status);
+		return status;
+	}
+
+	status = twl_i2c_read_u8(TWL_MODULE_PIH, &val, REG_INT_MSK_LINE_A);
+	if (status < 0) {
+		pr_err("twl6030: I2C err reading REG_INT_MSK_LINE_A: %d\n",
+				status);
+		return status;
+	}
+
+	status = twl_i2c_write_u8(TWL_MODULE_PIH, val & ~VLOW_INT_MASK,
+			REG_INT_MSK_LINE_A);
+	if (status < 0) {
+		pr_err("twl6030: I2C err writing REG_INT_MSK_LINE_A: %d\n",
+				status);
+		return status;
+	}
+
+	status = twl_i2c_read_u8(TWL_MODULE_PIH, &val, REG_INT_MSK_STS_A);
+	if (status < 0) {
+		pr_err("twl6030: I2C err reading REG_INT_MSK_STS_A: %d\n",
+				status);
+		return status;
+	}
+
+	status = twl_i2c_write_u8(TWL_MODULE_PIH, val & ~VLOW_INT_MASK,
+		REG_INT_MSK_STS_A);
+	if (status < 0) {
+		pr_err("twl6030: I2C err writing REG_INT_MSK_STS_A: %d\n",
+				status);
+		return status;
+	}
+
+	twl_i2c_read_u8(TWL_MODULE_PM_MASTER, &vbatmin_hi_threshold,
+			TWL6030_VBATMIN_HI_THRESHOLD);
+
+	/* install an irq handler for vlow */
+	status = request_threaded_irq(vlow_irq, NULL, handle_twl6030_vlow,
+			IRQF_ONESHOT,
+			"TWL6030-VLOW", handle_twl6030_vlow);
+	if (status < 0) {
+		pr_err("twl6030: could not claim vlow irq %d: %d\n", vlow_irq,
+				status);
+		return status;
+	}
+
+	return 0;
+}
 
 int twl6030_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
 {
 
 	int	status = 0;
 	int	i;
-	struct task_struct	*task;
 	int ret;
 	u8 mask[4];
 
@@ -341,17 +470,20 @@ int twl6030_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
 			REG_INT_STS_A, 3); /* clear INT_STS_A,B,C */
 
 	twl6030_irq_base = irq_base;
+	twl6030_irq_end = irq_end;
 
 	/* install an irq handler for each of the modules;
 	 * clone dummy irq_chip since PIH can't *do* anything
 	 */
 	twl6030_irq_chip = dummy_irq_chip;
 	twl6030_irq_chip.name = "twl6030";
-	twl6030_irq_chip.set_type = NULL;
+	twl6030_irq_chip.irq_set_type = NULL;
+	twl6030_irq_chip.irq_set_wake = twl6030_irq_set_wake;
 
 	for (i = irq_base; i < irq_end; i++) {
-		set_irq_chip_and_handler(i, &twl6030_irq_chip,
-				handle_simple_irq);
+		irq_set_chip_and_handler(i, &twl6030_irq_chip,
+					 handle_simple_irq);
+		irq_set_chip_data(i, (void *)irq_num);
 		activate_irq(i);
 	}
 
@@ -374,23 +506,49 @@ int twl6030_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
 		pr_err("twl6030: could not claim irq%d: %d\n", irq_num, status);
 		goto fail_irq;
 	}
+
+	twl_irq = irq_num;
+	register_pm_notifier(&twl6030_irq_pm_notifier_block);
+
+	status = twl6030_vlow_init(twl6030_irq_base + TWL_VLOW_INTR_OFFSET);
+	if (status < 0)
+		goto fail_vlow;
+
 	return status;
-fail_irq:
+
+fail_vlow:
 	free_irq(irq_num, &irq_event);
+
+fail_irq:
+	kthread_stop(task);
 
 fail_kthread:
 	for (i = irq_base; i < irq_end; i++)
-		set_irq_chip_and_handler(i, NULL, NULL);
+		irq_set_chip_and_handler(i, NULL, NULL);
 	return status;
 }
 
 int twl6030_exit_irq(void)
 {
+	int i;
+	unregister_pm_notifier(&twl6030_irq_pm_notifier_block);
 
-	if (twl6030_irq_base) {
+	if (task)
+		kthread_stop(task);
+
+	if (!twl6030_irq_base || !twl6030_irq_end) {
 		pr_err("twl6030: can't yet clean up IRQs?\n");
 		return -ENOSYS;
 	}
+
+	free_irq(twl6030_irq_base + TWL_VLOW_INTR_OFFSET,
+		handle_twl6030_vlow);
+
+	free_irq(twl_irq, &irq_event);
+
+	for (i = twl6030_irq_base; i < twl6030_irq_end; i++)
+		irq_set_chip_and_handler(i, NULL, NULL);
+
 	return 0;
 }
 

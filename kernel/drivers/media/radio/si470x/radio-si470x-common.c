@@ -112,7 +112,7 @@
 
 /* kernel includes */
 #include "radio-si470x.h"
-
+#include "radio-si470x-dev.h"
 
 
 /**************************************************************************
@@ -174,20 +174,31 @@ static int si470x_set_chan(struct si470x_device *radio, unsigned short chan)
 	if (retval < 0)
 		goto done;
 
-	/* wait till tune operation has completed */
-	timeout = jiffies + msecs_to_jiffies(tune_timeout);
-	do {
-		retval = si470x_get_register(radio, STATUSRSSI);
-		if (retval < 0)
-			goto stop;
-		timed_out = time_after(jiffies, timeout);
-	} while (((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0) &&
-		(!timed_out));
+	/* currently I2C driver only uses interrupt way to tune */
+	if (radio->stci_enabled) {
+		INIT_COMPLETION(radio->completion);
+
+		/* wait till tune operation has completed */
+		retval = wait_for_completion_timeout(&radio->completion,
+				msecs_to_jiffies(tune_timeout));
+		if (!retval)
+			timed_out = true;
+	} else {
+		/* wait till tune operation has completed */
+		timeout = jiffies + msecs_to_jiffies(tune_timeout);
+		do {
+			retval = si470x_get_register(radio, STATUSRSSI);
+			if (retval < 0)
+				goto stop;
+			timed_out = time_after(jiffies, timeout);
+		} while (((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0)
+				&& (!timed_out));
+	}
+
 	if ((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0)
-		dev_warn(&radio->videodev->dev, "tune does not complete\n");
+		pr_warn("tune does not complete\n");
 	if (timed_out)
-		dev_warn(&radio->videodev->dev,
-			"tune timed out after %u ms\n", tune_timeout);
+		pr_warn("tune timed out after %u ms\n", tune_timeout);
 
 stop:
 	/* stop tuning */
@@ -202,7 +213,7 @@ done:
 /*
  * si470x_get_freq - get the frequency
  */
-static int si470x_get_freq(struct si470x_device *radio, unsigned int *freq)
+int si470x_get_freq(struct si470x_device *radio, unsigned int *freq)
 {
 	unsigned int spacing, band_bottom;
 	unsigned short chan;
@@ -212,26 +223,26 @@ static int si470x_get_freq(struct si470x_device *radio, unsigned int *freq)
 	switch ((radio->registers[SYSCONFIG2] & SYSCONFIG2_SPACE) >> 4) {
 	/* 0: 200 kHz (USA, Australia) */
 	case 0:
-		spacing = 0.200 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_200_kHz; break;
 	/* 1: 100 kHz (Europe, Japan) */
 	case 1:
-		spacing = 0.100 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_100_kHz; break;
 	/* 2:  50 kHz */
 	default:
-		spacing = 0.050 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_50_kHz; break;
 	};
 
 	/* Bottom of Band (MHz) */
 	switch ((radio->registers[SYSCONFIG2] & SYSCONFIG2_BAND) >> 6) {
 	/* 0: 87.5 - 108 MHz (USA, Europe) */
 	case 0:
-		band_bottom = 87.5 * FREQ_MUL; break;
+		band_bottom = FREQ_87500_kHz; break;
 	/* 1: 76   - 108 MHz (Japan wide band) */
 	default:
-		band_bottom = 76   * FREQ_MUL; break;
+		band_bottom = FREQ_76000_kHz; break;
 	/* 2: 76   -  90 MHz (Japan) */
 	case 2:
-		band_bottom = 76   * FREQ_MUL; break;
+		band_bottom = FREQ_76000_kHz; break;
 	};
 
 	/* read channel */
@@ -257,26 +268,26 @@ int si470x_set_freq(struct si470x_device *radio, unsigned int freq)
 	switch ((radio->registers[SYSCONFIG2] & SYSCONFIG2_SPACE) >> 4) {
 	/* 0: 200 kHz (USA, Australia) */
 	case 0:
-		spacing = 0.200 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_200_kHz; break;
 	/* 1: 100 kHz (Europe, Japan) */
 	case 1:
-		spacing = 0.100 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_100_kHz; break;
 	/* 2:  50 kHz */
 	default:
-		spacing = 0.050 * FREQ_MUL; break;
+		spacing = CHAN_SPACING_50_kHz; break;
 	};
 
 	/* Bottom of Band (MHz) */
 	switch ((radio->registers[SYSCONFIG2] & SYSCONFIG2_BAND) >> 6) {
 	/* 0: 87.5 - 108 MHz (USA, Europe) */
 	case 0:
-		band_bottom = 87.5 * FREQ_MUL; break;
+		band_bottom = FREQ_87500_kHz; break;
 	/* 1: 76   - 108 MHz (Japan wide band) */
 	default:
-		band_bottom = 76   * FREQ_MUL; break;
+		band_bottom = FREQ_76000_kHz; break;
 	/* 2: 76   -  90 MHz (Japan) */
 	case 2:
-		band_bottom = 76   * FREQ_MUL; break;
+		band_bottom = FREQ_76000_kHz; break;
 	};
 
 	/* Chan = [ Freq (Mhz) - Bottom of Band (MHz) ] / Spacing (kHz) */
@@ -310,15 +321,27 @@ static int si470x_set_seek(struct si470x_device *radio,
 	if (retval < 0)
 		goto done;
 
-	/* wait till seek operation has completed */
-	timeout = jiffies + msecs_to_jiffies(seek_timeout);
-	do {
-		retval = si470x_get_register(radio, STATUSRSSI);
-		if (retval < 0)
-			goto stop;
-		timed_out = time_after(jiffies, timeout);
-	} while (((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0) &&
-		(!timed_out));
+	/* currently I2C driver only uses interrupt way to seek */
+	if (radio->stci_enabled) {
+		INIT_COMPLETION(radio->completion);
+
+		/* wait till seek operation has completed */
+		retval = wait_for_completion_timeout(&radio->completion,
+				msecs_to_jiffies(seek_timeout));
+		if (!retval)
+			timed_out = true;
+	} else {
+		/* wait till seek operation has completed */
+		timeout = jiffies + msecs_to_jiffies(seek_timeout);
+		do {
+			retval = si470x_get_register(radio, STATUSRSSI);
+			if (retval < 0)
+				goto stop;
+			timed_out = time_after(jiffies, timeout);
+		} while (((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0)
+				&& (!timed_out));
+	}
+#ifdef CONFIG_VIDEO_V4L2
 	if ((radio->registers[STATUSRSSI] & STATUSRSSI_STC) == 0)
 		dev_warn(&radio->videodev->dev, "seek does not complete\n");
 	if (radio->registers[STATUSRSSI] & STATUSRSSI_SF)
@@ -327,6 +350,7 @@ static int si470x_set_seek(struct si470x_device *radio,
 	if (timed_out)
 		dev_warn(&radio->videodev->dev,
 			"seek timed out after %u ms\n", seek_timeout);
+#endif
 
 stop:
 	/* stop seeking */
@@ -357,7 +381,8 @@ int si470x_start(struct si470x_device *radio)
 		goto done;
 
 	/* sysconfig 1 */
-	radio->registers[SYSCONFIG1] = SYSCONFIG1_DE;
+	radio->registers[SYSCONFIG1] =
+		(de << 11) & SYSCONFIG1_DE;		/* DE*/
 	retval = si470x_set_register(radio, SYSCONFIG1);
 	if (retval < 0)
 		goto done;
@@ -408,23 +433,21 @@ done:
 /*
  * si470x_rds_on - switch on rds reception
  */
-int si470x_rds_on(struct si470x_device *radio)
+static int si470x_rds_on(struct si470x_device *radio)
 {
 	int retval;
 
 	/* sysconfig 1 */
-	mutex_lock(&radio->lock);
 	radio->registers[SYSCONFIG1] |= SYSCONFIG1_RDS;
 	retval = si470x_set_register(radio, SYSCONFIG1);
 	if (retval < 0)
 		radio->registers[SYSCONFIG1] &= ~SYSCONFIG1_RDS;
-	mutex_unlock(&radio->lock);
 
 	return retval;
 }
 
 
-
+#ifdef CONFIG_VIDEO_V4L2
 /**************************************************************************
  * File Operations Interface
  **************************************************************************/
@@ -440,6 +463,7 @@ static ssize_t si470x_fops_read(struct file *file, char __user *buf,
 	unsigned int block_count = 0;
 
 	/* switch on rds reception */
+	mutex_lock(&radio->lock);
 	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
 		si470x_rds_on(radio);
 
@@ -460,7 +484,6 @@ static ssize_t si470x_fops_read(struct file *file, char __user *buf,
 	count /= 3;
 
 	/* copy RDS block out of internal buffer and to user buffer */
-	mutex_lock(&radio->lock);
 	while (block_count < count) {
 		if (radio->rd_index == radio->wr_index)
 			break;
@@ -480,9 +503,9 @@ static ssize_t si470x_fops_read(struct file *file, char __user *buf,
 		buf += 3;
 		retval += 3;
 	}
-	mutex_unlock(&radio->lock);
 
 done:
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -497,8 +520,11 @@ static unsigned int si470x_fops_poll(struct file *file,
 	int retval = 0;
 
 	/* switch on rds reception */
+
+	mutex_lock(&radio->lock);
 	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
 		si470x_rds_on(radio);
+	mutex_unlock(&radio->lock);
 
 	poll_wait(file, &radio->read_queue, pts);
 
@@ -516,7 +542,7 @@ static const struct v4l2_file_operations si470x_fops = {
 	.owner			= THIS_MODULE,
 	.read			= si470x_fops_read,
 	.poll			= si470x_fops_poll,
-	.ioctl			= video_ioctl2,
+	.unlocked_ioctl		= video_ioctl2,
 	.open			= si470x_fops_open,
 	.release		= si470x_fops_release,
 };
@@ -572,6 +598,7 @@ static int si470x_vidioc_g_ctrl(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -594,6 +621,8 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get control failed with %d\n", retval);
+
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -607,6 +636,7 @@ static int si470x_vidioc_s_ctrl(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -633,6 +663,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set control failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -662,6 +693,7 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -679,12 +711,8 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 	/* driver constants */
 	strcpy(tuner->name, "FM");
 	tuner->type = V4L2_TUNER_RADIO;
-#if defined(CONFIG_USB_SI470X) || defined(CONFIG_USB_SI470X_MODULE)
 	tuner->capability = V4L2_TUNER_CAP_LOW | V4L2_TUNER_CAP_STEREO |
-			    V4L2_TUNER_CAP_RDS;
-#else
-	tuner->capability = V4L2_TUNER_CAP_LOW | V4L2_TUNER_CAP_STEREO;
-#endif
+			    V4L2_TUNER_CAP_RDS | V4L2_TUNER_CAP_RDS_BLOCK_IO;
 
 	/* range limits */
 	switch ((radio->registers[SYSCONFIG2] & SYSCONFIG2_BAND) >> 6) {
@@ -710,12 +738,10 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 		tuner->rxsubchans = V4L2_TUNER_SUB_MONO;
 	else
 		tuner->rxsubchans = V4L2_TUNER_SUB_MONO | V4L2_TUNER_SUB_STEREO;
-#if defined(CONFIG_USB_SI470X) || defined(CONFIG_USB_SI470X_MODULE)
 	/* If there is a reliable method of detecting an RDS channel,
 	   then this code should check for that before setting this
 	   RDS subchannel. */
 	tuner->rxsubchans |= V4L2_TUNER_SUB_RDS;
-#endif
 
 	/* mono/stereo selector */
 	if ((radio->registers[POWERCFG] & POWERCFG_MONO) == 0)
@@ -737,6 +763,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get tuner failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -748,8 +775,9 @@ static int si470x_vidioc_s_tuner(struct file *file, void *priv,
 		struct v4l2_tuner *tuner)
 {
 	struct si470x_device *radio = video_drvdata(file);
-	int retval = -EINVAL;
+	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -776,6 +804,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set tuner failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -790,6 +819,7 @@ static int si470x_vidioc_g_frequency(struct file *file, void *priv,
 	int retval = 0;
 
 	/* safety checks */
+	mutex_lock(&radio->lock);
 	retval = si470x_disconnect_check(radio);
 	if (retval)
 		goto done;
@@ -806,6 +836,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get frequency failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -819,6 +850,7 @@ static int si470x_vidioc_s_frequency(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -835,6 +867,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set frequency failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -848,6 +881,7 @@ static int si470x_vidioc_s_hw_freq_seek(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -864,6 +898,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set hardware frequency seek failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -894,3 +929,4 @@ struct video_device si470x_viddev_template = {
 	.release		= video_device_release,
 	.ioctl_ops		= &si470x_ioctl_ops,
 };
+#endif

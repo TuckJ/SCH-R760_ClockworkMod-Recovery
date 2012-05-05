@@ -18,7 +18,6 @@
 #include <linux/interrupt.h>
 #include <linux/mfd/core.h>
 #include <linux/mfd/twl6040-codec.h>
-#include <plat/control.h>
 
 struct twl6040_irq_data {
 	int mask;
@@ -52,22 +51,22 @@ static struct twl6040_irq_data twl6040_irqs[] = {
 	},
 };
 
-static inline struct twl6040_irq_data *irq_to_twl6040_irq(struct twl6040_codec *twl6040,
+static inline struct twl6040_irq_data *irq_to_twl6040_irq(struct twl6040 *twl6040,
 							  int irq)
 {
 	return &twl6040_irqs[irq - twl6040->irq_base];
 }
 
-static void twl6040_irq_lock(unsigned int irq)
+static void twl6040_irq_lock(struct irq_data *data)
 {
-	struct twl6040_codec *twl6040 = get_irq_chip_data(irq);
+	struct twl6040 *twl6040 = irq_data_get_irq_chip_data(data);
 
 	mutex_lock(&twl6040->irq_mutex);
 }
 
-static void twl6040_irq_sync_unlock(unsigned int irq)
+static void twl6040_irq_sync_unlock(struct irq_data *data)
 {
-	struct twl6040_codec *twl6040 = get_irq_chip_data(irq);
+	struct twl6040 *twl6040 = irq_data_get_irq_chip_data(data);
 
 	/* write back to hardware any change in irq mask */
 	if (twl6040->irq_masks_cur != twl6040->irq_masks_cache) {
@@ -79,33 +78,33 @@ static void twl6040_irq_sync_unlock(unsigned int irq)
 	mutex_unlock(&twl6040->irq_mutex);
 }
 
-static void twl6040_irq_unmask(unsigned int irq)
+static void twl6040_irq_unmask(struct irq_data *data)
 {
-	struct twl6040_codec *twl6040 = get_irq_chip_data(irq);
-	struct twl6040_irq_data *irq_data = irq_to_twl6040_irq(twl6040, irq);
+	struct twl6040 *twl6040 = irq_data_get_irq_chip_data(data);
+	struct twl6040_irq_data *irq_data = irq_to_twl6040_irq(twl6040, data->irq);
 
 	twl6040->irq_masks_cur &= ~irq_data->mask;
 }
 
-static void twl6040_irq_mask(unsigned int irq)
+static void twl6040_irq_mask(struct irq_data *data)
 {
-	struct twl6040_codec *twl6040 = get_irq_chip_data(irq);
-	struct twl6040_irq_data *irq_data = irq_to_twl6040_irq(twl6040, irq);
+	struct twl6040 *twl6040 = irq_data_get_irq_chip_data(data);
+	struct twl6040_irq_data *irq_data = irq_to_twl6040_irq(twl6040, data->irq);
 
 	twl6040->irq_masks_cur |= irq_data->mask;
 }
 
 static struct irq_chip twl6040_irq_chip = {
 	.name = "twl6040",
-	.bus_lock = twl6040_irq_lock,
-	.bus_sync_unlock = twl6040_irq_sync_unlock,
-	.mask = twl6040_irq_mask,
-	.unmask = twl6040_irq_unmask,
+	.irq_bus_lock = twl6040_irq_lock,
+	.irq_bus_sync_unlock = twl6040_irq_sync_unlock,
+	.irq_mask = twl6040_irq_mask,
+	.irq_unmask = twl6040_irq_unmask,
 };
 
 static irqreturn_t twl6040_irq_thread(int irq, void *data)
 {
-	struct twl6040_codec *twl6040 = data;
+	struct twl6040 *twl6040 = data;
 	u8 intid;
 	int i;
 
@@ -125,7 +124,7 @@ static irqreturn_t twl6040_irq_thread(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-int twl6040_irq_init(struct twl6040_codec *twl6040)
+int twl6040_irq_init(struct twl6040 *twl6040)
 {
 	int cur_irq, ret;
 	u8 val;
@@ -154,10 +153,10 @@ int twl6040_irq_init(struct twl6040_codec *twl6040)
 	for (cur_irq = twl6040->irq_base;
 	     cur_irq < twl6040->irq_base + ARRAY_SIZE(twl6040_irqs);
 	     cur_irq++) {
-		set_irq_chip_data(cur_irq, twl6040);
-		set_irq_chip_and_handler(cur_irq, &twl6040_irq_chip,
+		irq_set_chip_data(cur_irq, twl6040);
+		irq_set_chip_and_handler(cur_irq, &twl6040_irq_chip,
 					 handle_level_irq);
-		set_irq_nested_thread(cur_irq, 1);
+		irq_set_nested_thread(cur_irq, 1);
 
 		/* ARM needs us to explicitly flag the IRQ as valid
 		 * and will set them noprobe when we do so. */
@@ -169,7 +168,7 @@ int twl6040_irq_init(struct twl6040_codec *twl6040)
 	}
 
 	ret = request_threaded_irq(twl6040->irq, NULL, twl6040_irq_thread,
-				   IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+				   IRQF_ONESHOT,
 				   "twl6040", twl6040);
 	if (ret) {
 		dev_err(twl6040->dev, "failed to request IRQ %d: %d\n",
@@ -189,7 +188,7 @@ int twl6040_irq_init(struct twl6040_codec *twl6040)
 }
 EXPORT_SYMBOL(twl6040_irq_init);
 
-void twl6040_irq_exit(struct twl6040_codec *twl6040)
+void twl6040_irq_exit(struct twl6040 *twl6040)
 {
 	if (twl6040->irq)
 		free_irq(twl6040->irq, twl6040);

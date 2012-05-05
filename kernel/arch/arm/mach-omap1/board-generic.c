@@ -72,19 +72,19 @@ static void __init omap_generic_init(void)
 		omap_cfg_reg(UART3_TX);
 		omap_cfg_reg(UART3_RX);
 
-		omap_usb_init(&generic1510_usb_config);
+		omap1_usb_init(&generic1510_usb_config);
 	}
 #endif
 #if defined(CONFIG_ARCH_OMAP16XX)
 	if (!cpu_is_omap1510()) {
-		omap_usb_init(&generic1610_usb_config);
+		omap1_usb_init(&generic1610_usb_config);
 	}
 #endif
 
 	omap_board_config = generic_config;
 	omap_board_config_size = ARRAY_SIZE(generic_config);
 	omap_serial_init();
-	omap_register_i2c_bus(1, 100, NULL, NULL, 0);
+	omap_register_i2c_bus(1, 100, NULL, 0);
 }
 
 static void __init omap_generic_map_io(void)
@@ -94,10 +94,9 @@ static void __init omap_generic_map_io(void)
 
 MACHINE_START(OMAP_GENERIC, "Generic OMAP1510/1610/1710")
 	/* Maintainer: Tony Lindgren <tony@atomide.com> */
-	.phys_io	= 0xfff00000,
-	.io_pg_offst	= ((0xfef00000) >> 18) & 0xfffc,
 	.boot_params	= 0x10000100,
 	.map_io		= omap_generic_map_io,
+	.reserve	= omap_reserve,
 	.init_irq	= omap_generic_init_irq,
 	.init_machine	= omap_generic_init,
 	.timer		= &omap_timer,

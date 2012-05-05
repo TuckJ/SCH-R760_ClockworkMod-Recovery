@@ -53,16 +53,17 @@ EXPORT_SYMBOL_GPL(omap_vout_default_crop);
 /* Given a new render window in new_win, adjust the window to the
  * nearest supported configuration.  The adjusted window parameters are
  * returned in new_win.
- * Returns zero if succesful, or -EINVAL if the requested window is
+ * Returns zero if successful, or -EINVAL if the requested window is
  * impossible and cannot reasonably be adjusted.
  */
 int omap_vout_try_window(struct v4l2_framebuffer *fbuf,
 			struct v4l2_window *new_win)
 {
 	struct v4l2_rect try_win;
-	
+
+	/* make a working copy of the new_win rectangle */
 	try_win = new_win->w;
-	
+
 	/* adjust the preview window so it fits on the display by clipping any
 	 * offscreen areas
 	 */
@@ -78,13 +79,10 @@ int omap_vout_try_window(struct v4l2_framebuffer *fbuf,
 		try_win.width : fbuf->fmt.width;
 	try_win.height = (try_win.height < fbuf->fmt.height) ?
 		try_win.height : fbuf->fmt.height;
-
-
+	if (try_win.left + try_win.width > fbuf->fmt.width)
+		try_win.width = fbuf->fmt.width - try_win.left;
 	if (try_win.top + try_win.height > fbuf->fmt.height)
-               	try_win.height = fbuf->fmt.height - try_win.top;
-        if (try_win.left + try_win.width > fbuf->fmt.width)
-       	        try_win.width = fbuf->fmt.width - try_win.left;
-
+		try_win.height = fbuf->fmt.height - try_win.top;
 	try_win.width &= ~1;
 	try_win.height &= ~1;
 
@@ -93,6 +91,7 @@ int omap_vout_try_window(struct v4l2_framebuffer *fbuf,
 
 	/* We now have a valid preview window, so go with it */
 	new_win->w = try_win;
+	new_win->field = V4L2_FIELD_ANY;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(omap_vout_try_window);
@@ -102,7 +101,7 @@ EXPORT_SYMBOL_GPL(omap_vout_try_window);
  * will also be adjusted if necessary.  Preference is given to keeping the
  * the window as close to the requested configuration as possible.  If
  * successful, new_win, vout->win, and crop are updated.
- * Returns zero if succesful, or -EINVAL if the requested preview window is
+ * Returns zero if successful, or -EINVAL if the requested preview window is
  * impossible and cannot reasonably be adjusted.
  */
 int omap_vout_new_window(struct v4l2_rect *crop,
@@ -119,8 +118,6 @@ int omap_vout_new_window(struct v4l2_rect *crop,
 	win->w = new_win->w;
 	win->field = new_win->field;
 	win->chromakey = new_win->chromakey;
-        if (cpu_is_omap44xx())
-            win->zorder = new_win->zorder;
 
 	/* Adjust the cropping window to allow for resizing limitation */
 	if (cpu_is_omap24xx()) {
@@ -158,7 +155,7 @@ EXPORT_SYMBOL_GPL(omap_vout_new_window);
  * window would fall outside the display boundaries, the cropping rectangle
  * will also be adjusted to maintain the rescaling ratios.  If successful, crop
  * and win are updated.
- * Returns zero if succesful, or -EINVAL if the requested cropping rectangle is
+ * Returns zero if successful, or -EINVAL if the requested cropping rectangle is
  * impossible and cannot reasonably be adjusted.
  */
 int omap_vout_new_crop(struct v4l2_pix_format *pix,
@@ -195,11 +192,8 @@ int omap_vout_new_crop(struct v4l2_pix_format *pix,
 	if (try_crop.width <= 0 || try_crop.height <= 0)
 		return -EINVAL;
 
-	if (win->w.width <= 0 || win->w.height <= 0)
-		return -EINVAL;
-
 	if (cpu_is_omap24xx()) {
-		if (crop->height != win->w.height) {
+		if (try_crop.height != win->w.height) {
 			/* If we're resizing vertically, we can't support a
 			 * crop width wider than 768 pixels.
 			 */
@@ -208,7 +202,7 @@ int omap_vout_new_crop(struct v4l2_pix_format *pix,
 		}
 	}
 	/* vertical resizing */
-	vresize = (1024 * crop->height) / win->w.height;
+	vresize = (1024 * try_crop.height) / win->w.height;
 	if (cpu_is_omap24xx() && (vresize > 2048))
 		vresize = 2048;
 	else if (cpu_is_omap34xx() && (vresize > 4096))
@@ -227,11 +221,12 @@ int omap_vout_new_crop(struct v4l2_pix_format *pix,
 			try_crop.height = 2;
 	}
 	/* horizontal resizing */
-	hresize = (1024 * crop->width) / win->w.width;
+	hresize = (1024 * try_crop.width) / win->w.width;
 	if (cpu_is_omap24xx() && (hresize > 2048))
 		hresize = 2048;
 	else if (cpu_is_omap34xx() && (hresize > 4096))
 		hresize = 4096;
+
 	win->w.width = ((1024 * try_crop.width) / hresize) & ~1;
 	if (win->w.width == 0)
 		win->w.width = 2;

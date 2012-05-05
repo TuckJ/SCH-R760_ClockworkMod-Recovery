@@ -32,48 +32,7 @@
 #include <linux/cm3663.h>
 #include <linux/regulator/consumer.h>
 #include <plat/mux.h>
-
-static struct i2c_client *this_client;
-
-#define ALS_BUFFER_NUM	10
-#define LIGHT_BUFFER_NUM	5
-#define PROX_READ_NUM	40
-
-/* ADDSEL is LOW */
-#define REGS_ARA		0x18
-#define REGS_ALS_CMD		0x20
-#define REGS_ALS_MSB		0x21
-#define REGS_INIT		0x22
-#define REGS_ALS_LSB		0x23
-#define REGS_PS_CMD		0xB0
-#define REGS_PS_DATA		0xB1
-#define REGS_PS_THD		0xB2
-
-#define PROXIMITY_THRESHOLD	0x0A
-#define DEFAULT_POLL_DELAY	200000000
-
-static u8 reg_defaults[8] = {
-	0x00, /* ARA: read only register */
-	0x00, /* ALS_CMD: als cmd */
-	0x00, /* ALS_MSB: read only register */
-	0x20, /* INIT: interrupt disable */
-	0x00, /* ALS_LSB: read only register */
-	0x30, /* PS_CMD: interrupt disable */
-	0x00, /* PS_DATA: read only register */
-	PROXIMITY_THRESHOLD, /* PS_THD: 10 */
-};
-
-static const int adc_table[4] = {
-	15,
-	150,
-	1500,
-	15000,
-};
-
-enum {
-	LIGHT_ENABLED = BIT(0),
-	PROXIMITY_ENABLED = BIT(1),
-};
+#include <linux/sensors_core.h>
 
 /* driver data */
 struct cm3663_data {
@@ -106,26 +65,13 @@ struct cm3663_data {
 	u8 power_state;
 	int last_brightness_step;
 	u8 prox_val;
+	int n_drv_is;
+	struct device *light_sensor_device;
+	struct device *proximity_sensor_device;
 };
 
-/* 
- * lux table for auto brightness
- * This driver should send input event when the boundary is changed
- */
-static int brightness_step_table[] = { 0, 15, 150, 1500, 15000, 10000000 };
-static int adc_step_table[5] = { 0, 12, 40, 490, 7900};
+static struct cm3663_data *cm3663_data;
 
-static int n_drv_is = 0;
-
-/* 
- * Reset the sensor by H/W.
- */
-static void cm3663_reset(struct cm3663_data *cm3663);
-
-/*
- * Read sensor data via I2C
- * If got an error, this will reset the sensor via reset function.
- */
 static int cm3663_i2c_read(struct cm3663_data *cm3663, u8 addr, u8 *val)
 {
 	int err = 0;
@@ -141,19 +87,13 @@ static int cm3663_i2c_read(struct cm3663_data *cm3663, u8 addr, u8 *val)
 	msg->len = 1;
 	msg->buf = val;
 
-	while (retry--) {
-		err = i2c_transfer(client->adapter, msg, 1);
-		if (err >= 0)
-			return err;
+	err = i2c_transfer(client->adapter, msg, 1);
+	if (err < 0) {
+		if (addr == REGS_ARA)
+			return 0;
+		pr_err("%s: i2c read failed at addr 0x%x: %d, ps_on: %d\n",
+		__func__, addr, err, gpio_get_value(37));
 	}
-
-	if (addr == REGS_ARA)
-		return 0;
-
-	pr_err("%s: i2c read failed at addr 0x%x: %d, ps_on: %d\n", __func__, addr, err, gpio_get_value(OMAP_GPIO_PS_ON)); 
-
-	//cm3663_reset(cm3663);
-
 	return err;
 }
 
@@ -177,16 +117,10 @@ static int cm3663_i2c_write(struct cm3663_data *cm3663, u8 addr, u8 val)
 	msg->len = 1;
 	msg->buf = &data;
 
-	while (retry--) {
-		err = i2c_transfer(client->adapter, msg, 1);
-		if (err >= 0)
-			return err;
-	}
-	
-	pr_err("%s: i2c write failed at addr 0x%x: %d, ps_on: %d\n", __func__, addr, err, gpio_get_value(OMAP_GPIO_PS_ON));  
-
-	//cm3663_reset(cm3663);
-
+	err = i2c_transfer(client->adapter, msg, 1);
+	if (err < 0)
+		pr_err("%s: i2c write failed at addr 0x%x: %d, ps_on: %d\n",
+		__func__, addr, err, gpio_get_value(37));
 	return err;
 }
 
@@ -218,61 +152,21 @@ static void cm3663_light_disable(struct cm3663_data *cm3663)
 }
 
 /*
- * Get the adc value from the sensor and 
+ * Get the adc value from the sensor and
  * calculate the average except min/max.
  */
 static int lightsensor_get_alsvalue(struct cm3663_data *cm3663)
 {
-	int i = 0;
-	int j = 0;
-	int value = 0;
 	int als_avr_value;
-	unsigned int als_total = 0;
-	unsigned int als_index = 0;
-	unsigned int als_max = 0;
-	unsigned int als_min = 0;
 	u8 als_high, als_low;
 
 	/* get ALS */
 	cm3663_i2c_read(cm3663, REGS_ALS_LSB, &als_low);
 	cm3663_i2c_read(cm3663, REGS_ALS_MSB, &als_high);
 	als_avr_value = ((als_high << 8) | als_low) * 5;
-#if 0
-	value = ((als_high << 8) | als_low) * 5;
-	als_index = (cm3663->als_index_count++) % ALS_BUFFER_NUM;
 
-	/*ALS buffer initialize (light sensor off ---> light sensor on) */
-	if (!cm3663->als_buf_initialized) {
-		cm3663->als_buf_initialized = true;
-		for (j = 0; j < ALS_BUFFER_NUM; j++)
-			cm3663->als_value_buf[j] = value;
-	} else
-		cm3663->als_value_buf[als_index] = value;
-
-	als_max = cm3663->als_value_buf[0];
-	als_min = cm3663->als_value_buf[0];
-
-	for (i = 0; i < ALS_BUFFER_NUM; i++) {
-		als_total += cm3663->als_value_buf[i];
-
-		if (als_max < cm3663->als_value_buf[i])
-			als_max = cm3663->als_value_buf[i];
-
-		if (als_min > cm3663->als_value_buf[i])
-			als_min = cm3663->als_value_buf[i];
-	}
-	als_avr_value = (als_total-(als_max+als_min))/(ALS_BUFFER_NUM-2);
-	
-	if (cm3663->als_index_count == ALS_BUFFER_NUM-1)
-		cm3663->als_index_count = 0;
-	if(als_avr_value<9)
+	if (als_avr_value < 8)
 		als_avr_value = 0;
-#endif	
-
-	if(als_avr_value<8)
-		als_avr_value = 0;
-
-	//printk("lightsensor_get_alsvalue : %d\n", als_avr_value);
 
 	return als_avr_value;
 }
@@ -311,7 +205,8 @@ static ssize_t cm3663_proximity_state_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct cm3663_data *cm3663 = dev_get_drvdata(dev);
-	return sprintf(buf, "%u\n", cm3663->prox_val <= PROXIMITY_THRESHOLD ? 0 : 1);
+	return sprintf(buf, "%u\n",
+		cm3663->prox_val <= PROXIMITY_THRESHOLD ? 0 : 1);
 }
 
 
@@ -372,7 +267,8 @@ static ssize_t cm3663_light_sensor_lux_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct cm3663_data *cm3663 = dev_get_drvdata(dev);
-	return sprintf(buf, "%d\n", lightsensor_get_alsvalue(cm3663));	// temporary fix
+	return sprintf(buf, "%d\n",
+		lightsensor_get_alsvalue(cm3663));
 }
 
 /*
@@ -403,7 +299,7 @@ static ssize_t cm3663_light_poll_delay_store(struct device *dev,
 		return err;
 
 	mutex_lock(&cm3663->power_lock);
-	
+
 	if (new_delay != ktime_to_ns(cm3663->light_poll_delay)) {
 		cm3663->light_poll_delay = ns_to_ktime(new_delay);
 		if (cm3663->power_state & LIGHT_ENABLED) {
@@ -421,7 +317,7 @@ static ssize_t cm3663_light_poll_delay_store(struct device *dev,
  * show polling interval
  */
 static ssize_t cm3663_proximity_poll_delay_show(struct device *dev,
-					 struct device_attribute *attr, char *buf)
+	struct device_attribute *attr, char *buf)
 {
 	return sprintf(buf, "0\n");
 }
@@ -470,32 +366,33 @@ static ssize_t cm3663_light_enable_store(struct device *dev,
 				  const char *buf, size_t size)
 {
 	struct cm3663_data *cm3663 = dev_get_drvdata(dev);
-	int enable = simple_strtoul(buf, NULL,10);
+	int enable;
+	if (strict_strtoul(buf, 10, &enable))
+		return -EINVAL;
+
 	int enabled = cm3663->power_state & LIGHT_ENABLED;
-	
-	//printk("[LIGHT SENSOR] %s : new state(%d), old state(%d)\n", __func__, enable, enabled);
-	
-	if(enable == enabled)
+
+	if (enable == enabled)
 		return size;
-		
+
 	mutex_lock(&cm3663->power_lock);
-	
+
 	if (enable) {
-		if(!(cm3663->power_state)) {
-			printk("\n light_power true \n");
+		if (!(cm3663->power_state)) {
+			pr_info("\n light_power true\n");
 			cm3663->pdata->proximity_power(true);
-		}	
+		}
 		cm3663->power_state |= LIGHT_ENABLED;
 		cm3663_light_enable(cm3663);
+		if (!((cm3663->power_state)&PROXIMITY_ENABLED))
+			cm3663_i2c_write(cm3663, REGS_PS_CMD, 0x01);
 	} else {
 		cm3663_light_disable(cm3663);
 		cm3663->power_state &= ~LIGHT_ENABLED;
-		if(!((cm3663->power_state)&PROXIMITY_ENABLED)) {
-			printk("\n light_power false \n");
-			//cm3663->pdata->proximity_power(false);
-		}
+		if (!((cm3663->power_state)&PROXIMITY_ENABLED))
+			pr_info("\n light_power false\n");
 	}
-	
+
 	mutex_unlock(&cm3663->power_lock);
 	return size;
 }
@@ -509,20 +406,24 @@ static ssize_t cm3663_proximity_enable_store(struct device *dev,
 				      const char *buf, size_t size)
 {
 	struct cm3663_data *cm3663 = dev_get_drvdata(dev);
-	int enable = simple_strtoul(buf, NULL,10);
+	int enable;
+	if (strict_strtoul(buf, 10, &enable))
+		return -EINVAL;
+
 	int enabled = (cm3663->power_state & PROXIMITY_ENABLED) >> 1;
 	u8 tmp = 0;
 
-	printk("[PROXIMITY] %s : new state(%d), old state(%d)\n", __func__, enable, enabled);
+	pr_info("[PROXIMITY] %s : new state(%d), old state(%d)\n",
+		__func__, enable, enabled);
 
-	if(enable == enabled)
+	if (enable == enabled)
 		return size;
-		
+
 	mutex_lock(&cm3663->power_lock);
-	
+
 	if (enable) {
 		if (!(cm3663->power_state)) {
-			printk("\n proximity_power true \n");
+			pr_info("\n proximity_power true\n");
 			cm3663->pdata->proximity_power(true);
 		}
 
@@ -533,19 +434,15 @@ static ssize_t cm3663_proximity_enable_store(struct device *dev,
 		cm3663_i2c_write(cm3663, REGS_PS_THD, reg_defaults[7]);
 		cm3663_i2c_write(cm3663, REGS_PS_CMD, reg_defaults[5]);
 		enable_irq(cm3663->irq);
-		//enable_irq_wake(cm3663->irq);
 	} else {
-		//disable_irq_wake(cm3663->irq);
 		disable_irq(cm3663->irq);
 		cm3663_i2c_write(cm3663, REGS_PS_CMD, 0x01);
 		cm3663->power_state &= ~PROXIMITY_ENABLED;
 
-		if (!(cm3663->power_state)) {
-			printk("\n proximity_power false \n");
-			//cm3663->pdata->proximity_power(false);
-		}
+		if (!(cm3663->power_state))
+			pr_info("\n proximity_power false\n");
 	}
-	
+
 	mutex_unlock(&cm3663->power_lock);
 	return size;
 }
@@ -577,17 +474,15 @@ static ssize_t proximity_avg_store(struct device *dev,
 
 	mutex_lock(&cm3663->power_lock);
 	if (new_value) {
-		if (!(cm3663->power_state & PROXIMITY_ENABLED)) {
+		if (!(cm3663->power_state & PROXIMITY_ENABLED))
 			cm3663_i2c_write(cm3663, REGS_PS_CMD, reg_defaults[5]);
-		}
 		hrtimer_start(&cm3663->prox_timer, cm3663->prox_poll_delay,
 							HRTIMER_MODE_REL);
 	} else if (!new_value) {
 		hrtimer_cancel(&cm3663->prox_timer);
 		cancel_work_sync(&cm3663->work_prox);
-		if (!(cm3663->power_state & PROXIMITY_ENABLED)) {
+		if (!(cm3663->power_state & PROXIMITY_ENABLED))
 			cm3663_i2c_write(cm3663, REGS_PS_CMD, 0x01);
-		}
 	}
 	mutex_unlock(&cm3663->power_lock);
 
@@ -595,31 +490,37 @@ static ssize_t proximity_avg_store(struct device *dev,
 }
 
 static struct device_attribute dev_attr_light_poll_delay =
-	__ATTR(poll_delay, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, cm3663_light_poll_delay_show, cm3663_light_poll_delay_store);
+	__ATTR(poll_delay, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	cm3663_light_poll_delay_show, cm3663_light_poll_delay_store);
 
 static struct device_attribute dev_attr_proximity_poll_delay =
-	__ATTR(poll_delay, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, cm3663_proximity_poll_delay_show, cm3663_proximity_poll_delay_store);
-	
-static struct device_attribute dev_attr_light_sensor_lux = 
+	__ATTR(poll_delay, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	cm3663_proximity_poll_delay_show, cm3663_proximity_poll_delay_store);
+
+static struct device_attribute dev_attr_light_sensor_lux =
 	__ATTR(lux, S_IRUSR | S_IRGRP, cm3663_light_sensor_lux_show, NULL);
 
-static struct device_attribute dev_attr_proximity_sensor_state = 
+static struct device_attribute dev_attr_proximity_sensor_state =
 	__ATTR(state, S_IRUSR | S_IRGRP, cm3663_proximity_state_show, NULL);
 
 static struct device_attribute dev_attr_light_sensor_adc =
 	__ATTR(adc, S_IRUSR | S_IRGRP, cm3663_light_sensor_adc_show, NULL);
-	
-static struct device_attribute dev_attr_proximity_sensor_adc = 
-	__ATTR(adc, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, cm3663_proximity_adc_show, cm3663_proximity_adc_store);
+
+static struct device_attribute dev_attr_proximity_sensor_adc =
+	__ATTR(adc, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	cm3663_proximity_adc_show, cm3663_proximity_adc_store);
 
 static struct device_attribute dev_attr_light_enable =
-	__ATTR(enable, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, cm3663_light_enable_show, cm3663_light_enable_store);
+	__ATTR(enable, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	cm3663_light_enable_show, cm3663_light_enable_store);
 
 static struct device_attribute dev_attr_proximity_enable =
-	__ATTR(enable, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, cm3663_proximity_enable_show, cm3663_proximity_enable_store);
+	__ATTR(enable, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	cm3663_proximity_enable_show, cm3663_proximity_enable_store);
 
 static struct device_attribute dev_attr_proximity_avg =
-	__ATTR(prox_avg, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP, proximity_avg_show, proximity_avg_store);
+	__ATTR(prox_avg, S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP,
+	proximity_avg_show, proximity_avg_store);
 
 /* sysfs attributes for input device */
 static struct attribute *light_sysfs_attrs[] = {
@@ -642,7 +543,7 @@ static struct attribute_group proximity_attribute_group = {
 	.attrs = proximity_sysfs_attrs,
 };
 
-/* 
+/*
  * sysfs attributes for additional functions.
  * this interfaces will be located under /sys/class/sensors/xxx
  */
@@ -668,56 +569,11 @@ static struct device_attribute *additional_proximity_attrs[] = {
 static void cm3663_work_func_light(struct work_struct *work)
 {
 	int als;
-	struct cm3663_data *cm3663 = container_of(work, struct cm3663_data,
-									work_light);
+	struct cm3663_data *cm3663 =
+		container_of(work, struct cm3663_data, work_light);
 	int i = 0;
-	int j = 0;
-	int step = 0;
-	int final = sizeof(brightness_step_table)/sizeof(int);
-	int adc = sizeof(adc_step_table)/sizeof(int);
 
-	als = lightsensor_get_alsvalue(cm3663);   // temporary fix for light sensor
-#if 0
-	for(; j < adc; j++)
-	{
-		if((als >= adc_step_table[j]) && (als < adc_step_table[j+1]))
-		{
-			if(j<(adc-1)) {
-				als = adc_step_table[j] + 
-					((als - adc_step_table[j])*(adc_step_table[j+1])/(adc_step_table[j+1]-adc_step_table[j]));
-			} else {
-				als = adc_step_table[j] + (als - adc_step_table[j]);
-			}
-			break;
-		}
-	}	
-
-	for(; i < final - 1; i++)
-	{
-		if((als >= brightness_step_table[i]) && (als < brightness_step_table[i+1]))
-		{
-			step = i;
-			break;
-		}
-	}
-
-	if(cm3663->last_brightness_step != step)
-	{
-		if (cm3663->light_count == LIGHT_BUFFER_NUM) {
-			input_report_abs(cm3663->light_input_dev, ABS_MISC, als);
-			input_sync(cm3663->light_input_dev);
-			cm3663->last_brightness_step = step;
-			printk(KERN_INFO "[LIGHT SENSOR] Report ALS(%d)\n", als);
-		}
-		cm3663->light_count++;
-		if (cm3663->light_count>LIGHT_BUFFER_NUM)
-			cm3663->light_count = 0;
-
-	} else {
-	
-		cm3663->light_count = 0;
-	}
-#endif
+	als = lightsensor_get_alsvalue(cm3663);
 
 	for (i = 0; ARRAY_SIZE(adc_table); i++)
 		if (als <= adc_table[i])
@@ -729,7 +585,6 @@ static void cm3663_work_func_light(struct work_struct *work)
 							ABS_MISC, als+1);
 			input_sync(cm3663->light_input_dev);
 			cm3663->light_count = 0;
-			//printk(KERN_INFO "[LIGHT SENSOR] Report ALS(%d)\n", als);
 		}
 	} else {
 		cm3663->light_buffer = i;
@@ -739,8 +594,9 @@ static void cm3663_work_func_light(struct work_struct *work)
 }
 static void cm3663_work_func_prox(struct work_struct *work)
 {
-	struct cm3663_data *cm3663 = container_of(work, struct cm3663_data, work_prox);
-	
+	struct cm3663_data *cm3663 =
+		container_of(work, struct cm3663_data, work_prox);
+
 	proxsensor_get_avgvalue(cm3663);
 }
 
@@ -778,10 +634,6 @@ irqreturn_t cm3663_irq_thread_fn(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
-	/* for debugging : going to be removed */
-	cm3663_i2c_read(ip, REGS_PS_DATA, &ip->prox_val);
-	printk("%s: proximity value = %d\n", __func__, ip->prox_val);
-
 	/* 0 is close, 1 is far */
 	input_report_abs(ip->proximity_input_dev, ABS_DISTANCE, val);
 	input_sync(ip->proximity_input_dev);
@@ -795,6 +647,7 @@ static int cm3663_setup_irq(struct cm3663_data *cm3663)
 	int rc = -EIO;
 	int irq;
 
+	gpio_free(cm3663->pdata->irq);
 	rc = gpio_request(cm3663->pdata->irq, "cm3663_irq");
 	if (rc < 0) {
 		pr_err("%s: gpio %d request failed (%d)\n",
@@ -812,7 +665,6 @@ static int cm3663_setup_irq(struct cm3663_data *cm3663)
 	irq = gpio_to_irq(cm3663->pdata->irq);
 	rc = request_threaded_irq(irq, NULL, cm3663_irq_thread_fn,
 			 IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-//			IRQF_TRIGGER_LOW |IRQF_TRIGGER_HIGH |IRQF_ONESHOT,
 			 "proximity_int", cm3663);
 	if (rc < 0) {
 		pr_err("%s: request_irq(%d) failed for gpio %d (%d)\n",
@@ -834,50 +686,16 @@ err_gpio_direction_input:
 	return rc;
 }
 
-/*
- * reset this sensor 
- */
-static void cm3663_reset(struct cm3663_data *cm3663)
-{
-	unsigned char tmp;
-	
-	hrtimer_cancel(&cm3663->light_timer);
-	//cancel_work_sync(&cm3663->work_light);
-
-	cm3663->pdata->proximity_power(false);
-	msleep(50);
-	cm3663->pdata->proximity_power(true);
-	msleep(50);
-	
-	if (cm3663->power_state & LIGHT_ENABLED) {
-		cm3663_light_enable(cm3663);
-	}
-
-	if (cm3663->power_state & PROXIMITY_ENABLED) {
-		cm3663_i2c_read(cm3663, REGS_ARA, &tmp);
-		cm3663_i2c_read(cm3663, REGS_ARA, &tmp);
-		cm3663_i2c_write(cm3663, REGS_INIT, reg_defaults[3]);
-		cm3663_i2c_write(cm3663, REGS_PS_THD, reg_defaults[7]);
-		cm3663_i2c_write(cm3663, REGS_PS_CMD, reg_defaults[5]);
-	}
-	
-}
-
 static const struct file_operations light_fops = {
 	.owner  = THIS_MODULE,
 };
 
 static struct miscdevice light_device = {
-    .minor  = MISC_DYNAMIC_MINOR,
-    .name   = "light",
-    .fops   = &light_fops,
+	.minor  = MISC_DYNAMIC_MINOR,
+	.name   = "light",
+	.fops   = &light_fops,
 };
 
-
-static struct device *light_sensor_device;
-static struct device *proximity_sensor_device;
-extern struct class *sensors_class;
-extern int sensors_register(struct device *dev, void * drvdata, struct device_attribute *attributes[], char *name);
 
 /*
  * probe function
@@ -893,7 +711,7 @@ static int cm3663_i2c_probe(struct i2c_client *client,
 	int cnt = 5;
 	int i = 0;
 	int adc = sizeof(adc_step_table)/sizeof(int);
-	
+
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("%s: i2c functionality check failed!\n", __func__);
 		return ret;
@@ -901,18 +719,20 @@ static int cm3663_i2c_probe(struct i2c_client *client,
 
 	cm3663 = kzalloc(sizeof(struct cm3663_data), GFP_KERNEL);
 	if (!cm3663) {
-		pr_err("%s: failed to alloc memory for module data\n", __func__);
+		pr_err("%s: failed to alloc memory for module data\n",
+			__func__);
 		return -ENOMEM;
 	}
 
 	cm3663->pdata = client->dev.platform_data;
 	cm3663->i2c_client = client;
+	cm3663_data = cm3663;
 	i2c_set_clientdata(client, cm3663);
-	this_client=client;
 
 	/* wake lock init */
-	wake_lock_init(&cm3663->prx_wake_lock, WAKE_LOCK_SUSPEND, "prx_wake_lock");
-	
+	wake_lock_init(&cm3663->prx_wake_lock,
+		WAKE_LOCK_SUSPEND, "prx_wake_lock");
+
 	mutex_init(&cm3663->power_lock);
 
 	ret = cm3663_setup_irq(cm3663);
@@ -999,15 +819,17 @@ static int cm3663_i2c_probe(struct i2c_client *client,
 		pr_err("%s: could not create sysfs group\n", __func__);
 		goto err_sysfs_create_group_light;
 	}
-	
-	ret = sensors_register(light_sensor_device, cm3663, additional_light_attrs, "light_sensor");
-	if(ret) {
+
+	ret = sensors_register(cm3663->light_sensor_device,
+		cm3663, additional_light_attrs, "light_sensor");
+	if (ret) {
 		pr_err("%s: cound not register sensor device\n", __func__);
 		goto err_sysfs_create_group_light;
 	}
-	
-	ret = sensors_register(proximity_sensor_device, cm3663, additional_proximity_attrs, "proximity_sensor");
-	if(ret) {
+
+	ret = sensors_register(cm3663->proximity_sensor_device,
+		cm3663, additional_proximity_attrs, "proximity_sensor");
+	if (ret) {
 		pr_err("%s: cound not register sensor device\n", __func__);
 		goto err_sysfs_create_group_light;
 	}
@@ -1017,17 +839,18 @@ static int cm3663_i2c_probe(struct i2c_client *client,
 
 	cm3663_i2c_read(cm3663, REGS_ARA, &tmp);
 	cm3663_i2c_read(cm3663, REGS_ARA, &tmp);
-	
-	do{
-		rt=cm3663_i2c_write(cm3663, REGS_INIT, reg_defaults[3]);
+
+	do {
+		rt = cm3663_i2c_write(cm3663, REGS_INIT, reg_defaults[3]);
 		cnt--;
-		printk("cm3663_i2c_write cnt =%d ret = %d \n", cnt, rt);
-		if (!cnt && rt<0) {
-		  n_drv_is = 1;
+		pr_info("cm3663_i2c_write cnt =%d ret = %d\n", cnt, rt);
+		if ((!cnt) && (rt < 0)) {
+			cm3663_data->n_drv_is = 1;
 			goto err_i2c_failed;
 		}
-	}while(rt<0);
-		
+	} while (rt < 0);
+	cm3663_data->n_drv_is = 0;
+
 	cm3663_i2c_write(cm3663, REGS_PS_THD, reg_defaults[7]);
 	cm3663_i2c_write(cm3663, REGS_PS_CMD, reg_defaults[5]);
 	msleep(100);
@@ -1042,42 +865,32 @@ static int cm3663_i2c_probe(struct i2c_client *client,
 	input_report_abs(cm3663->proximity_input_dev, ABS_DISTANCE, 1);
 	input_sync(cm3663->proximity_input_dev);
 
-#if 0
-	if(cm3663->pdata->adc_step_table[1]) {
-		for(i=0; i<adc;i++) {
-			adc_step_table[i] = cm3663->pdata->adc_step_table[i];
-			printk("[cm3663] probe get adc_step_table step:%d, value : %d \n", i, adc_step_table[i]);
-		}
-	} else 
-		printk("[cm3663] probe use defult adc_step_table step \n");
-#endif
-	printk("CM3663 probe ok!!!n");
+	pr_info("CM3663 probe ok!!!n");
 	goto done;
 
 /* error, unwind it all */
 err_i2c_failed:
 	sysfs_remove_group(&cm3663->light_input_dev->dev.kobj,
-			   &light_attribute_group);
-err_sysfs_create_group_light:	
+		&light_attribute_group);
+err_sysfs_create_group_light:
 	input_unregister_device(cm3663->light_input_dev);
 err_input_register_device_light:
 err_input_allocate_device_light:
 	destroy_workqueue(cm3663->prox_wq);
-err_create_prox_workqueue:	
+err_create_prox_workqueue:
 	destroy_workqueue(cm3663->light_wq);
 err_create_light_workqueue:
 	sysfs_remove_group(&cm3663->proximity_input_dev->dev.kobj,
-			   &proximity_attribute_group);
+		&proximity_attribute_group);
 err_sysfs_create_group_proximity:
 	input_unregister_device(cm3663->proximity_input_dev);
 err_input_register_device_proximity:
 err_input_allocate_device_proximity:
 err_setup_irq:
-	//free_irq(cm3663->pdata->irq, 0);
 	mutex_destroy(&cm3663->power_lock);
 	wake_lock_destroy(&cm3663->prx_wake_lock);
 	kfree(cm3663);
-	printk("CM3663 probe fail!!!\n");
+	pr_info("CM3663 probe fail!!!\n");
 
 done:
 	return ret;
@@ -1090,38 +903,35 @@ static int cm3663_suspend(struct device *dev)
 	   to wake up device.  We remove power without changing
 	   cm3663->power_state because we use that state in resume.
 	*/
-  if(!n_drv_is) {	
-  	struct cm3663_data *cm3663 = i2c_get_clientdata(this_client);
-
-
-  	printk("\n cm3663_suspend+ \n");
-	
-  	if (!(cm3663->power_state & PROXIMITY_ENABLED)) {
-  		printk("\n cm3663_suspend proximity_power false\n ");
-  		cm3663->pdata->proximity_power(false);
-  	}	
-  	printk("\n cm3663_suspend- \n");
+	int ret;
+	pr_info("cm3663_suspend+\n");
+	if (!cm3663_data->n_drv_is) {
+		if (!(cm3663_data->power_state & PROXIMITY_ENABLED)) {
+			pr_info("cm3663_suspend proximity_power false\n ");
+			ret = cm3663_i2c_write(cm3663_data, REGS_PS_CMD, 0x01);
+			if (ret < 0)
+				return ret;
+			cm3663_data->pdata->proximity_power(false);
+		}
 	}
-  return 0;
+	pr_info("cm3663_suspend-\n");
+	return 0;
 }
 
 static int cm3663_resume(struct device *dev)
 {
 	/* Turn power back on if we were before suspend. */
-	if(!n_drv_is) {	
-  	struct cm3663_data *cm3663 = i2c_get_clientdata(this_client);
 
-  	printk("\n cm3663_resume+ \n");
-	
-  	if (!(cm3663->power_state & PROXIMITY_ENABLED)) {
-  		printk("\n cm3663_resume proximity_power ture \n");
-  		cm3663->pdata->proximity_power(true);
-  	} else {
-  		wake_lock_timeout(&cm3663->prx_wake_lock, 3*HZ);
-  	}
-	
-	 printk("\n cm3663_resume- \n");
+	pr_info("cm3663_resume+\n");
+	if (!cm3663_data->n_drv_is) {
+		if (!(cm3663_data->power_state & PROXIMITY_ENABLED)) {
+			pr_info("cm3663_resume proximity_power ture\n");
+			cm3663_data->pdata->proximity_power(true);
+		} else {
+			wake_lock_timeout(&cm3663_data->prx_wake_lock, 3*HZ);
+		}
 	}
+	pr_info("cm3663_resume-\n");
 	return 0;
 }
 

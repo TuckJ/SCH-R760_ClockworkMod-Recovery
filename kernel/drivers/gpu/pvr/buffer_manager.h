@@ -86,6 +86,8 @@ struct _BM_HEAP_
 	
 	struct _BM_HEAP_ 		*psNext;
 	struct _BM_HEAP_ 		**ppsThis;
+	
+	IMG_UINT32 				ui32XTileStride;
 };
 
 struct _BM_CONTEXT_
@@ -154,6 +156,8 @@ BM_Alloc (IMG_HANDLE			hDevMemHeap,
 			IMG_SIZE_T			uSize,
 			IMG_UINT32			*pui32Flags,
 			IMG_UINT32			uDevVAddrAlignment,
+			IMG_PVOID			pvPrivData,
+			IMG_UINT32			ui32PrivDataLength,
 			BM_HANDLE			*phBuf);
 
 IMG_BOOL
@@ -205,6 +209,7 @@ IMG_VOID BM_FreeExport(BM_HANDLE hBuf, IMG_UINT32 ui32Flags);
 PVRSRV_ERROR BM_XProcWorkaroundSetShareIndex(IMG_UINT32 ui32Index);
 PVRSRV_ERROR BM_XProcWorkaroundUnsetShareIndex(IMG_UINT32 ui32Index);
 PVRSRV_ERROR BM_XProcWorkaroundFindNewBufferAndSetShareIndex(IMG_UINT32 *pui32Index);
+IMG_INT32 BM_XProcGetShareDataRefCount(IMG_UINT32 ui32Index);
 
 
 #if defined(__cplusplus)

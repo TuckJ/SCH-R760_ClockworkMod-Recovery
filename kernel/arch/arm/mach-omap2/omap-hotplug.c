@@ -17,24 +17,19 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/smp.h>
-#include <linux/completion.h>
 
 #include <asm/cacheflush.h>
-#include <mach/omap4-common.h>
-#include <mach/omap4-wakeupgen.h>
-#include <plat/powerdomain.h>
-#include <plat/clockdomain.h>
+#include <asm/hardware/gic.h>
 
-static DECLARE_COMPLETION(cpu_killed);
+#include <mach/omap4-common.h>
+#include <mach/omap-wakeupgen.h>
+
+#include "powerdomain.h"
+#include "clockdomain.h"
 
 int platform_cpu_kill(unsigned int cpu)
 {
-	int ret;
-
-	ret = wait_for_completion_timeout(&cpu_killed, 5000);
-	pr_notice("CPU%u: shutdown\n", cpu);
-
-	return ret;
+	return 1;
 }
 
 /*
@@ -43,17 +38,14 @@ int platform_cpu_kill(unsigned int cpu)
  */
 void platform_cpu_die(unsigned int cpu)
 {
-	unsigned int this_cpu = hard_smp_processor_id();
-	struct clockdomain *cpu1_clkdm;
+	unsigned int this_cpu;
+	static struct clockdomain *cpu1_clkdm;
 
-	if (cpu != this_cpu) {
-		pr_crit("platform_cpu_die running on %u, should be %u\n",
-			   this_cpu, cpu);
-		BUG();
-	}
-	complete(&cpu_killed);
+	if (!cpu1_clkdm)
+		cpu1_clkdm = clkdm_lookup("mpu1_clkdm");
+
 	flush_cache_all();
-	wmb();
+	dsb();
 
 	/*
 	 * we're ready for shutdown now, so do it
@@ -66,25 +58,19 @@ void platform_cpu_die(unsigned int cpu)
 		 * Enter into low power state
 		 * clear all interrupt wakeup sources
 		 */
-		omap4_wakeupgen_clear_all(cpu);
-#ifdef CONFIG_PM
+		omap_wakeupgen_irqmask_all(cpu, 1);
+		gic_cpu_disable();
 		omap4_enter_lowpower(cpu, PWRDM_POWER_OFF);
-#else
-		wmb();
-		do_wfi();
-#endif
-		if (omap_read_auxcoreboot0() == cpu) {
+		this_cpu = hard_smp_processor_id();
+		if (omap_read_auxcoreboot0() == this_cpu) {
 			/*
 			 * OK, proper wakeup, we're done
 			 */
-			this_cpu = hard_smp_processor_id();
-			omap4_wakeupgen_set_all(this_cpu);
+			omap_wakeupgen_irqmask_all(this_cpu, 0);
+			gic_cpu_enable();
 
-			/*
-			 * Restore clock domain to HW_AUTO
-			 */
-			cpu1_clkdm = clkdm_lookup("mpu1_clkdm");
-			omap2_clkdm_allow_idle(cpu1_clkdm);
+			/* Restore clockdomain to hardware supervised */
+			clkdm_allow_idle(cpu1_clkdm);
 			break;
 		}
 		pr_debug("CPU%u: spurious wakeup call\n", cpu);

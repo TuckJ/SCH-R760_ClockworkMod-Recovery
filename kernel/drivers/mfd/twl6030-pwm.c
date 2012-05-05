@@ -1,5 +1,5 @@
 /*
- * twl6030-pwm.c
+ * twl6030_pwm.c
  * Driver for PHOENIX (TWL6030) Pulse Width Modulator
  *
  * Copyright (C) 2010 Texas Instruments
@@ -36,9 +36,7 @@
 #define PWM_CTRL2_CURR_02	(2 << 4)
 
 /* LED supply source */
-#define PWM_CTRL2_SRC_VBUS	(0 << 2)
 #define PWM_CTRL2_SRC_VAC	(1 << 2)
-#define PWM_CTRL2_SRC_EXT	(2 << 2)
 
 /* LED modes */
 #define PWM_CTRL2_MODE_HW	(0 << 0)
@@ -52,7 +50,7 @@ struct pwm_device {
 	unsigned int pwm_id;
 };
 
-int twl6030_pwm_config(struct pwm_device *pwm, int duty_ns, int period_ns)
+int pwm_config(struct pwm_device *pwm, int duty_ns, int period_ns)
 {
 	u8 duty_cycle;
 	int ret;
@@ -71,12 +69,12 @@ int twl6030_pwm_config(struct pwm_device *pwm, int duty_ns, int period_ns)
 	}
 	return 0;
 }
-EXPORT_SYMBOL(twl6030_pwm_config);
+EXPORT_SYMBOL(pwm_config);
 
-int twl6030_pwm_enable(struct pwm_device *pwm)
+int pwm_enable(struct pwm_device *pwm)
 {
-	u8 val = 0;
-	int ret = 0;
+	u8 val;
+	int ret;
 
 	ret = twl_i2c_read_u8(TWL6030_MODULE_ID1, &val, LED_PWM_CTRL2);
 	if (ret < 0) {
@@ -97,12 +95,12 @@ int twl6030_pwm_enable(struct pwm_device *pwm)
 	twl_i2c_read_u8(TWL6030_MODULE_ID1, &val, LED_PWM_CTRL2);
 	return 0;
 }
-EXPORT_SYMBOL(twl6030_pwm_enable);
+EXPORT_SYMBOL(pwm_enable);
 
-void twl6030_pwm_disable(struct pwm_device *pwm)
+void pwm_disable(struct pwm_device *pwm)
 {
-	u8 val = 0;
-	int ret = 0;
+	u8 val;
+	int ret;
 
 	ret = twl_i2c_read_u8(TWL6030_MODULE_ID1, &val, LED_PWM_CTRL2);
 	if (ret < 0) {
@@ -122,9 +120,9 @@ void twl6030_pwm_disable(struct pwm_device *pwm)
 	}
 	return;
 }
-EXPORT_SYMBOL(twl6030_pwm_disable);
+EXPORT_SYMBOL(pwm_disable);
 
-struct pwm_device *twl6030_pwm_request(int pwm_id, const char *label)
+struct pwm_device *pwm_request(int pwm_id, const char *label)
 {
 	u8 val;
 	int ret;
@@ -140,7 +138,7 @@ struct pwm_device *twl6030_pwm_request(int pwm_id, const char *label)
 	pwm->pwm_id = pwm_id;
 
 	/* Configure PWM */
-	val = PWM_CTRL2_DIS_PD | PWM_CTRL2_CURR_02 | PWM_CTRL2_SRC_VBUS |
+	val = PWM_CTRL2_DIS_PD | PWM_CTRL2_CURR_02 | PWM_CTRL2_SRC_VAC |
 		PWM_CTRL2_MODE_HW;
 
 	ret = twl_i2c_write_u8(TWL6030_MODULE_ID1, val, LED_PWM_CTRL2);
@@ -155,11 +153,11 @@ struct pwm_device *twl6030_pwm_request(int pwm_id, const char *label)
 
 	return pwm;
 }
-EXPORT_SYMBOL(twl6030_pwm_request);
+EXPORT_SYMBOL(pwm_request);
 
-void twl6030_pwm_free(struct pwm_device *pwm)
+void pwm_free(struct pwm_device *pwm)
 {
-	twl6030_pwm_disable(pwm);
+	pwm_disable(pwm);
 	kfree(pwm);
 }
-EXPORT_SYMBOL(twl6030_pwm_free);
+EXPORT_SYMBOL(pwm_free);

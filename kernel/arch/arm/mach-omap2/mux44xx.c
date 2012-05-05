@@ -20,7 +20,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 
-#include <plat/io.h>
 #include "mux.h"
 
 #ifdef CONFIG_OMAP_MUX
@@ -131,6 +130,21 @@ static struct omap_mux __initdata omap4_core_muxmodes[] = {
 			"gpio_61", NULL, NULL, NULL, NULL),
 	_OMAP4_MUXENTRY(GPMC_WAIT1, 62, "gpmc_wait1", NULL, "c2c_dataout2",
 			"gpio_62", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(C2C_DATA11, 100, "c2c_data11", "usbc1_icusb_txen",
+			"c2c_dataout3", "gpio_100", "sys_ndmareq0", NULL,
+			NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(C2C_DATA12, 101, "c2c_data12", "dsi1_te0",
+			"c2c_clkin0", "gpio_101", "sys_ndmareq1", NULL, NULL,
+			"safe_mode"),
+	_OMAP4_MUXENTRY(C2C_DATA13, 102, "c2c_data13", "dsi1_te1",
+			"c2c_clkin1", "gpio_102", "sys_ndmareq2", NULL, NULL,
+			"safe_mode"),
+	_OMAP4_MUXENTRY(C2C_DATA14, 103, "c2c_data14", "dsi2_te0",
+			"c2c_dataout0", "gpio_103", "sys_ndmareq3", NULL,
+			NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(C2C_DATA15, 104, "c2c_data15", "dsi2_te1",
+			"c2c_dataout1", "gpio_104", NULL, NULL, NULL,
+			"safe_mode"),
 	_OMAP4_MUXENTRY(HDMI_HPD, 63, "hdmi_hpd", NULL, NULL, "gpio_63", NULL,
 			NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(HDMI_CEC, 64, "hdmi_cec", NULL, NULL, "gpio_64", NULL,
@@ -411,6 +425,30 @@ static struct omap_mux __initdata omap4_core_muxmodes[] = {
 			"gpio_169", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(USBB2_HSIC_STROBE, 170, "usbb2_hsic_strobe", NULL,
 			NULL, "gpio_170", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TX0, 171, "unipro_tx0", "kpd_col0", NULL,
+			"gpio_171", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TY0, 172, "unipro_ty0", "kpd_col1", NULL,
+			"gpio_172", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TX1, 173, "unipro_tx1", "kpd_col2", NULL,
+			"gpio_173", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TY1, 174, "unipro_ty1", "kpd_col3", NULL,
+			"gpio_174", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TX2, 0, "unipro_tx2", "kpd_col4", NULL,
+			"gpio_0", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_TY2, 1, "unipro_ty2", "kpd_col5", NULL,
+			"gpio_1", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RX0, 0, "unipro_rx0", "kpd_row0", NULL,
+			"gpi_175", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RY0, 0, "unipro_ry0", "kpd_row1", NULL,
+			"gpi_176", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RX1, 0, "unipro_rx1", "kpd_row2", NULL,
+			"gpi_177", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RY1, 0, "unipro_ry1", "kpd_row3", NULL,
+			"gpi_178", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RX2, 0, "unipro_rx2", "kpd_row4", NULL,
+			"gpi_2", NULL, NULL, NULL, "safe_mode"),
+	_OMAP4_MUXENTRY(UNIPRO_RY2, 0, "unipro_ry2", "kpd_row5", NULL,
+			"gpi_3", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(USBA0_OTG_CE, 0, "usba0_otg_ce", NULL, NULL, NULL,
 			NULL, NULL, NULL, NULL),
 	_OMAP4_MUXENTRY(USBA0_OTG_DP, 179, "usba0_otg_dp", "uart3_rx_irrx",
@@ -506,7 +544,7 @@ static struct omap_mux __initdata omap4_core_muxmodes[] = {
  */
 #if defined(CONFIG_OMAP_MUX) && defined(CONFIG_DEBUG_FS)		\
 		&& defined(CONFIG_OMAP_PACKAGE_CBL)
-struct omap_ball __initdata omap4_core_cbl_ball[] = {
+static struct omap_ball __initdata omap4_core_cbl_ball[] = {
 	_OMAP4_BALLENTRY(GPMC_AD0, "c12", NULL),
 	_OMAP4_BALLENTRY(GPMC_AD1, "d12", NULL),
 	_OMAP4_BALLENTRY(GPMC_AD2, "c13", NULL),
@@ -717,25 +755,9 @@ struct omap_ball __initdata omap4_core_cbl_ball[] = {
 #endif
 
 /*
- * Superset of all mux modes for omap4 ES2.0
+ * Signals different on ES2.0 compared to superset
  */
-static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
-	_OMAP4_MUXENTRY(GPMC_AD0, 0, "gpmc_ad0", "sdmmc2_dat0", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD1, 0, "gpmc_ad1", "sdmmc2_dat1", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD2, 0, "gpmc_ad2", "sdmmc2_dat2", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD3, 0, "gpmc_ad3", "sdmmc2_dat3", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD4, 0, "gpmc_ad4", "sdmmc2_dat4",
-			"sdmmc2_dir_dat0", NULL, NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD5, 0, "gpmc_ad5", "sdmmc2_dat5",
-			"sdmmc2_dir_dat1", NULL, NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD6, 0, "gpmc_ad6", "sdmmc2_dat6",
-			"sdmmc2_dir_cmd", NULL, NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_AD7, 0, "gpmc_ad7", "sdmmc2_dat7",
-			"sdmmc2_clk_fdbk", NULL, NULL, NULL, NULL, NULL),
+static struct omap_mux __initdata omap4_es2_core_subset[] = {
 	_OMAP4_MUXENTRY(GPMC_AD8, 32, "gpmc_ad8", "kpd_row0", "c2c_data15",
 			"gpio_32", NULL, "sdmmc1_dat0", NULL, NULL),
 	_OMAP4_MUXENTRY(GPMC_AD9, 33, "gpmc_ad9", "kpd_row1", "c2c_data14",
@@ -754,52 +776,15 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			"gpio_39", NULL, "sdmmc1_dat7", NULL, NULL),
 	_OMAP4_MUXENTRY(GPMC_A16, 40, "gpmc_a16", "kpd_row4", "c2c_datain0",
 			"gpio_40", "venc_656_data0", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A17, 41, "gpmc_a17", "kpd_row5", "c2c_datain1",
-			"gpio_41", "venc_656_data1", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A18, 42, "gpmc_a18", "kpd_row6", "c2c_datain2",
-			"gpio_42", "venc_656_data2", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A19, 43, "gpmc_a19", "kpd_row7", "c2c_datain3",
-			"gpio_43", "venc_656_data3", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A20, 44, "gpmc_a20", "kpd_col4", "c2c_datain4",
-			"gpio_44", "venc_656_data4", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A21, 45, "gpmc_a21", "kpd_col5", "c2c_datain5",
-			"gpio_45", "venc_656_data5", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A22, 46, "gpmc_a22", "kpd_col6", "c2c_datain6",
-			"gpio_46", "venc_656_data6", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A23, 47, "gpmc_a23", "kpd_col7", "c2c_datain7",
-			"gpio_47", "venc_656_data7", NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(GPMC_A24, 48, "gpmc_a24", "kpd_col8", "c2c_clkout0",
 			"gpio_48", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_A25, 49, "gpmc_a25", NULL, "c2c_clkout1",
-			"gpio_49", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_NCS0, 50, "gpmc_ncs0", NULL, NULL, "gpio_50",
-			"sys_ndmareq0", NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_NCS1, 51, "gpmc_ncs1", NULL, "c2c_dataout6",
-			"gpio_51", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(GPMC_NCS2, 52, "gpmc_ncs2", "kpd_row8",
 			"c2c_dataout7", "gpio_52", NULL, NULL, NULL,
 			"safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_NCS3, 53, "gpmc_ncs3", "gpmc_dir",
-			"c2c_dataout4", "gpio_53", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_NWP, 54, "gpmc_nwp", "dsi1_te0", NULL, "gpio_54",
-			"sys_ndmareq1", NULL, NULL, NULL),
 	_OMAP4_MUXENTRY(GPMC_CLK, 55, "gpmc_clk", NULL, NULL, "gpio_55",
 			"sys_ndmareq2", "sdmmc1_cmd", NULL, NULL),
 	_OMAP4_MUXENTRY(GPMC_NADV_ALE, 56, "gpmc_nadv_ale", "dsi1_te1", NULL,
 			"gpio_56", "sys_ndmareq3", "sdmmc1_clk", NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_NOE, 0, "gpmc_noe", "sdmmc2_clk", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_NWE, 0, "gpmc_nwe", "sdmmc2_cmd", NULL, NULL,
-			NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_NBE0_CLE, 59, "gpmc_nbe0_cle", "dsi2_te0", NULL,
-			"gpio_59", NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_NBE1, 60, "gpmc_nbe1", NULL, "c2c_dataout5",
-			"gpio_60", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(GPMC_WAIT0, 61, "gpmc_wait0", "dsi2_te1", NULL,
-			"gpio_61", NULL, NULL, NULL, NULL),
-	_OMAP4_MUXENTRY(GPMC_WAIT1, 62, "gpmc_wait1", NULL, "c2c_dataout2",
-			"gpio_62", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(GPMC_WAIT2, 100, "gpmc_wait2", "usbc1_icusb_txen",
 			"c2c_dataout3", "gpio_100", "sys_ndmareq0", NULL,
 			NULL, "safe_mode"),
@@ -812,62 +797,6 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(GPMC_NCS7, 104, "gpmc_ncs7", "dsi2_te1",
 			"c2c_dataout1", "gpio_104", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(HDMI_HPD, 63, "hdmi_hpd", NULL, NULL, "gpio_63", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(HDMI_CEC, 64, "hdmi_cec", NULL, NULL, "gpio_64", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(HDMI_DDC_SCL, 65, "hdmi_ddc_scl", NULL, NULL,
-			"gpio_65", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(HDMI_DDC_SDA, 66, "hdmi_ddc_sda", NULL, NULL,
-			"gpio_66", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DX0, 0, "csi21_dx0", NULL, NULL, "gpi_67", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DY0, 0, "csi21_dy0", NULL, NULL, "gpi_68", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DX1, 0, "csi21_dx1", NULL, NULL, "gpi_69", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DY1, 0, "csi21_dy1", NULL, NULL, "gpi_70", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DX2, 0, "csi21_dx2", NULL, NULL, "gpi_71", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DY2, 0, "csi21_dy2", NULL, NULL, "gpi_72", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DX3, 0, "csi21_dx3", NULL, NULL, "gpi_73", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DY3, 0, "csi21_dy3", NULL, NULL, "gpi_74", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DX4, 0, "csi21_dx4", NULL, NULL, "gpi_75", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI21_DY4, 0, "csi21_dy4", NULL, NULL, "gpi_76", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI22_DX0, 0, "csi22_dx0", NULL, NULL, "gpi_77", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI22_DY0, 0, "csi22_dy0", NULL, NULL, "gpi_78", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI22_DX1, 0, "csi22_dx1", NULL, NULL, "gpi_79", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CSI22_DY1, 0, "csi22_dy1", NULL, NULL, "gpi_80", NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CAM_SHUTTER, 81, "cam_shutter", NULL, NULL, "gpio_81",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CAM_STROBE, 82, "cam_strobe", NULL, NULL, "gpio_82",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(CAM_GLOBALRESET, 83, "cam_globalreset", NULL, NULL,
-			"gpio_83", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_CLK, 84, "usbb1_ulpitll_clk",
-			"hsi1_cawake", NULL, "gpio_84", "usbb1_ulpiphy_clk",
-			NULL, "hw_dbg20", "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_STP, 85, "usbb1_ulpitll_stp",
-			"hsi1_cadata", "mcbsp4_clkr", "gpio_85",
-			"usbb1_ulpiphy_stp", "usbb1_mm_rxdp", "hw_dbg21",
-			"safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_DIR, 86, "usbb1_ulpitll_dir",
-			"hsi1_caflag", "mcbsp4_fsr", "gpio_86",
-			"usbb1_ulpiphy_dir", NULL, "hw_dbg22", "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_NXT, 87, "usbb1_ulpitll_nxt",
-			"hsi1_acready", "mcbsp4_fsx", "gpio_87",
-			"usbb1_ulpiphy_nxt", "usbb1_mm_rxdm", "hw_dbg23",
 			"safe_mode"),
 	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT0, 88, "usbb1_ulpitll_dat0",
 			"hsi1_acwake", "mcbsp4_clkx", "gpio_88",
@@ -884,84 +813,6 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT3, 91, "usbb1_ulpitll_dat3",
 			"hsi1_caready", NULL, "gpio_91", "usbb1_ulpiphy_dat3",
 			"usbb1_mm_rxrcv", "hw_dbg27", "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT4, 92, "usbb1_ulpitll_dat4",
-			"dmtimer8_pwm_evt", "abe_mcbsp3_dr", "gpio_92",
-			"usbb1_ulpiphy_dat4", NULL, "hw_dbg28", "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT5, 93, "usbb1_ulpitll_dat5",
-			"dmtimer9_pwm_evt", "abe_mcbsp3_dx", "gpio_93",
-			"usbb1_ulpiphy_dat5", NULL, "hw_dbg29", "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT6, 94, "usbb1_ulpitll_dat6",
-			"dmtimer10_pwm_evt", "abe_mcbsp3_clkx", "gpio_94",
-			"usbb1_ulpiphy_dat6", "abe_dmic_din3", "hw_dbg30",
-			"safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_ULPITLL_DAT7, 95, "usbb1_ulpitll_dat7",
-			"dmtimer11_pwm_evt", "abe_mcbsp3_fsx", "gpio_95",
-			"usbb1_ulpiphy_dat7", "abe_dmic_clk3", "hw_dbg31",
-			"safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_HSIC_DATA, 96, "usbb1_hsic_data", NULL, NULL,
-			"gpio_96", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBB1_HSIC_STROBE, 97, "usbb1_hsic_strobe", NULL,
-			NULL, "gpio_97", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBC1_ICUSB_DP, 98, "usbc1_icusb_dp", NULL, NULL,
-			"gpio_98", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBC1_ICUSB_DM, 99, "usbc1_icusb_dm", NULL, NULL,
-			"gpio_99", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_CLK, 100, "sdmmc1_clk", NULL, "dpm_emu19",
-			"gpio_100", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_CMD, 101, "sdmmc1_cmd", NULL, "uart1_rx",
-			"gpio_101", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT0, 102, "sdmmc1_dat0", NULL, "dpm_emu18",
-			"gpio_102", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT1, 103, "sdmmc1_dat1", NULL, "dpm_emu17",
-			"gpio_103", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT2, 104, "sdmmc1_dat2", NULL, "dpm_emu16",
-			"gpio_104", "jtag_tms_tmsc", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT3, 105, "sdmmc1_dat3", NULL, "dpm_emu15",
-			"gpio_105", "jtag_tck", NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT4, 106, "sdmmc1_dat4", NULL, NULL,
-			"gpio_106", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT5, 107, "sdmmc1_dat5", NULL, NULL,
-			"gpio_107", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT6, 108, "sdmmc1_dat6", NULL, NULL,
-			"gpio_108", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SDMMC1_DAT7, 109, "sdmmc1_dat7", NULL, NULL,
-			"gpio_109", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP2_CLKX, 110, "abe_mcbsp2_clkx", "mcspi2_clk",
-			"abe_mcasp_ahclkx", "gpio_110", "usbb2_mm_rxdm",
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP2_DR, 111, "abe_mcbsp2_dr", "mcspi2_somi",
-			"abe_mcasp_axr", "gpio_111", "usbb2_mm_rxdp", NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP2_DX, 112, "abe_mcbsp2_dx", "mcspi2_simo",
-			"abe_mcasp_amute", "gpio_112", "usbb2_mm_rxrcv", NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP2_FSX, 113, "abe_mcbsp2_fsx", "mcspi2_cs0",
-			"abe_mcasp_afsx", "gpio_113", "usbb2_mm_txen", NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP1_CLKX, 114, "abe_mcbsp1_clkx",
-			"abe_slimbus1_clock", NULL, "gpio_114", NULL, NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP1_DR, 115, "abe_mcbsp1_dr",
-			"abe_slimbus1_data", NULL, "gpio_115", NULL, NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP1_DX, 116, "abe_mcbsp1_dx", "sdmmc3_dat2",
-			"abe_mcasp_aclkx", "gpio_116", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(ABE_MCBSP1_FSX, 117, "abe_mcbsp1_fsx", "sdmmc3_dat3",
-			"abe_mcasp_amutein", "gpio_117", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(ABE_PDM_UL_DATA, 0, "abe_pdm_ul_data",
-			"abe_mcbsp3_dr", NULL, NULL, NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(ABE_PDM_DL_DATA, 0, "abe_pdm_dl_data",
-			"abe_mcbsp3_dx", NULL, NULL, NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(ABE_PDM_FRAME, 0, "abe_pdm_frame", "abe_mcbsp3_clkx",
-			NULL, NULL, NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_PDM_LB_CLK, 0, "abe_pdm_lb_clk", "abe_mcbsp3_fsx",
-			NULL, NULL, NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(ABE_CLKS, 118, "abe_clks", NULL, NULL, "gpio_118",
-			NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(ABE_DMIC_CLK1, 119, "abe_dmic_clk1", NULL, NULL,
 			"gpio_119", "usbb2_mm_txse0", "uart4_cts", NULL,
 			"safe_mode"),
@@ -973,58 +824,6 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			"dmtimer11_pwm_evt", NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(ABE_DMIC_DIN3, 122, "abe_dmic_din3", "slimbus2_data",
 			"abe_dmic_clk2", "gpio_122", NULL, "dmtimer9_pwm_evt",
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART2_CTS, 123, "uart2_cts", "sdmmc3_clk", NULL,
-			"gpio_123", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART2_RTS, 124, "uart2_rts", "sdmmc3_cmd", NULL,
-			"gpio_124", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART2_RX, 125, "uart2_rx", "sdmmc3_dat0", NULL,
-			"gpio_125", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART2_TX, 126, "uart2_tx", "sdmmc3_dat1", NULL,
-			"gpio_126", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(HDQ_SIO, 127, "hdq_sio", "i2c3_sccb", "i2c2_sccb",
-			"gpio_127", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C1_SCL, 0, "i2c1_scl", NULL, NULL, NULL, NULL, NULL,
-			NULL, NULL),
-	_OMAP4_MUXENTRY(I2C1_SDA, 0, "i2c1_sda", NULL, NULL, NULL, NULL, NULL,
-			NULL, NULL),
-	_OMAP4_MUXENTRY(I2C2_SCL, 128, "i2c2_scl", "uart1_rx", NULL,
-			"gpio_128", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C2_SDA, 129, "i2c2_sda", "uart1_tx", NULL,
-			"gpio_129", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C3_SCL, 130, "i2c3_scl", NULL, NULL, "gpio_130",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C3_SDA, 131, "i2c3_sda", NULL, NULL, "gpio_131",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C4_SCL, 132, "i2c4_scl", NULL, NULL, "gpio_132",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(I2C4_SDA, 133, "i2c4_sda", NULL, NULL, "gpio_133",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_CLK, 134, "mcspi1_clk", NULL, NULL, "gpio_134",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_SOMI, 135, "mcspi1_somi", NULL, NULL,
-			"gpio_135", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_SIMO, 136, "mcspi1_simo", NULL, NULL,
-			"gpio_136", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_CS0, 137, "mcspi1_cs0", NULL, NULL, "gpio_137",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_CS1, 138, "mcspi1_cs1", "uart1_rx", NULL,
-			"gpio_138", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_CS2, 139, "mcspi1_cs2", "uart1_cts",
-			"slimbus2_clock", "gpio_139", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(MCSPI1_CS3, 140, "mcspi1_cs3", "uart1_rts",
-			"slimbus2_data", "gpio_140", NULL, NULL, NULL,
-			"safe_mode"),
-	_OMAP4_MUXENTRY(UART3_CTS_RCTX, 141, "uart3_cts_rctx", "uart1_tx",
-			NULL, "gpio_141", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART3_RTS_SD, 142, "uart3_rts_sd", NULL, NULL,
-			"gpio_142", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART3_RX_IRRX, 143, "uart3_rx_irrx",
-			"dmtimer8_pwm_evt", NULL, "gpio_143", NULL, NULL,
-			NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(UART3_TX_IRTX, 144, "uart3_tx_irtx",
-			"dmtimer9_pwm_evt", NULL, "gpio_144", NULL, NULL,
 			NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(SDMMC5_CLK, 145, "sdmmc5_clk", "mcspi2_clk",
 			"usbc1_icusb_dp", "gpio_145", NULL, "sdmmc2_clk",
@@ -1058,9 +857,6 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			"gpio_155", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(UART4_TX, 156, "uart4_tx", "sdmmc4_dat1", "kpd_col8",
 			"gpio_156", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBB2_ULPITLL_CLK, 157, "usbb2_ulpitll_clk",
-			"usbb2_ulpiphy_clk", "sdmmc4_cmd", "gpio_157",
-			"hsi2_cawake", NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(USBB2_ULPITLL_STP, 158, "usbb2_ulpitll_stp",
 			"usbb2_ulpiphy_stp", "sdmmc4_clk", "gpio_158",
 			"hsi2_cadata", "dispc2_data23", NULL, "safe_mode"),
@@ -1102,10 +898,6 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			"usbb2_ulpiphy_dat7", "sdmmc3_clk", "gpio_168",
 			"mcspi3_clk", "dispc2_data11", "rfbi_data11",
 			"safe_mode"),
-	_OMAP4_MUXENTRY(USBB2_HSIC_DATA, 169, "usbb2_hsic_data", NULL, NULL,
-			"gpio_169", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBB2_HSIC_STROBE, 170, "usbb2_hsic_strobe", NULL,
-			NULL, "gpio_170", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(KPD_COL3, 171, "kpd_col3", "kpd_col0", NULL,
 			"gpio_171", NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(KPD_COL4, 172, "kpd_col4", "kpd_col1", NULL,
@@ -1130,36 +922,10 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
 			NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(KPD_ROW2, 3, "kpd_row2", "kpd_row5", NULL, "gpio_3",
 			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(USBA0_OTG_CE, 0, "usba0_otg_ce", NULL, NULL, NULL,
-			NULL, NULL, NULL, NULL),
 	_OMAP4_MUXENTRY(USBA0_OTG_DP, 0, "usba0_otg_dp", "uart3_rx_irrx",
 			"uart2_rx", NULL, NULL, NULL, NULL, "safe_mode"),
 	_OMAP4_MUXENTRY(USBA0_OTG_DM, 0, "usba0_otg_dm", "uart3_tx_irtx",
 			"uart2_tx", NULL, NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(FREF_CLK1_OUT, 181, "fref_clk1_out", NULL, NULL,
-			"gpio_181", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(FREF_CLK2_OUT, 182, "fref_clk2_out", NULL, NULL,
-			"gpio_182", NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_NIRQ1, 0, "sys_nirq1", NULL, NULL, NULL, NULL,
-			NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_NIRQ2, 183, "sys_nirq2", NULL, NULL, "gpio_183",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT0, 184, "sys_boot0", NULL, NULL, "gpio_184",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT1, 185, "sys_boot1", NULL, NULL, "gpio_185",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT2, 186, "sys_boot2", NULL, NULL, "gpio_186",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT3, 187, "sys_boot3", NULL, NULL, "gpio_187",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT4, 188, "sys_boot4", NULL, NULL, "gpio_188",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(SYS_BOOT5, 189, "sys_boot5", NULL, NULL, "gpio_189",
-			NULL, NULL, NULL, "safe_mode"),
-	_OMAP4_MUXENTRY(DPM_EMU0, 11, "dpm_emu0", NULL, NULL, "gpio_11", NULL,
-			NULL, "hw_dbg0", "safe_mode"),
-	_OMAP4_MUXENTRY(DPM_EMU1, 12, "dpm_emu1", NULL, NULL, "gpio_12", NULL,
-			NULL, "hw_dbg1", "safe_mode"),
 	_OMAP4_MUXENTRY(DPM_EMU2, 13, "dpm_emu2", "usba0_ulpiphy_clk", NULL,
 			"gpio_13", NULL, "dispc2_fid", "hw_dbg2",
 			"safe_mode"),
@@ -1224,7 +990,7 @@ static struct omap_mux __initdata omap4_es2_core_muxmodes[] = {
  */
 #if defined(CONFIG_OMAP_MUX) && defined(CONFIG_DEBUG_FS)		\
 		&& defined(CONFIG_OMAP_PACKAGE_CBS)
-struct omap_ball __initdata omap4_core_cbs_ball[] = {
+static struct omap_ball __initdata omap4_core_cbs_ball[] = {
 	_OMAP4_BALLENTRY(GPMC_AD0, "c12", NULL),
 	_OMAP4_BALLENTRY(GPMC_AD1, "d12", NULL),
 	_OMAP4_BALLENTRY(GPMC_AD2, "c13", NULL),
@@ -1508,7 +1274,7 @@ static struct omap_mux __initdata omap4_wkup_muxmodes[] = {
  */
 #if defined(CONFIG_OMAP_MUX) && defined(CONFIG_DEBUG_FS)		\
 		&& defined(CONFIG_OMAP_PACKAGE_CBL)
-struct omap_ball __initdata omap4_wkup_cbl_cbs_ball[] = {
+static struct omap_ball __initdata omap4_wkup_cbl_cbs_ball[] = {
 	_OMAP4_BALLENTRY(SIM_IO, "h4", NULL),
 	_OMAP4_BALLENTRY(SIM_CLK, "j2", NULL),
 	_OMAP4_BALLENTRY(SIM_RESET, "g2", NULL),
@@ -1543,845 +1309,48 @@ struct omap_ball __initdata omap4_wkup_cbl_cbs_ball[] = {
 #define omap4_wkup_cbl_cbs_ball  NULL
 #endif
 
-int __init omap4_mux_init(struct omap_board_mux *board_core_subset,
-                        struct omap_board_mux *board_wk_subset, int flags)
+int __init omap4_mux_init(struct omap_board_mux *board_subset,
+	struct omap_board_mux *board_wkup_subset, int flags)
 {
 	struct omap_ball *package_balls_core;
 	struct omap_ball *package_balls_wkup = omap4_wkup_cbl_cbs_ball;
 	struct omap_mux *core_muxmodes;
+	struct omap_mux *core_subset = NULL;
 	int ret;
-	u32 reg_val;
 
 	switch (flags & OMAP_PACKAGE_MASK) {
 	case OMAP_PACKAGE_CBL:
-		pr_debug("mux: OMAP4430 ES1.0 -> OMAP_PACKAGE_CBL\n");
+		pr_debug("%s: OMAP4430 ES1.0 -> OMAP_PACKAGE_CBL\n", __func__);
 		package_balls_core = omap4_core_cbl_ball;
 		core_muxmodes = omap4_core_muxmodes;
 		break;
 	case OMAP_PACKAGE_CBS:
-		pr_debug("mux: OMAP4430 ES2.X -> OMAP_PACKAGE_CBS\n");
+		pr_debug("%s: OMAP4430 ES2.X -> OMAP_PACKAGE_CBS\n", __func__);
 		package_balls_core = omap4_core_cbs_ball;
-		core_muxmodes = omap4_es2_core_muxmodes;
+		core_muxmodes = omap4_core_muxmodes;
+		core_subset = omap4_es2_core_subset;
 		break;
 	default:
-		pr_err("mux: Unknown omap package, mux disabled\n");
+		pr_err("%s: Unknown omap package, mux disabled\n", __func__);
 		return -EINVAL;
 	}
 
-	/* set core domain mux pad configuration */
 	ret = omap_mux_init("core",
 			    OMAP_MUX_GPIO_IN_MODE3,
 			    OMAP4_CTRL_MODULE_PAD_CORE_MUX_PBASE,
 			    OMAP4_CTRL_MODULE_PAD_CORE_MUX_SIZE,
-			    core_muxmodes, NULL, board_core_subset,
+			    core_muxmodes, core_subset, board_subset,
 			    package_balls_core);
 	if (ret)
 		return ret;
-
-	/* set wk domain mux pad configuration */
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);
-	omap_writel(0xEFEFFFFF & reg_val,
-			OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);   
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);
-	omap_writel(0xEFFFFFFF & reg_val,
-			OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);  
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);
-	omap_writel(0x7FFFFFFF & reg_val,
-			OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE); 
 
 	ret = omap_mux_init("wkup",
 			    OMAP_MUX_GPIO_IN_MODE3,
 			    OMAP4_CTRL_MODULE_PAD_WKUP_MUX_PBASE,
 			    OMAP4_CTRL_MODULE_PAD_WKUP_MUX_SIZE,
-			    omap4_wkup_muxmodes, NULL, board_wk_subset,
+			    omap4_wkup_muxmodes, NULL, board_wkup_subset,
 			    package_balls_wkup);
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_MMC1_PBASE);
-	omap_writel(0xFEFFFFFF & reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_MMC1_PBASE);	  
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);
-	omap_writel(0x5FFFFFFF & reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);  
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);
-	omap_writel(0xF7EFFFFF & reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);   
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);
-	omap_writel(0x10100000 | reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);   
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);
-	omap_writel(0x10000000 | reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_GPIOWK_PBASE);  
-
-	reg_val = omap_readl(OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);
-	omap_writel(0x10100000 | reg_val,
-				OMAP4_CTRL_MODULE_CONTROL_PBIASLITE_PBASE);   
 
 	return ret;
 }
-
-
-#define PAD_CORE_GPMC_AD0		0x0040
-#define PAD_CORE_GPMC_AD1		0x0042
-#define PAD_CORE_GPMC_AD2		0x0044
-#define PAD_CORE_GPMC_AD3		0x0046
-#define PAD_CORE_GPMC_AD4		0x0048
-#define PAD_CORE_GPMC_AD5		0x004A
-#define PAD_CORE_GPMC_AD6		0x004C
-#define PAD_CORE_GPMC_AD7		0x004E
-#define PAD_CORE_GPMC_AD8		0x0050
-#define PAD_CORE_GPMC_AD9		0x0052
-#define PAD_CORE_GPMC_AD10		0x0054
-#define PAD_CORE_GPMC_AD11		0x0056
-#define PAD_CORE_GPMC_AD12		0x0058
-#define PAD_CORE_GPMC_AD13		0x005A
-#define PAD_CORE_GPMC_AD14		0x005C
-#define PAD_CORE_GPMC_AD15		0x005E
-#define PAD_CORE_GPMC_A16		0x0060
-#define PAD_CORE_GPMC_A17		0x0062
-#define PAD_CORE_GPMC_A18		0x0064
-#define PAD_CORE_GPMC_A19		0x0066
-#define PAD_CORE_GPMC_A20		0x0068
-#define PAD_CORE_GPMC_A21		0x006A
-#define PAD_CORE_GPMC_A22		0x006C
-#define PAD_CORE_GPMC_A23		0x006E
-#define PAD_CORE_GPMC_A24		0x0070
-#define PAD_CORE_GPMC_A25		0x0072
-#define PAD_CORE_GPMC_NCS0		0x0074
-#define PAD_CORE_GPMC_NCS1		0x0076
-#define PAD_CORE_GPMC_NCS2		0x0078
-#define PAD_CORE_GPMC_NCS3		0x007A
-#define PAD_CORE_GPMC_NWP		0x007C
-#define PAD_CORE_GPMC_CLK		0x007E
-#define PAD_CORE_GPMC_NADV_ALE	0x0080
-#define PAD_CORE_GPMC_NOE		0x0082
-#define PAD_CORE_GPMC_NWE		0x0084
-#define PAD_CORE_GPMC_NBE0_CLE	0x0086
-#define PAD_CORE_GPMC_NBE1		0x0088
-#define PAD_CORE_GPMC_WAIT0		0x008A
-#define PAD_CORE_GPMC_WAIT1		0x008C
-#define PAD_CORE_GPMC_WAIT2		0x008E
-#define PAD_CORE_GPMC_NCS4		0x0090
-#define PAD_CORE_GPMC_NCS5		0x0092
-#define PAD_CORE_GPMC_NCS6		0x0094
-#define PAD_CORE_GPMC_NCS7		0x0096
-#define PAD_CORE_GPIO63			0x0098
-#define PAD_CORE_GPIO64			0x009A
-#define PAD_CORE_GPIO65			0x009C
-#define PAD_CORE_GPIO66			0x009E
-#define PAD_CORE_CSI21_DX0			0x00A0
-#define PAD_CORE_CSI21_DY0			0x00A2
-#define PAD_CORE_CSI21_DX1			0x00A4
-#define PAD_CORE_CSI21_DY1			0x00A6
-#define PAD_CORE_CSI21_DX2			0x00A8
-#define PAD_CORE_CSI21_DY2			0x00AA
-#define PAD_CORE_CSI21_DX3			0x00AC
-#define PAD_CORE_CSI21_DY3			0x00AE
-#define PAD_CORE_CSI21_DX4			0x00B0
-#define PAD_CORE_CSI21_DY4			0x00B2
-#define PAD_CORE_CSI22_DX0			0x00B4
-#define PAD_CORE_CSI22_DY0			0x00B6
-#define PAD_CORE_CSI22_DX1			0x00B8
-#define PAD_CORE_CSI22_DY1			0x00BA
-#define PAD_CORE_CAM_SHUTTER			0x00BC
-#define PAD_CORE_CAM_STROBE			0x00BE
-#define PAD_CORE_CAM_GLOBALRESET		0x00C0
-#define PAD_CORE_USBB1_ULPITLL_CLK		0x00C2
-#define PAD_CORE_USBB1_ULPITLL_STP		0x00C4
-#define PAD_CORE_USBB1_ULPITLL_DIR		0x00C6
-#define PAD_CORE_USBB1_ULPITLL_NXT		0x00C8
-#define PAD_CORE_USBB1_ULPITLL_D0		0x00CA
-#define PAD_CORE_USBB1_ULPITLL_D1		0x00CC
-#define PAD_CORE_USBB1_ULPITLL_D2		0x00CE
-#define PAD_CORE_USBB1_ULPITLL_D3		0x00D0
-#define PAD_CORE_USBB1_ULPITLL_D4		0x00D2
-#define PAD_CORE_USBB1_ULPITLL_D5		0x00D4
-#define PAD_CORE_USBB1_ULPITLL_D6		0x00D6
-#define PAD_CORE_USBB1_ULPITLL_D7		0x00D8
-#define PAD_CORE_USBB1_HSIC_DATA			0x00DA
-#define PAD_CORE_USBB1_HSIC_STROBE		0x00DC
-#define PAD_CORE_USBC1_ICUSB_DP			0x00DE
-#define PAD_CORE_USBC1_ICUSB_DM			0x00E0
-#define PAD_CORE_SDMMC1_CLK		0x00E2
-#define PAD_CORE_SDMMC1_CMD		0x00E4
-#define PAD_CORE_SDMMC1_DAT0		0x00E6
-#define PAD_CORE_SDMMC1_DAT1		0x00E8
-#define PAD_CORE_SDMMC1_DAT2		0x00EA
-#define PAD_CORE_SDMMC1_DAT3		0x00EC
-#define PAD_CORE_SDMMC1_DAT4		0x00EE
-#define PAD_CORE_SDMMC1_DAT5		0x00F0
-#define PAD_CORE_SDMMC1_DAT6		0x00F2
-#define PAD_CORE_SDMMC1_DAT7		0x00F4
-#define PAD_CORE_ABE_MCBSP2_CLKX		0x00F6
-#define PAD_CORE_ABE_MCBSP2_DR		0x00F8
-#define PAD_CORE_ABE_MCBSP2_DX		0x00FA
-#define PAD_CORE_ABE_MCBSP2_FSX		0x00FC
-#define PAD_CORE_ABE_MCBSP1_CLKX		0x00FE
-#define PAD_CORE_ABE_MCBSP1_DR		0x0100
-#define PAD_CORE_ABE_MCBSP1_DX		0x0102
-#define PAD_CORE_ABE_MCBSP1_FSX		0x0104
-#define PAD_CORE_ABE_PDM_UL_DATA		0x0106
-#define PAD_CORE_ABE_PDM_DL_DATA		0x0108
-#define PAD_CORE_ABE_PDM_FRAME		0x010A
-#define PAD_CORE_ABE_PDM_LB_CLK		0x010C
-#define PAD_CORE_ABE_CLKS			0X010E
-#define PAD_CORE_ABE_DMIC_CLK1		0x0110
-#define PAD_CORE_ABE_DMIC_DIN1		0x0112
-#define PAD_CORE_ABE_DMIC_DIN2		0x0114
-#define PAD_CORE_ABE_DMIC_DIN3		0x0116
-#define PAD_CORE_UART2_CTS		0x0118
-#define PAD_CORE_UART2_RTS		0x011A
-#define PAD_CORE_UART2_RX		0x011C
-#define PAD_CORE_UART2_TX		0x011E
-#define PAD_CORE_HDQ_SIO			0x0120
-#define PAD_CORE_I2C1_SCL		0x0122
-#define PAD_CORE_I2C1_SDA		0x0124
-#define PAD_CORE_I2C2_SCL		0x0126
-#define PAD_CORE_I2C2_SDA		0x0128
-#define PAD_CORE_I2C3_SCL		0x012A
-#define PAD_CORE_I2C3_SDA		0x012C
-#define PAD_CORE_I2C4_SCL		0x012E
-#define PAD_CORE_I2C4_SDA		0x0130
-#define PAD_CORE_MCSPI1_CLK		0x0132
-#define PAD_CORE_MCSPI1_SOMI		0x0134
-#define PAD_CORE_MCSPI1_SIMO		0x0136
-#define PAD_CORE_MCSPI1_CS0		0x0138
-#define PAD_CORE_MCSPI1_CS1		0x013A
-#define PAD_CORE_MCSPI1_CS2		0x013C
-#define PAD_CORE_MCSPI1_CS3		0x013E
-#define PAD_CORE_UART3_CTS_RCTX	0x0140
-#define PAD_CORE_UART3_RTS_SD	0x0142
-#define PAD_CORE_UART3_RX_IRRX	0x0144
-#define PAD_CORE_UART3_TX_IRTX	0x0146
-#define PAD_CORE_SDMMC5_CLK		0x0148
-#define PAD_CORE_SDMMC5_CMD		0x014A
-#define PAD_CORE_SDMMC5_DAT0		0x014C
-#define PAD_CORE_SDMMC5_DAT1		0x014E
-#define PAD_CORE_SDMMC5_DAT2		0x0150
-#define PAD_CORE_SDMMC5_DAT3		0x0152
-#define PAD_CORE_MCSPI4_CLK		0x0154
-#define PAD_CORE_MCSPI4_SIMO		0x0156
-#define PAD_CORE_MCSPI4_SOMI		0x0158
-#define PAD_CORE_MCSPI4_CS0		0x015A
-#define PAD_CORE_UART4_RX		0x015C
-#define PAD_CORE_UART4_TX		0x015E
-#define PAD_CORE_USBB2_ULPITLL_CLK		0x0160
-#define PAD_CORE_USBB2_ULPITLL_STP		0x0162
-#define PAD_CORE_USBB2_ULPITLL_DIR		0x0164
-#define PAD_CORE_USBB2_ULPITLL_NXT		0x0166
-#define PAD_CORE_USBB2_ULPITLL_D0		0x0168
-#define PAD_CORE_USBB2_ULPITLL_D1		0x016A
-#define PAD_CORE_USBB2_ULPITLL_D2		0x016C
-#define PAD_CORE_USBB2_ULPITLL_D3		0x016E
-#define PAD_CORE_USBB2_ULPITLL_D4		0x0170
-#define PAD_CORE_USBB2_ULPITLL_D5		0x0172
-#define PAD_CORE_USBB2_ULPITLL_D6		0x0174
-#define PAD_CORE_USBB2_ULPITLL_D7		0x0176
-#define PAD_CORE_USBB2_HSIC_DATA			0x0178
-#define PAD_CORE_LUSBB2_HSIC_STROBE		0x017A
-#define PAD_CORE_KPD_COL3		0x017C
-#define PAD_CORE_KPD_COL4		0x017E
-#define PAD_CORE_KPD_COL5		0x0180
-#define PAD_CORE_KPD_COL0		0x0182
-#define PAD_CORE_KPD_COL1		0x0184
-#define PAD_CORE_KPD_COL2		0x0186
-#define PAD_CORE_KPD_ROW3		0x0188
-#define PAD_CORE_KPD_ROW4		0x018A
-#define PAD_CORE_KPD_ROW5		0x018C
-#define PAD_CORE_KPD_ROW0		0x018E
-#define PAD_CORE_KPD_ROW1		0x0190
-#define PAD_CORE_KPD_ROW2		0x0192
-#define PAD_CORE_USBA0_OTG_CE	0x0194
-#define PAD_CORE_USBA0_OTG_DP	0x0196
-#define PAD_CORE_USBA0_OTG_DM	0x0198
-#define PAD_CORE_FREF_CLK1_OUT	0x019A
-#define PAD_CORE_FREF_CLK2_OUT	0x019C
-#define PAD_CORE_SYS_NIRQ1		0x019E
-#define PAD_CORE_SYS_NIRQ2		0x01A0
-#define PAD_CORE_SYS_BOOT0		0x01A2
-#define PAD_CORE_SYS_BOOT1		0x01A4
-#define PAD_CORE_SYS_BOOT2		0x01A6
-#define PAD_CORE_SYS_BOOT3		0x01A8
-#define PAD_CORE_SYS_BOOT4		0x01AA
-#define PAD_CORE_SYS_BOOT5		0x01AC
-#define PAD_CORE_DPM_EMU0		0x01AE
-#define PAD_CORE_DPM_EMU1		0x01B0
-#define PAD_CORE_DPM_EMU2		0x01B2
-#define PAD_CORE_DPM_EMU3		0x01B4
-#define PAD_CORE_DPM_EMU4		0x01B6
-#define PAD_CORE_DPM_EMU5		0x01B8
-#define PAD_CORE_DPM_EMU6		0x01BA
-#define PAD_CORE_DPM_EMU7		0x01BC
-#define PAD_CORE_DPM_EMU8		0x01BE
-#define PAD_CORE_DPM_EMU9		0x01C0
-#define PAD_CORE_DPM_EMU10		0x01C2
-#define PAD_CORE_DPM_EMU11		0x01C4
-#define PAD_CORE_DPM_EMU12		0x01C6
-#define PAD_CORE_DPM_EMU13		0x01C8
-#define PAD_CORE_DPM_EMU14		0x01CA
-#define PAD_CORE_DPM_EMU15		0x01CC
-#define PAD_CORE_DPM_EMU16		0x01CE
-#define PAD_CORE_DPM_EMU17		0x01D0
-#define PAD_CORE_DPM_EMU18		0x01D2
-#define PAD_CORE_DPM_EMU19		0x01D4
-
-#define PAD_CORE_GPMC_AD8_GPIO	32
-#define PAD_CORE_GPMC_AD9_GPIO	33
-#define PAD_CORE_GPMC_AD10_GPIO	34
-#define PAD_CORE_GPMC_AD11_GPIO	35
-#define PAD_CORE_GPMC_AD12_GPIO	36
-#define PAD_CORE_GPMC_AD13_GPIO	37
-#define PAD_CORE_GPMC_AD14_GPIO	38
-#define PAD_CORE_GPMC_AD15_GPIO	39
-#define PAD_CORE_GPMC_A16_GPIO	40
-#define PAD_CORE_GPMC_A17_GPIO	41
-#define PAD_CORE_GPMC_A18_GPIO	42
-#define PAD_CORE_GPMC_A19_GPIO	43
-#define PAD_CORE_GPMC_A20_GPIO	44
-#define PAD_CORE_GPMC_A21_GPIO	45
-#define PAD_CORE_GPMC_A22_GPIO	46
-#define PAD_CORE_GPMC_A23_GPIO	47
-#define PAD_CORE_GPMC_A24_GPIO	48
-#define PAD_CORE_GPMC_A25_GPIO	49
-#define PAD_CORE_GPMC_NCS0_GPIO	50
-#define PAD_CORE_GPMC_NCS1_GPIO	51
-#define PAD_CORE_GPMC_NCS2_GPIO	52
-#define PAD_CORE_GPMC_NCS3_GPIO	53
-#define PAD_CORE_GPMC_NWP_GPIO	54
-#define PAD_CORE_GPMC_CLK_GPIO	55
-#define PAD_CORE_GPMC_NADV_ALE_GPIO	56
-#define PAD_CORE_GPMC_NBE0_CLE_GPIO	59
-#define PAD_CORE_GPMC_NBE1_GPIO	60
-#define PAD_CORE_GPMC_WAIT0_GPIO	61
-#define PAD_CORE_GPMC_WAIT1_GPIO	62
-#define PAD_CORE_GPMC_WAIT2_GPIO	100
-#define PAD_CORE_GPMC_NCS4_GPIO	101
-#define PAD_CORE_GPMC_NCS5_GPIO	102
-#define PAD_CORE_GPMC_NCS6_GPIO	103
-#define PAD_CORE_GPMC_NCS7_GPIO	104
-#define PAD_CORE_GPIO63_GPIO	63
-#define PAD_CORE_GPIO64_GPIO	64
-#define PAD_CORE_GPIO65_GPIO	65
-#define PAD_CORE_GPIO66_GPIO	66
-#define PAD_CORE_CSI21_DX0_GPIO	67
-#define PAD_CORE_CSI21_DY0_GPIO	68
-#define PAD_CORE_CSI21_DX1_GPIO	69
-#define PAD_CORE_CSI21_DY1_GPIO	70
-#define PAD_CORE_CSI21_DX2_GPIO	71
-#define PAD_CORE_CSI21_DY2_GPIO	72
-#define PAD_CORE_CSI21_DX3_GPIO	73
-#define PAD_CORE_CSI21_DY3_GPIO	74
-#define PAD_CORE_CSI21_DX4_GPIO	75
-#define PAD_CORE_CSI21_DY4_GPIO	76
-#define PAD_CORE_CSI22_DX0_GPIO	77
-#define PAD_CORE_CSI22_DY0_GPIO	78
-#define PAD_CORE_CSI22_DX1_GPIO	79
-#define PAD_CORE_CSI22_DY1_GPIO	80
-#define PAD_CORE_CAM_SHUTTER_GPIO	81
-#define PAD_CORE_CAM_STROBE_GPIO	82
-#define PAD_CORE_CAM_GLOBALRESET_GPIO	83
-#define PAD_CORE_USBB1_ULPITLL_CLK_GPIO	84
-#define PAD_CORE_USBB1_ULPITLL_STP_GPIO	85
-#define PAD_CORE_USBB1_ULPITLL_DIR_GPIO	86
-#define PAD_CORE_USBB1_ULPITLL_NXT_GPIO	87
-#define PAD_CORE_USBB1_ULPITLL_D0_GPIO	88
-#define PAD_CORE_USBB1_ULPITLL_D1_GPIO	89
-#define PAD_CORE_USBB1_ULPITLL_D2_GPIO	90
-#define PAD_CORE_USBB1_ULPITLL_D3_GPIO	91
-#define PAD_CORE_USBB1_ULPITLL_D4_GPIO	92
-#define PAD_CORE_USBB1_ULPITLL_D5_GPIO	93
-#define PAD_CORE_USBB1_ULPITLL_D6_GPIO	94
-#define PAD_CORE_USBB1_ULPITLL_D7_GPIO	95
-#define PAD_CORE_USBB1_HSIC_DATA_GPIO	96
-#define PAD_CORE_USBB1_HSIC_STROBE_GPIO	97
-#define PAD_CORE_USBC1_ICUSB_DP_GPIO	98
-#define PAD_CORE_USBC1_ICUSB_DM_GPIO	99
-#define PAD_CORE_SDMMC1_CLK_GPIO	100
-#define PAD_CORE_SDMMC1_CMD_GPIO	101
-#define PAD_CORE_SDMMC1_DAT0_GPIO	102
-#define PAD_CORE_SDMMC1_DAT1_GPIO	103
-#define PAD_CORE_SDMMC1_DAT2_GPIO	104
-#define PAD_CORE_SDMMC1_DAT3_GPIO	105
-#define PAD_CORE_SDMMC1_DAT4_GPIO	106
-#define PAD_CORE_SDMMC1_DAT5_GPIO	107
-#define PAD_CORE_SDMMC1_DAT6_GPIO	108
-#define PAD_CORE_SDMMC1_DAT7_GPIO	109
-#define PAD_CORE_ABE_MCBSP2_CLKX_GPIO	110
-#define PAD_CORE_ABE_MCBSP2_DR_GPIO	111
-#define PAD_CORE_ABE_MCBSP2_DX_GPIO	112
-#define PAD_CORE_ABE_MCBSP2_FSX_GPIO	113
-#define PAD_CORE_ABE_MCBSP1_CLKX_GPIO	114
-#define PAD_CORE_ABE_MCBSP1_DR_GPIO	115
-#define PAD_CORE_ABE_MCBSP1_DX_GPIO	116
-#define PAD_CORE_ABE_MCBSP1_FSX_GPIO	117
-#define PAD_CORE_ABE_CLKS_GPIO	118
-#define PAD_CORE_ABE_DMIC_CLK1_GPIO	119
-#define PAD_CORE_ABE_DMIC_DIN1_GPIO	120
-#define PAD_CORE_ABE_DMIC_DIN2_GPIO	121
-#define PAD_CORE_ABE_DMIC_DIN3_GPIO	122
-#define PAD_CORE_UART2_CTS_GPIO	123
-#define PAD_CORE_UART2_RTS_GPIO	124
-#define PAD_CORE_UART2_RX_GPIO	125
-#define PAD_CORE_UART2_TX_GPIO	126
-#define PAD_CORE_HDQ_SIO_GPIO	127
-#define PAD_CORE_I2C2_SCL_GPIO	128
-#define PAD_CORE_I2C2_SDA_GPIO	129
-#define PAD_CORE_I2C3_SCL_GPIO	130
-#define PAD_CORE_I2C3_SDA_GPIO	131
-#define PAD_CORE_I2C4_SCL_GPIO	132
-#define PAD_CORE_I2C4_SDA_GPIO	133
-#define PAD_CORE_MCSPI1_CLK_GPIO	134
-#define PAD_CORE_MCSPI1_SOMI_GPIO	135
-#define PAD_CORE_MCSPI1_SIMO_GPIO	136
-#define PAD_CORE_MCSPI1_CS0_GPIO	137
-#define PAD_CORE_MCSPI1_CS1_GPIO	138
-#define PAD_CORE_MCSPI1_CS2_GPIO	139
-#define PAD_CORE_MCSPI1_CS3_GPIO	140
-#define PAD_CORE_UART3_CTS_RCTX_GPIO	141
-#define PAD_CORE_UART3_RTS_SD_GPIO	142
-#define PAD_CORE_UART3_RX_IRRX_GPIO	143
-#define PAD_CORE_UART3_TX_IRTX_GPIO	144
-#define PAD_CORE_SDMMC5_CLK_GPIO	145
-#define PAD_CORE_SDMMC5_CMD_GPIO	146
-#define PAD_CORE_SDMMC5_DAT0_GPIO	147
-#define PAD_CORE_SDMMC5_DAT1_GPIO	148
-#define PAD_CORE_SDMMC5_DAT2_GPIO	149
-#define PAD_CORE_SDMMC5_DAT3_GPIO	150
-#define PAD_CORE_MCSPI4_CLK_GPIO	151
-#define PAD_CORE_MCSPI4_SIMO_GPIO	152
-#define PAD_CORE_MCSPI4_SOMI_GPIO	153
-#define PAD_CORE_MCSPI4_CS0_GPIO	154
-#define PAD_CORE_UART4_RX_GPIO	155
-#define PAD_CORE_UART4_TX_GPIO	156
-#define PAD_CORE_USBB2_ULPITLL_CLK_GPIO	157
-#define PAD_CORE_USBB2_ULPITLL_STP_GPIO	158
-#define PAD_CORE_USBB2_ULPITLL_DIR_GPIO	159
-#define PAD_CORE_USBB2_ULPITLL_NXT_GPIO	160
-#define PAD_CORE_USBB2_ULPITLL_D0_GPIO	161
-#define PAD_CORE_USBB2_ULPITLL_D1_GPIO	162
-#define PAD_CORE_USBB2_ULPITLL_D2_GPIO	163
-#define PAD_CORE_USBB2_ULPITLL_D3_GPIO	164
-#define PAD_CORE_USBB2_ULPITLL_D4_GPIO	165
-#define PAD_CORE_USBB2_ULPITLL_D5_GPIO	166
-#define PAD_CORE_USBB2_ULPITLL_D6_GPIO	167
-#define PAD_CORE_USBB2_ULPITLL_D7_GPIO	168
-#define PAD_CORE_USBB2_HSIC_DATA_GPIO	169
-#define PAD_CORE_LUSBB2_HSIC_STROBE_GPIO	170
-#define PAD_CORE_KPD_COL3_GPIO	171
-#define PAD_CORE_KPD_COL4_GPIO	172
-#define PAD_CORE_KPD_COL5_GPIO	173
-#define PAD_CORE_KPD_COL0_GPIO	174
-#define PAD_CORE_KPD_COL1_GPIO	0
-#define PAD_CORE_KPD_COL2_GPIO	1
-#define PAD_CORE_KPD_ROW3_GPIO	175
-#define PAD_CORE_KPD_ROW4_GPIO	176
-#define PAD_CORE_KPD_ROW5_GPIO	177
-#define PAD_CORE_KPD_ROW0_GPIO	178
-#define PAD_CORE_KPD_ROW1_GPIO	2
-#define PAD_CORE_KPD_ROW2_GPIO	3
-#define PAD_CORE_USBA0_OTG_DP_GPIO	179
-#define PAD_CORE_USBA0_OTG_DM_GPIO	180
-#define PAD_CORE_FREF_CLK1_OUT_GPIO	181
-#define PAD_CORE_FREF_CLK2_OUT_GPIO	182
-#define PAD_CORE_SYS_NIRQ2_GPIO	183
-#define PAD_CORE_SYS_BOOT0_GPIO	184
-#define PAD_CORE_SYS_BOOT1_GPIO	185
-#define PAD_CORE_SYS_BOOT2_GPIO	186
-#define PAD_CORE_SYS_BOOT3_GPIO	187
-#define PAD_CORE_SYS_BOOT4_GPIO	188
-#define PAD_CORE_SYS_BOOT5_GPIO	189
-#define PAD_CORE_DPM_EMU0_GPIO	11
-#define PAD_CORE_DPM_EMU1_GPIO	12
-#define PAD_CORE_DPM_EMU2_GPIO	13
-#define PAD_CORE_DPM_EMU3_GPIO	14
-#define PAD_CORE_DPM_EMU4_GPIO	15
-#define PAD_CORE_DPM_EMU5_GPIO	16
-#define PAD_CORE_DPM_EMU6_GPIO	17
-#define PAD_CORE_DPM_EMU7_GPIO	18
-#define PAD_CORE_DPM_EMU8_GPIO	19
-#define PAD_CORE_DPM_EMU9_GPIO	20
-#define PAD_CORE_DPM_EMU10_GPIO	21
-#define PAD_CORE_DPM_EMU11_GPIO	22
-#define PAD_CORE_DPM_EMU12_GPIO	23
-#define PAD_CORE_DPM_EMU13_GPIO	24
-#define PAD_CORE_DPM_EMU14_GPIO	25
-#define PAD_CORE_DPM_EMU15_GPIO	26
-#define PAD_CORE_DPM_EMU16_GPIO	27
-#define PAD_CORE_DPM_EMU17_GPIO	28
-#define PAD_CORE_DPM_EMU18_GPIO	190
-#define PAD_CORE_DPM_EMU19_GPIO	191
-
-
-#define PAD_WAKEUP_SIM_IO							0x0040
-#define PAD_WAKEUP_SIM_CLK							0x0042
-#define PAD_WAKEUP_SIM_RESET						0x0044	
-#define PAD_WAKEUP_SIM_CD                           0x0046
-#define PAD_WAKEUP_SIM_PWRCTRL                      0x0048
-#define PAD_WAKEUP_SR_SCL                           0x004A
-#define PAD_WAKEUP_SR_SDA                           0x004C
-#define PAD_WAKEUP_FREF_XTAL_IN                     0x004E
-#define PAD_WAKEUP_FREF_SLICER_IN                   0x0050
-#define PAD_WAKEUP_FREF_CLK_IOREQ                   0x0052
-#define PAD_WAKEUP_FREF_CLK0_OUT                    0x0054
-#define PAD_WAKEUP_FREF_CLK3_REQ                    0x0056
-#define PAD_WAKEUP_FREF_CLK3_COUT                   0x0058
-#define PAD_WAKEUP_FREF_CLK4_REQ                    0x005A
-#define PAD_WAKEUP_FREF_CLK4_OUT                    0x005C
-#define PAD_WAKEUP_SYS_32K                          0x005E
-#define PAD_WAKEUP_SYS_NRESPWRON                    0x0060
-#define PAD_WAKEUP_SYS_NRESWARM                     0x0062
-#define PAD_WAKEUP_SYS_PWR_REQ                      0x0064
-#define PAD_WAKEUP_SYS_PWRON_RESET_OUT              0x0066
-#define PAD_WAKEUP_SYS_BOOT6                        0x0068
-#define PAD_WAKEUP_SYS_BOOT7                        0x006A
-#define PAD_WAKEUP_JTAG_NTRST                       0x006C
-#define PAD_WAKEUP_JTAG_TCK                         0x006E
-#define PAD_WAKEUP_JTAG_RTCK                        0x0070
-#define PAD_WAKEUP_JTAG_TMS_TMSC                    0x0072
-#define PAD_WAKEUP_JTAG_TDI                         0x0074
-#define PAD_WAKEUP_JTAG_TDO							0x0076
-
-
-#define PAD_WAKEUP_SIM_IO_GPIO				0
-#define PAD_WAKEUP_SIM_CLK_GPIO				  	1
-#define PAD_WAKEUP_SIM_RESET_GPIO			2
-#define PAD_WAKEUP_SIM_CD_GPIO               	3
-#define PAD_WAKEUP_SIM_PWRCTRL_GPIO          	4
-#define PAD_WAKEUP_FREF_SLICER_IN_GPIO       	5
-#define PAD_WAKEUP_FREF_CLK0_OUT_GPIO        	6
-#define PAD_WAKEUP_FREF_CLK3_REQ_GPIO        	30
-#define PAD_WAKEUP_FREF_CLK3_COUT_GPIO       	31
-#define PAD_WAKEUP_FREF_CLK4_REQ_GPIO        	7
-#define PAD_WAKEUP_FREF_CLK4_OUT_GPIO        	8
-#define PAD_WAKEUP_SYS_PWRON_RESET_OUT_GPIO  	29
-#define PAD_WAKEUP_SYS_BOOT6_GPIO            	9
-#define PAD_WAKEUP_SYS_BOOT7_GPIO            	10
-
-#define PAD_TO_INDEX(offset) ((offset - 0x40)/2)
-#define WKUP_PAD_TO_INDEX(offset) ((offset - 0x40)/2)
-#define NONGPIO		-1
-
-signed int pad_to_gpio_map[]=
-{
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD0)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD1)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD2)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD3)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD4)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD5)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD6)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD7)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD8)]			=	PAD_CORE_GPMC_AD8_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD9)]			=	PAD_CORE_GPMC_AD9_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD10)]			=	PAD_CORE_GPMC_AD10_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD11)]			=	PAD_CORE_GPMC_AD11_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD12)]			=	PAD_CORE_GPMC_AD12_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD13)]			=	PAD_CORE_GPMC_AD13_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD14)]			=	PAD_CORE_GPMC_AD14_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_AD15)]			=	PAD_CORE_GPMC_AD15_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A16)]			=	PAD_CORE_GPMC_A16_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A17)]			=	PAD_CORE_GPMC_A17_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A18)]			=	PAD_CORE_GPMC_A18_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A19)]			=	PAD_CORE_GPMC_A19_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A20)]			=	PAD_CORE_GPMC_A20_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A21)]			=	PAD_CORE_GPMC_A21_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A22)]			=	PAD_CORE_GPMC_A22_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A23)]			=	PAD_CORE_GPMC_A23_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A24)]			=	PAD_CORE_GPMC_A24_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_A25)]			=	PAD_CORE_GPMC_A25_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS0)]			=	PAD_CORE_GPMC_NCS0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS1)]			=	PAD_CORE_GPMC_NCS1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS2)]			=	PAD_CORE_GPMC_NCS2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS3)]			=	PAD_CORE_GPMC_NCS3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NWP)]			=	PAD_CORE_GPMC_NWP_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_CLK)]			=	PAD_CORE_GPMC_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NADV_ALE)]		=	PAD_CORE_GPMC_NADV_ALE_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NOE)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NWE)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NBE0_CLE)]		=	PAD_CORE_GPMC_NBE0_CLE_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NBE1)]			=	PAD_CORE_GPMC_NBE1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_WAIT0)]			=	PAD_CORE_GPMC_WAIT0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_WAIT1)]			=	PAD_CORE_GPMC_WAIT1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_WAIT2)]			=	PAD_CORE_GPMC_WAIT2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS4)]			=	PAD_CORE_GPMC_NCS4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS5)]			=	PAD_CORE_GPMC_NCS5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS6)]			=	PAD_CORE_GPMC_NCS6_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPMC_NCS7)]			=	PAD_CORE_GPMC_NCS7_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPIO63)]			=	PAD_CORE_GPIO63_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPIO64)]			=	PAD_CORE_GPIO64_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPIO65)]			=	PAD_CORE_GPIO65_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_GPIO66)]			=	PAD_CORE_GPIO66_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DX0)]			=	PAD_CORE_CSI21_DX0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DY0)]			=	PAD_CORE_CSI21_DY0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DX1)]			=	PAD_CORE_CSI21_DX1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DY1)]			=	PAD_CORE_CSI21_DY1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DX2)]			=	PAD_CORE_CSI21_DX2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DY2)]			=	PAD_CORE_CSI21_DY2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DX3)]			=	PAD_CORE_CSI21_DX3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DY3)]			=	PAD_CORE_CSI21_DY3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DX4)]			=	PAD_CORE_CSI21_DX4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI21_DY4)]			=	PAD_CORE_CSI21_DY4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI22_DX0)]			=	PAD_CORE_CSI22_DX0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI22_DY0)]			=	PAD_CORE_CSI22_DY0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI22_DX1)]			=	PAD_CORE_CSI22_DX1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CSI22_DY1)]			=	PAD_CORE_CSI22_DY1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CAM_SHUTTER)]		=	PAD_CORE_CAM_SHUTTER_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CAM_STROBE)]			=	PAD_CORE_CAM_STROBE_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_CAM_GLOBALRESET)]			=	PAD_CORE_CAM_GLOBALRESET_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_CLK)]			=	PAD_CORE_USBB1_ULPITLL_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_STP)]			=	PAD_CORE_USBB1_ULPITLL_STP_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_DIR)]			=	PAD_CORE_USBB1_ULPITLL_DIR_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_NXT)]			=	PAD_CORE_USBB1_ULPITLL_NXT_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D0)]			=	PAD_CORE_USBB1_ULPITLL_D0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D1)]			=	PAD_CORE_USBB1_ULPITLL_D1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D2)]			=	PAD_CORE_USBB1_ULPITLL_D2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D3)]			=	PAD_CORE_USBB1_ULPITLL_D3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D4)]			=	PAD_CORE_USBB1_ULPITLL_D4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D5)]			=	PAD_CORE_USBB1_ULPITLL_D5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D6)]			=	PAD_CORE_USBB1_ULPITLL_D6_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_ULPITLL_D7)]			=	PAD_CORE_USBB1_ULPITLL_D7_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_HSIC_DATA)]			=	PAD_CORE_USBB1_HSIC_DATA_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB1_HSIC_STROBE)]			=	PAD_CORE_USBB1_HSIC_STROBE_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBC1_ICUSB_DP)]			=	PAD_CORE_USBC1_ICUSB_DP_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBC1_ICUSB_DM)]			=	PAD_CORE_USBC1_ICUSB_DM_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_CLK)]				=	PAD_CORE_SDMMC1_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_CMD)]				=	PAD_CORE_SDMMC1_CMD_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT0)]			=	PAD_CORE_SDMMC1_DAT0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT1)]			=	PAD_CORE_SDMMC1_DAT1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT2)]			=	PAD_CORE_SDMMC1_DAT2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT3)]			=	PAD_CORE_SDMMC1_DAT3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT4)]			=	PAD_CORE_SDMMC1_DAT4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT5)]			=	PAD_CORE_SDMMC1_DAT5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT6)]			=	PAD_CORE_SDMMC1_DAT6_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC1_DAT7)]			=	PAD_CORE_SDMMC1_DAT7_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP2_CLKX)]		=	PAD_CORE_ABE_MCBSP2_CLKX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP2_DR)]			=	PAD_CORE_ABE_MCBSP2_DR_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP2_DX)]			=	PAD_CORE_ABE_MCBSP2_DX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP2_FSX)]			=	PAD_CORE_ABE_MCBSP2_FSX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP1_CLKX)]		=	PAD_CORE_ABE_MCBSP1_CLKX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP1_DR)]			=	PAD_CORE_ABE_MCBSP1_DR_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP1_DX)]			=	PAD_CORE_ABE_MCBSP1_DX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_MCBSP1_FSX)]			=	PAD_CORE_ABE_MCBSP1_FSX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_PDM_UL_DATA)]		=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_PDM_DL_DATA)]		=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_PDM_FRAME)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_PDM_LB_CLK)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_CLKS)]				=	PAD_CORE_ABE_CLKS_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_DMIC_CLK1)]			=	PAD_CORE_ABE_DMIC_CLK1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_DMIC_DIN1)]			=	PAD_CORE_ABE_DMIC_DIN1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_DMIC_DIN2)]			=	PAD_CORE_ABE_DMIC_DIN2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_ABE_DMIC_DIN3)]			=	PAD_CORE_ABE_DMIC_DIN3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART2_CTS)]				=	PAD_CORE_UART2_CTS_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART2_RTS)]				=	PAD_CORE_UART2_RTS_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART2_RX)]				=	PAD_CORE_UART2_RX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART2_TX)]				=	PAD_CORE_UART2_TX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_HDQ_SIO)]				=	PAD_CORE_HDQ_SIO_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C1_SCL)]				=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C1_SDA)]				=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C2_SCL)]				=	PAD_CORE_I2C2_SCL_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C2_SDA)]				=	PAD_CORE_I2C2_SDA_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C3_SCL)]				=	PAD_CORE_I2C3_SCL_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C3_SDA)]				=	PAD_CORE_I2C3_SDA_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C4_SCL)]				=	PAD_CORE_I2C4_SCL_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_I2C4_SDA)]				=	PAD_CORE_I2C4_SDA_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_CLK)]				=	PAD_CORE_MCSPI1_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_SOMI)]				=	PAD_CORE_MCSPI1_SOMI_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_SIMO)]				=	PAD_CORE_MCSPI1_SIMO_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_CS0)]				=	PAD_CORE_MCSPI1_CS0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_CS1)]				=	PAD_CORE_MCSPI1_CS1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_CS2)]				=	PAD_CORE_MCSPI1_CS2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI1_CS3)]				=	PAD_CORE_MCSPI1_CS3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART3_CTS_RCTX)]			=	PAD_CORE_UART3_CTS_RCTX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART3_RTS_SD)]			=	PAD_CORE_UART3_RTS_SD_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART3_RX_IRRX)]			=	PAD_CORE_UART3_RX_IRRX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART3_TX_IRTX)]			=	PAD_CORE_UART3_TX_IRTX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_CLK)]				=	PAD_CORE_SDMMC5_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_CMD)]				=	PAD_CORE_SDMMC5_CMD_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_DAT0)]			=	PAD_CORE_SDMMC5_DAT0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_DAT1)]			=	PAD_CORE_SDMMC5_DAT1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_DAT2)]			=	PAD_CORE_SDMMC5_DAT2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SDMMC5_DAT3)]			=	PAD_CORE_SDMMC5_DAT3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI4_CLK)]				=	PAD_CORE_MCSPI4_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI4_SIMO)]			=	PAD_CORE_MCSPI4_SIMO_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI4_SOMI)]			=	PAD_CORE_MCSPI4_SOMI_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_MCSPI4_CS0)]			=	PAD_CORE_MCSPI4_CS0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART4_RX)]			=	PAD_CORE_UART4_RX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_UART4_TX)]			=	PAD_CORE_UART4_TX_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_CLK)]		=	PAD_CORE_USBB2_ULPITLL_CLK_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_STP)]		=	PAD_CORE_USBB2_ULPITLL_STP_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_DIR)]		=	PAD_CORE_USBB2_ULPITLL_DIR_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_NXT)]		=	PAD_CORE_USBB2_ULPITLL_NXT_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D0)]		=	PAD_CORE_USBB2_ULPITLL_D0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D1)]		=	PAD_CORE_USBB2_ULPITLL_D1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D2)]		=	PAD_CORE_USBB2_ULPITLL_D2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D3)]		=	PAD_CORE_USBB2_ULPITLL_D3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D4)]		=	PAD_CORE_USBB2_ULPITLL_D4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D5)]		=	PAD_CORE_USBB2_ULPITLL_D5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D6)]		=	PAD_CORE_USBB2_ULPITLL_D6_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_ULPITLL_D7)]		=	PAD_CORE_USBB2_ULPITLL_D7_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBB2_HSIC_DATA)]		=	PAD_CORE_USBB2_HSIC_DATA_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_LUSBB2_HSIC_STROBE)]		=	PAD_CORE_LUSBB2_HSIC_STROBE_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL3)]			=	PAD_CORE_KPD_COL3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL4)]			=	PAD_CORE_KPD_COL4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL5)]			=	PAD_CORE_KPD_COL5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL0)]			=	PAD_CORE_KPD_COL0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL1)]			=	PAD_CORE_KPD_COL1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_COL2)]			=	PAD_CORE_KPD_COL2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW3)]			=	PAD_CORE_KPD_ROW3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW4)]			=	PAD_CORE_KPD_ROW4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW5)]			=	PAD_CORE_KPD_ROW5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW0)]			=	PAD_CORE_KPD_ROW0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW1)]			=	PAD_CORE_KPD_ROW1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_KPD_ROW2)]			=	PAD_CORE_KPD_ROW2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBA0_OTG_CE)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBA0_OTG_DP)]			=	PAD_CORE_USBA0_OTG_DP_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_USBA0_OTG_DM)]			=	PAD_CORE_USBA0_OTG_DM_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_FREF_CLK1_OUT)]			=	PAD_CORE_FREF_CLK1_OUT_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_FREF_CLK2_OUT)]			=	PAD_CORE_FREF_CLK2_OUT_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_NIRQ1)]			=	NONGPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_NIRQ2)]			=	PAD_CORE_SYS_NIRQ2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT0)]			=	PAD_CORE_SYS_BOOT0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT1)]			=	PAD_CORE_SYS_BOOT1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT2)]			=	PAD_CORE_SYS_BOOT2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT3)]			=	PAD_CORE_SYS_BOOT3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT4)]			=	PAD_CORE_SYS_BOOT4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_SYS_BOOT5)]			=	PAD_CORE_SYS_BOOT5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU0)]			=	PAD_CORE_DPM_EMU0_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU1)]			=	PAD_CORE_DPM_EMU1_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU2)]			=	PAD_CORE_DPM_EMU2_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU3)]			=	PAD_CORE_DPM_EMU3_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU4)]			=	PAD_CORE_DPM_EMU4_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU5)]			=	PAD_CORE_DPM_EMU5_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU6)]			=	PAD_CORE_DPM_EMU6_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU7)]			=	PAD_CORE_DPM_EMU7_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU8)]			=	PAD_CORE_DPM_EMU8_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU9)]			=	PAD_CORE_DPM_EMU9_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU10)]			=	PAD_CORE_DPM_EMU10_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU11)]			=	PAD_CORE_DPM_EMU11_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU12)]			=	PAD_CORE_DPM_EMU12_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU13)]			=	PAD_CORE_DPM_EMU13_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU14)]			=	PAD_CORE_DPM_EMU14_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU15)]			=	PAD_CORE_DPM_EMU15_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU16)]			=	PAD_CORE_DPM_EMU16_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU17)]			=	PAD_CORE_DPM_EMU17_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU18)]			=	PAD_CORE_DPM_EMU18_GPIO,
-	[PAD_TO_INDEX(PAD_CORE_DPM_EMU19)]			=	PAD_CORE_DPM_EMU19_GPIO,
-};
-
-unsigned short omapconf_mux[OMAP4_CTRL_MODULE_PAD_CORE_MUX_SIZE/2];
-#include <linux/gpio.h>
-void force_mux_offmode_setting(void)
-{
-	unsigned short mux_val=0;
-
-	int gpio_num=0;
-	int i=0;
-	unsigned int mux_addr=0;
-
-	for ( i=0; i <= OMAP4_CTRL_MODULE_PAD_CORE_MUX_SIZE ; i+=0x2) {
-
-	
-		mux_addr = OMAP4_CTRL_MODULE_PAD_CORE_MUX_PBASE  + OMAP4_CTRL_MODULE_PAD_GPMC_AD0_OFFSET + i;
-		mux_val = omapconf_mux[i/2] = omap_readw(mux_addr);
-
-		if(mux_val & OMAP_OFF_EN) { /*OFF Mode Enable*/
-
-			gpio_num = 	pad_to_gpio_map[i/2];
-#if 0
-			char buf[32];
-			printk("[%s] add=0x%x mux_val=0x%08x gpio=%d\n", __func__, mux_addr, mux_val, gpio_num);
-
-
-			memset(buf, 0x0, 32);
-
-			/*setting gpio mode*/
-			sprintf(buf, "GPIO-%d", gpio_num);
-#endif
-
-
-			if (gpio_num < 0) {
-				if ( (mux_val  & 0x3E00) ==  OMAP_PIN_OFF_INPUT_PULLUP) { /* OFF Input*/
-
-					//printk("[%s] addr=0x%x PULLUP\n", __func__, mux_addr);
-					omap_writew(OMAP_MUX_MODE7 | OMAP_PIN_INPUT_PULLUP, mux_addr); 
-
-				} else if ((mux_val  & 0x3E00) ==  OMAP_PIN_OFF_INPUT_PULLDOWN) {
-
-					omap_writew(OMAP_MUX_MODE7 | OMAP_PIN_INPUT_PULLDOWN, mux_addr); 
-					//printk("[%s] addr=0x%x PULLDOWN\n", __func__, mux_addr);
-
-				}
-			//	continue;
-			}
-#if 0
-			if(!((mux_val & 0x7)==0x3) && gpio_request(gpio_num, buf)<0){
-				printk("[%s] fail to register gpio(%d)\n", __func__, gpio_num);
-			}
-
-
-			if ( mux_val  & OMAP_OFFIN_EN ) { /* OFF Input*/
-				/*gpio input*/
-				gpio_direction_input(gpio_num);
-
-				if ( (mux_val  & 0x3E00) ==  OMAP_PIN_OFF_INPUT_PULLUP) { /* OFF Input*/
-					mux_val |= OMAP_PIN_INPUT_PULLUP;
-					omap_writew(mux_val, mux_addr); 
-					printk("[%s] addr=0x%x GPIO PULLUP\n", __func__, mux_addr);
-
-				} else if ( (mux_val  & 0x3E00) ==  OMAP_PIN_OFF_INPUT_PULLDOWN) { /* OFF Input*/
-					mux_val &= ~(1<<4);
-					mux_val |= OMAP_PIN_INPUT_PULLDOWN;
-					omap_writew(mux_val, mux_addr); 
-					printk("[%s] addr=0x%x GPIO PULLDOWN\n", __func__, mux_addr);
-				}
-
-			} else { /*OFF Mode Output*/
-				gpio_direction_output(gpio_num, !!(mux_val & OMAP_OFFOUT_VAL));
-				printk("[%s] addr=0x%x GPIO OUTPUT %d\n", __func__, mux_addr, !!(mux_val & OMAP_OFFOUT_VAL));
-			}
-#endif
-
-		}
-	}
-
-
-	return;
-}
-
-void restore_mux_offmode_setting(void)
-{
-
-	unsigned short mux_val=0;
-
-	int gpio_num=0;
-	int i=0;
-	unsigned int mux_addr=0;
-	for ( i=0; i <= OMAP4_CTRL_MODULE_PAD_CORE_MUX_SIZE ; i+=0x2) {
-
-		mux_addr = OMAP4_CTRL_MODULE_PAD_CORE_MUX_PBASE  + OMAP4_CTRL_MODULE_PAD_GPMC_AD0_OFFSET + i;
-		mux_val = omapconf_mux[i/2];
-
-		if(mux_val & OMAP_OFF_EN) { /*OFF Mode Enable*/
-			gpio_num = 	pad_to_gpio_map[i/2];
-		//	printk("[%s] add=0x%x mux_val=0x%08x gpio=%d\n", __func__, mux_addr, mux_val, gpio_num);
-#if 0
-			if(gpio_num >=0 && !((mux_val & 0x7)==0x3))
-				gpio_free(gpio_num);
-#endif
-
-			if (gpio_num < 0) 
-				omap_writew(mux_val, mux_addr); 
-
-		}
-
-
-	}
-
-	return;
-}
-
 

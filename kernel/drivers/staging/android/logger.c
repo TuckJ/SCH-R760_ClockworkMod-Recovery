@@ -29,13 +29,7 @@
 
 #include <asm/ioctls.h>
 
-#include <mach/sec_getlog.h>
-
-#ifdef CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL
-//{{ pass platform log to kernel - 1/3
-static char klog_buf[256];
-//}} pass platform log to kernel - 1/3
-#endif /* CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL */
+#include <mach/sec_addon.h>
 
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
@@ -319,20 +313,7 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 		if (copy_from_user(log->buffer, buf + len, count - len))
 			return -EFAULT;
 
-#ifdef CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL
-	//{{ pass platform log (!@hello) to kernel - 2/3
-	memset(klog_buf,0,255);
-
-	if(strncmp(log->buffer  + log->w_off,  "!@", 2) == 0) {
-		if (count < 255)
-			memcpy(klog_buf,log->buffer  + log->w_off, count);
-		else
-			memcpy(klog_buf,log->buffer  + log->w_off, 255);
-
-		klog_buf[255]=0;
-	}
-	//}} pass platform log (!@hello) to kernel - 2/3
-#endif /* CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL */
+	sec_logger_update_buffer(log->buffer + log->w_off, count);
 
 	log->w_off = logger_offset(log->w_off + count);
 
@@ -396,19 +377,14 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		ret += nr;
 	}
 
+	sec_logger_add_log_ram_console(log, orig);
+
 	mutex_unlock(&log->mutex);
 
 	/* wake up any blocked readers */
 	wake_up_interruptible(&log->wq);
 
-#ifdef CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL
-	//{{ pass platform log (!@hello) to kernel - 3/3
-	if(strncmp(klog_buf, "!@", 2) == 0)
-	{
-		printk("%s\n",klog_buf);
-	}
-	//}} pass platform log (!@hello) to kernel - 3/3
-#endif /* CONFIG_SAMSUNG_PASS_PLATFORM_LOG_TO_KERNEL */
+	sec_logger_print_buffer();
 
 	return ret;
 }
@@ -587,17 +563,10 @@ static struct logger_log VAR = { \
 	.size = SIZE, \
 };
 
-#if !defined(CONFIG_SAMSUNG_USE_GETLOG)
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 64*1024)
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
 DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 64*1024)
-DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 64*1024)
-#else
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 512*1024)
-DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 256*1024)
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 512*1024)
 DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 256*1024)
-#endif /* CONFIG_SAMSUNG_USE_GETLOG */
 
 static struct logger_log *get_log_from_minor(int minor)
 {
@@ -649,8 +618,6 @@ static int __init logger_init(void)
 	if (unlikely(ret))
 		goto out;
 
-	sec_getlog_supply_loggerinfo(_buf_log_main, _buf_log_radio,
-				     _buf_log_events, _buf_log_system);
 out:
 	return ret;
 }

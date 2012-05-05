@@ -93,12 +93,13 @@ PVRSRV_ERROR PVRSRVPowerLock(IMG_UINT32	ui32CallerID,
 							 IMG_BOOL	bSystemPowerEvent)
 {
 	PVRSRV_ERROR	eError;
-	SYS_DATA		*psSysData;
-	IMG_UINT32		ui32Timeout = 1000000;
+	SYS_DATA	*psSysData;
+	IMG_UINT32	ui32Timeout = 1000000;
+	IMG_BOOL	bTryLock = (ui32CallerID == ISR_ID);
 
 	SysAcquireData(&psSysData);
 
-	eError = OSPowerLockWrap();
+	eError = OSPowerLockWrap(bTryLock);
 	if (eError != PVRSRV_OK)
 	{
 		return eError;
@@ -112,7 +113,7 @@ PVRSRV_ERROR PVRSRVPowerLock(IMG_UINT32	ui32CallerID,
 		{
 			break;
 		}
-		else if (ui32CallerID == ISR_ID)
+		else if (bTryLock)
 		{
 			
 
@@ -291,20 +292,12 @@ PVRSRV_ERROR PVRSRVDevicePostPowerStateKM(IMG_BOOL					bAllDevices,
 
 IMG_EXPORT
 PVRSRV_ERROR PVRSRVSetDevicePowerStateKM(IMG_UINT32				ui32DeviceIndex,
-										 PVRSRV_DEV_POWER_STATE	eNewPowerState,
-										 IMG_UINT32				ui32CallerID,
-										 IMG_BOOL				bRetainMutex)
+										 PVRSRV_DEV_POWER_STATE	eNewPowerState)
 {
 	PVRSRV_ERROR	eError;
 	SYS_DATA		*psSysData;
 
 	SysAcquireData(&psSysData);
-
-	eError = PVRSRVPowerLock(ui32CallerID, IMG_FALSE);
-	if(eError != PVRSRV_OK)
-	{
-		return eError;
-	}
 
 	#if defined(PDUMP)
 	if (eNewPowerState == PVRSRV_DEV_POWER_STATE_DEFAULT)
@@ -353,11 +346,6 @@ Exit:
 	{
 		PVR_DPF((PVR_DBG_ERROR,
 				"PVRSRVSetDevicePowerStateKM : Transition to %d FAILED 0x%x", eNewPowerState, eError));
-	}
-
-	if (!bRetainMutex || (eError != PVRSRV_OK))
-	{
-		PVRSRVPowerUnlock(ui32CallerID);
 	}
 
 	return eError;

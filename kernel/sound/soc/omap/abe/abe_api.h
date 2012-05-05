@@ -1,105 +1,97 @@
 /*
- *
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * GPL LICENSE SUMMARY
- *
- * Copyright(c) 2010-2011 Texas Instruments Incorporated,
- * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
- * The full GNU General Public License is included in this distribution
- * in the file called LICENSE.GPL.
- *
- * BSD LICENSE
- *
- * Copyright(c) 2010-2011 Texas Instruments Incorporated,
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *   distribution.
- * * Neither the name of Texas Instruments Incorporated nor the names of
- *   its contributors may be used to endorse or promote products derived
- *   from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- */
+
+  This file is provided under a dual BSD/GPLv2 license.  When using or
+  redistributing this file, you may do so under either license.
+
+  GPL LICENSE SUMMARY
+
+  Copyright(c) 2010-2011 Texas Instruments Incorporated,
+  All rights reserved.
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of version 2 of the GNU General Public License as
+  published by the Free Software Foundation.
+
+  This program is distributed in the hope that it will be useful, but
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+  The full GNU General Public License is included in this distribution
+  in the file called LICENSE.GPL.
+
+  BSD LICENSE
+
+  Copyright(c) 2010-2011 Texas Instruments Incorporated,
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions
+  are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in
+      the documentation and/or other materials provided with the
+      distribution.
+    * Neither the name of Texas Instruments Incorporated nor the names of
+      its contributors may be used to endorse or promote products derived
+      from this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
+
 #ifndef _ABE_API_H_
 #define _ABE_API_H_
 
-#include <linux/string.h>
-#include <linux/mutex.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/init.h>
+#include <linux/err.h>
+#include <linux/slab.h>
 
-#define KEYTONE_MUTE_GLITCH
-//#define PING_PONG_4
+#include "abe_dm_addr.h"
+#include "abe_dbg.h"
 
-struct omap_abe {
-	void __iomem *io_base;
-	u32 firmware_version_number;
-	u16 MultiFrame[PROCESSING_SLOTS][TASKS_IN_SLOT];
-	u32 compensated_mixer_gain;
-	u8  muted_gains_indicator[MAX_NBGAIN_CMEM];
-	u32 desired_gains_decibel[MAX_NBGAIN_CMEM];
-	u32 muted_gains_decibel[MAX_NBGAIN_CMEM];
-	u32 desired_gains_linear[MAX_NBGAIN_CMEM];
-	u32 desired_ramp_delay_ms[MAX_NBGAIN_CMEM];
+#define ABE_TASK_ID(ID) (OMAP_ABE_D_TASKSLIST_ADDR + sizeof(ABE_STask)*(ID))
 
-#ifdef KEYTONE_MUTE_GLITCH
-	int pp_buf_id;
-	int pp_buf_id_next;
-#ifdef PING_PONG_4	
-	int pp_buf_addr[4];
-#else
-	int pp_buf_addr[8];	
-#endif
-	int pp_first_irq;
-#endif
-
-	struct mutex mutex;
-
-	u32 pdm_dl1_status;
-	u32 pdm_dl2_status;
-	u32 pdm_vib_status;
-
-	/* Debug Data */
-	u32 irq_dbg_read_ptr;
-	u32 dbg_activity_log[D_DEBUG_HAL_TASK_sizeof];
-	u32 dbg_activity_log_write_pointer;
-	u32 dbg_mask;
-	u32 dbg_param;
-	u32 dbg_output;
-};
+#define TASK_ASRC_VX_DL_SLT 0
+#define TASK_ASRC_VX_DL_IDX 3
+#define TASK_VX_DL_SLT 1
+#define TASK_VX_DL_IDX 3
+#define TASK_DL2Mixer_SLT 1
+#define TASK_DL2Mixer_IDX 6
+#define TASK_DL1Mixer_SLT 2
+#define TASK_DL1Mixer_IDX 0
+#define TASK_VX_UL_SLT 12
+#define TASK_VX_UL_IDX 5
+#define TASK_BT_DL_48_8_SLT 14
+#define TASK_BT_DL_48_8_IDX 4
+#define TASK_ASRC_BT_UL_SLT 15
+#define TASK_ASRC_BT_UL_IDX 6
+#define TASK_ASRC_VX_UL_SLT 16
+#define TASK_ASRC_VX_UL_IDX 2
+#define TASK_BT_UL_8_48_SLT 17
+#define TASK_BT_UL_8_48_IDX 2
+#define TASK_IO_MM_DL_SLT 18
+#define TASK_IO_MM_DL_IDX 0
+#define TASK_ASRC_BT_DL_SLT 18
+#define TASK_ASRC_BT_DL_IDX 6
 
 /**
  * abe_reset_hal - reset the ABE/HAL
@@ -110,8 +102,7 @@ struct omap_abe {
  * default AESS registers.
  * Called after a PRCM cold-start reset of ABE
  */
-int abe_reset_hal(void);
-
+abehal_status abe_reset_hal(void);
 /**
  * abe_load_fw_param - Load ABE Firmware memories
  * @PMEM: Pointer of Program memory data
@@ -124,37 +115,7 @@ int abe_reset_hal(void);
  * @DMEM_SIZE: Size of DMEM data
  *
  */
-int abe_load_fw_param(u32 *FW);
-
-/**
- * abe_reload_fw - Reload ABE Firmware after OFF mode
- */
-int abe_reload_fw(void);
-
-/**
- * abe_load_fw - Load ABE Firmware and initialize memories
- *
- */
-int abe_load_fw(void);
-
-/**
- * abe_read_hardware_configuration - Returns default
- *	HW periferals configuration
- * @u: use-case description list (pointer)
- * @o: opp mode (pointer)
- * @hw: pointer to the output HW structure
- *
- * Parameter :
- * U : use-case description list (pointer)
- * H : pointer to the output structure
- *
- * Operations :
- * Returns a structure with the HW thresholds compatible with
- *	the HAL/FW/AESS_ATC. Will be upgraded in FW06.
- */
-int abe_read_hardware_configuration(u32 *u, u32 *o,
-				abe_hw_config_init_t *hw);
-
+abehal_status abe_load_fw_param(u32 *FW);
 /**
  * abe_irq_processing - Process ABE interrupt
  *
@@ -166,34 +127,29 @@ int abe_read_hardware_configuration(u32 *u, u32 *o,
  * the embedded debugger when the firmware stops on programmable break-points,
  * etc ...
  */
-int abe_irq_processing(void);
-
+abehal_status abe_irq_processing(void);
 /**
  * abe_irq_clear - clear ABE interrupt
  *
  * This subroutine is call to clear MCU Irq
  */
-int abe_clear_irq(void);
-
+abehal_status abe_clear_irq(void);
 /**
  * abe_disable_irq - disable MCU/DSP ABE interrupt
  *
  * This subroutine is disabling ABE MCU/DSP Irq
  */
-int abe_disable_irq(void);
-
+abehal_status abe_disable_irq(void);
 /*
  * abe_check_activity - check all ports are closed
  */
-int abe_check_activity(void);
-
+u32 abe_check_activity(void);
 /**
  * abe_wakeup - Wakeup ABE
  *
  * Wakeup ABE in case of retention
  */
-int abe_wakeup(void);
-
+abehal_status abe_wakeup(void);
 /**
  * abe_start_event_generator - Stops event generator source
  *
@@ -201,8 +157,7 @@ int abe_wakeup(void);
  * Upper layer must wait 1/96kHz to be sure that engine reaches
  * the IDLE instruction.
  */
-int abe_start_event_generator(void);
-
+abehal_status abe_start_event_generator(void);
 /**
  * abe_stop_event_generator - Stops event generator source
  *
@@ -210,16 +165,7 @@ int abe_start_event_generator(void);
  * Upper layer must wait 1/96kHz to be sure that engine reaches
  * the IDLE instruction.
  */
-int abe_stop_event_generator(void);
-
-/**
- * abe_select_main_port - Select stynchronization port for Event generator.
- * @id: audio port name
- *
- * tells the FW which is the reference stream for adjusting
- * the processing on 23/24/25 slots
- */
-int abe_select_main_port(u32 id);
+abehal_status abe_stop_event_generator(void);
 
 /**
  * abe_write_event_generator - Selects event generator source
@@ -241,15 +187,7 @@ int abe_select_main_port(u32 id);
  * (1<<1) in order to have the same speed at 50% and 100% OPP
  * (only 15 MSB bits are used at OPP50%)
  */
-int abe_write_event_generator(u32 e);
-
-/**
- * abe_read_use_case_opp() - description for void abe_read_use_case_opp().
- *
- * returns the expected min OPP for a given use_case list
- */
-int abe_read_use_case_opp(u32 *u, u32 *o);
-
+abehal_status abe_write_event_generator(u32 e);
 /**
  * abe_set_opp_processing - Set OPP mode for ABE Firmware
  * @opp: OOPP mode
@@ -265,8 +203,7 @@ int abe_read_use_case_opp(u32 *u, u32 *o);
  * this switch.
  *
  */
-int abe_set_opp_processing(u32 opp);
-
+abehal_status abe_set_opp_processing(u32 opp);
 /**
  * abe_set_ping_pong_buffer
  * @port: ABE port ID
@@ -275,8 +212,7 @@ int abe_set_opp_processing(u32 opp);
  * Updates the next ping-pong buffer with "size" bytes copied from the
  * host processor. This API notifies the FW that the data transfer is done.
  */
-int abe_set_ping_pong_buffer(u32 port, u32 n_bytes);
-
+abehal_status abe_set_ping_pong_buffer(u32 port, u32 n_bytes);
 /**
  * abe_read_next_ping_pong_buffer
  * @port: ABE portID
@@ -285,8 +221,7 @@ int abe_set_ping_pong_buffer(u32 port, u32 n_bytes);
  *
  * Tell the next base address of the next ping_pong Buffer and its size
  */
-int abe_read_next_ping_pong_buffer(u32 port, u32 *p, u32 *n);
-
+abehal_status abe_read_next_ping_pong_buffer(u32 port, u32 *p, u32 *n);
 /**
  * abe_init_ping_pong_buffer
  * @id: ABE port ID
@@ -297,9 +232,8 @@ int abe_read_next_ping_pong_buffer(u32 port, u32 *p, u32 *n);
  *
  * Computes the base address of the ping_pong buffers
  */
-int abe_init_ping_pong_buffer(u32 id, u32 size_bytes, u32 n_buffers,
-				u32 *p);
-
+abehal_status abe_init_ping_pong_buffer(u32 id, u32 size_bytes, u32 n_buffers,
+					u32 *p);
 /**
  * abe_read_offset_from_ping_buffer
  * @id: ABE port ID
@@ -309,8 +243,7 @@ int abe_init_ping_pong_buffer(u32 id, u32 size_bytes, u32 n_buffers,
  * Computes the current firmware ping pong read pointer location,
  * expressed in samples, as the offset from the start address of ping buffer.
  */
-int abe_read_offset_from_ping_buffer(u32 id, u32 *n);
-
+abehal_status abe_read_offset_from_ping_buffer(u32 id, u32 *n);
 /**
  * abe_plug_subroutine
  * @id: returned sequence index after plugging a new subroutine
@@ -320,17 +253,15 @@ int abe_read_offset_from_ping_buffer(u32 id, u32 *n);
  *
  * register a list of subroutines for call-back purpose
  */
-int abe_plug_subroutine(u32 *id, abe_subroutine2 f, u32 n,
-			  u32 *params);
-
+abehal_status abe_plug_subroutine(u32 *id, abe_subroutine2 f, u32 n,
+				  u32 *params);
 /**
  * abe_set_sequence_time_accuracy
  * @fast: fast counter
  * @slow: slow counter
  *
  */
-int abe_set_sequence_time_accuracy(u32 fast, u32 slow);
-
+abehal_status abe_set_sequence_time_accuracy(u32 fast, u32 slow);
 /**
  * abe_reset_port
  * @id: ABE port ID
@@ -339,8 +270,7 @@ int abe_set_sequence_time_accuracy(u32 fast, u32 slow);
  * processing features.
  * Clears the internal AE buffers.
  */
-int abe_reset_port(u32 id);
-
+abehal_status abe_reset_port(u32 id);
 /**
  * abe_read_remaining_data
  * @id:	ABE port_ID
@@ -348,8 +278,7 @@ int abe_reset_port(u32 id);
  *
  * computes the remaining amount of data in the buffer.
  */
-int abe_read_remaining_data(u32 port, u32 *n);
-
+abehal_status abe_read_remaining_data(u32 port, u32 *n);
 /**
  * abe_disable_data_transfer
  * @id: ABE port id
@@ -358,8 +287,7 @@ int abe_read_remaining_data(u32 port, u32 *n);
  * disable the IO task (@f = 0)
  * clear ATC DMEM buffer, ATC enabled
  */
-int abe_disable_data_transfer(u32 id);
-
+abehal_status abe_disable_data_transfer(u32 id);
 /**
  * abe_enable_data_transfer
  * @ip: ABE port id
@@ -368,8 +296,7 @@ int abe_disable_data_transfer(u32 id);
  * reset ATC pointers
  * enable the IO task (@f <> 0)
  */
-int abe_enable_data_transfer(u32 id);
-
+abehal_status abe_enable_data_transfer(u32 id);
 /**
  * abe_set_dmic_filter
  * @d: DMIC decimation ratio : 16/25/32/40
@@ -379,8 +306,7 @@ int abe_enable_data_transfer(u32 id);
  * roll-off at 20kHz.
  * The default table is loaded with the DMIC 2.4MHz recommended configuration.
  */
-int abe_set_dmic_filter(u32 d);
-
+abehal_status abe_set_dmic_filter(u32 d);
 /**
  * abe_connect_cbpr_dmareq_port
  * @id: port name
@@ -392,26 +318,8 @@ int abe_set_dmic_filter(u32 d);
  * enables the data echange between a DMA and the ABE through the
  *	CBPr registers of AESS.
  */
-int abe_connect_cbpr_dmareq_port(u32 id, abe_data_format_t *f, u32 d,
-				   abe_dma_t *returned_dma_t);
-
-/**
- * abe_connect_dmareq_ping_pong_port
- * @id: port name
- * @f: desired data format
- * @d: desired dma_request line (0..7)
- * @s: half-buffer (ping) size
- * @a: returned pointer to the base address of the ping-pong buffer and number
- * of samples to exchange during a DMA_request.
- *
- * enables the data echanges between a DMA and a direct access to
- * the DMEM memory of ABE. On each dma_request activation the DMA will exchange
- * "s" bytes and switch to the "pong" buffer for a new buffer exchange.
- */
-int abe_connect_dmareq_ping_pong_port(u32 id, abe_data_format_t *f,
-					u32 d, u32 s,
-					abe_dma_t *returned_dma_t);
-
+abehal_status abe_connect_cbpr_dmareq_port(u32 id, abe_data_format_t *f, u32 d,
+					   abe_dma_t *returned_dma_t);
 /**
  * abe_connect_irq_ping_pong_port
  * @id: port name
@@ -427,10 +335,9 @@ int abe_connect_dmareq_ping_pong_port(u32 id, abe_data_format_t *f,
  * "abe_set_ping_pong_buffer" to notify the new amount of samples in the
  * pong buffer.
  */
-int abe_connect_irq_ping_pong_port(u32 id, abe_data_format_t *f,
-				     u32 subroutine_id, u32 size,
-				     u32 *sink, u32 dsp_mcu_flag);
-
+abehal_status abe_connect_irq_ping_pong_port(u32 id, abe_data_format_t *f,
+					     u32 subroutine_id, u32 size,
+					     u32 *sink, u32 dsp_mcu_flag);
 /**
  * abe_connect_serial_port()
  * @id: port name
@@ -442,34 +349,8 @@ int abe_connect_irq_ping_pong_port(u32 id, abe_data_format_t *f,
  * voice streams to VX_UL, VX_DL, BT_VX_UL, BT_VX_DL. It abstracts the
  * abe_write_port API.
  */
-int abe_connect_serial_port(u32 id, abe_data_format_t *f,
-			      u32 mcbsp_id);
-
-/**
- * abe_connect_slimbus_port
- * @id: port name
- * @f: data format
- * @i: peripheral ID (McBSP #1, #2, #3)
- * @j: peripheral ID (McBSP #1, #2, #3)
- *
- * enables the data echanges between 1/2 SB and an ATC buffers in
- * DMEM.
- */
-int abe_connect_slimbus_port(u32 id, abe_data_format_t *f,
-			       u32 sb_port1, u32 sb_port2);
-
-/**
- * abe_connect_tdm_port
- * @id: port name
- * @f: data format
- * @i: peripheral ID (McBSP #1, #2, #3)
- * @j: peripheral ID (McBSP #1, #2, #3)
- *
- * enables the data echanges between TDM McBSP ATC buffers in
- * DMEM and 1/2 SMEM buffers
- */
-int abe_connect_tdm_port(u32 id, abe_data_format_t *f, u32 mcbsp_id);
-
+abehal_status abe_connect_serial_port(u32 id, abe_data_format_t *f,
+				      u32 mcbsp_id);
 /**
  * abe_read_port_address
  * @dma: output pointer to the DMA iteration and data destination pointer
@@ -478,8 +359,7 @@ int abe_connect_tdm_port(u32 id, abe_data_format_t *f, u32 mcbsp_id);
  * Depending on the protocol being used, adds the base address offset L3
  * (DMA) or MPU (ARM)
  */
-int abe_read_port_address(u32 port, abe_dma_t *dma2);
-
+abehal_status abe_read_port_address(u32 port, abe_dma_t *dma2);
 /**
  * abe_write_equalizer
  * @id: name of the equalizer
@@ -487,8 +367,7 @@ int abe_read_port_address(u32 port, abe_dma_t *dma2);
  *
  * Load the coefficients in CMEM.
  */
-int abe_write_equalizer(u32 id, abe_equ_t *param);
-
+abehal_status abe_write_equalizer(u32 id, abe_equ_t *param);
 /**
  * abe_write_asrc
  * @id: name of the port
@@ -501,8 +380,7 @@ int abe_write_equalizer(u32 id, abe_equ_t *param);
  * or vice versa, there will be click in the output signal. Loading the drift
  * value with zero disables the feature.
  */
-int abe_write_asrc(u32 port, s32 dppm);
-
+abehal_status abe_write_asrc(u32 port, s32 dppm);
 /**
  * abe_write_aps
  * @id: name of the aps filter
@@ -514,8 +392,7 @@ int abe_write_asrc(u32 port, s32 dppm);
  * activated".
  * Loading all the coefficients value with zero disables the feature.
  */
-int abe_write_aps(u32 id, abe_aps_t *param);
-
+abehal_status abe_write_aps(u32 id, struct abe_aps_t *param);
 /**
  * abe_write_mixer
  * @id: name of the mixer
@@ -528,18 +405,12 @@ int abe_write_aps(u32 id, abe_aps_t *param);
  * in mute state". A mixer is disabled with a network reconfiguration
  * corresponding to an OPP value.
  */
-int abe_write_gain(u32 id, s32 f_g, u32 ramp, u32 p);
-
-int abe_use_compensated_gain(u32 on_off);
-
-int abe_enable_gain(u32 id, u32 p);
-
-int abe_disable_gain(u32 id, u32 p);
-
-int abe_mute_gain(u32 id, u32 p);
-
-int abe_unmute_gain(u32 id, u32 p);
-
+abehal_status abe_write_gain(u32 id, s32 f_g, u32 ramp, u32 p);
+abehal_status abe_use_compensated_gain(u32 on_off);
+abehal_status abe_enable_gain(u32 id, u32 p);
+abehal_status abe_disable_gain(u32 id, u32 p);
+abehal_status abe_mute_gain(u32 id, u32 p);
+abehal_status abe_unmute_gain(u32 id, u32 p);
 /**
  * abe_write_mixer
  * @id: name of the mixer
@@ -552,8 +423,7 @@ int abe_unmute_gain(u32 id, u32 p);
  * gain in mute state". A mixer is disabled with a network reconfiguration
  * corresponding to an OPP value.
  */
-int abe_write_mixer(u32 id, s32 f_g, u32 f_ramp, u32 p);
-
+abehal_status abe_write_mixer(u32 id, s32 f_g, u32 f_ramp, u32 p);
 /**
  * abe_read_gain
  * @id: name of the mixer
@@ -561,8 +431,7 @@ int abe_write_mixer(u32 id, s32 f_g, u32 f_ramp, u32 p);
  * @p: list of port corresponding to the above gains
  *
  */
-int abe_read_gain(u32 id, u32 *f_g, u32 p);
-
+abehal_status abe_read_gain(u32 id, u32 *f_g, u32 p);
 /**
  * abe_read_mixer
  * @id: name of the mixer
@@ -575,18 +444,7 @@ int abe_read_gain(u32 id, u32 *f_g, u32 p);
  * gain in mute state". A mixer is disabled with a network reconfiguration
  * corresponding to an OPP value.
  */
-int abe_read_mixer(u32 id, u32 *f_g, u32 p);
-
-/**
- * abe_mono_mixer
- * @id: name of the mixer (MIXDL1 or MIXDL2)
- * @on_off: enable/disable stereo to mono conversion.
- *
- * This API Programs DL1Mixer or DL2Mixer to output mono data
- * on both left and right data paths.
- */
-int abe_mono_mixer(u32 id, u32 on_off);
-
+abehal_status abe_read_mixer(u32 id, u32 *f_g, u32 p);
 /**
  * abe_set_router_configuration
  * @Id: name of the router
@@ -599,14 +457,7 @@ int abe_mono_mixer(u32 id, u32 on_off);
  * route the samples to three directions : REC1 mixer, 2 EANC DMIC source of
  * filtering and MM recording audio path.
  */
-int abe_set_router_configuration(u32 id, u32 k, u32 *param);
-
-/**
- * abe_select_data_source
- * @@@
- */
-int abe_select_data_source(u32 port_id, u32 smem_source);
-
+abehal_status abe_set_router_configuration(u32 id, u32 k, u32 *param);
 /**
  * ABE_READ_DEBUG_TRACE
  *
@@ -621,10 +472,9 @@ int abe_select_data_source(u32 port_id, u32 smem_source);
  * Stops the copy when the max parameter is reached or when the FIFO is empty.
  *
  * Return value :
- *	status
+ * None.
  */
-int abe_read_debug_trace(u32 *data, u32 *n);
-
+abehal_status abe_read_debug_trace(u32 *data, u32 *n);
 /**
  * abe_connect_debug_trace
  * @dma2:pointer to the DMEM trace buffer
@@ -632,48 +482,30 @@ int abe_read_debug_trace(u32 *data, u32 *n);
  * returns the address and size of the real-time debug trace buffer,
  * the content of which will vary from one firmware release to an other
  */
-int abe_connect_debug_trace(abe_dma_t *dma2);
-
+abehal_status abe_connect_debug_trace(abe_dma_t *dma2);
 /**
  * abe_set_debug_trace
  * @debug: debug ID from a list to be defined
  *
  * load a mask which filters the debug trace to dedicated types of data
  */
-int abe_set_debug_trace(abe_dbg_t debug);
-
-/**
- * abe_remote_debugger_interface
- *
- * interpretation of the UART stream from the remote debugger commands.
- * The commands consist in setting break points, loading parameter
- */
-int abe_remote_debugger_interface(u32 n, u8 *p);
-
-/**
- * abe_enable_test_pattern
- *
- */
-int abe_enable_test_pattern(u32 smem_id, u32 on_off);
-
+abehal_status abe_set_debug_trace(abe_dbg_t debug);
 /**
  * abe_init_mem - Allocate Kernel space memory map for ABE
  *
  * Memory map of ABE memory space for PMEM/DMEM/SMEM/DMEM
  */
-int abe_init_mem(void __iomem *_io_base);
+void abe_init_mem(void __iomem **_io_base);
 
-/*
- * abe_add_subroutine - Add a subroutine to be called upon interrupt
+/**
+ * abe_write_pdmdl_offset - write the desired offset on the DL1/DL2 paths
+ *
+ * Parameters:
+ *   path: 1 for the DL1 ABE path, 2 for the DL2 ABE path
+ *   offset_left: integer value that will be added on all PDM left samples
+ *   offset_right: integer value that will be added on all PDM right samples
+ *
  */
-void abe_add_subroutine(u32 *id, abe_subroutine2 f, u32 nparam, u32 *params);
-
-/*
- * abe_read_next_ping_pong_buffer - Read next address in ping-pong buffer
- * processing
- */
-int abe_read_next_ping_pong_buffer(u32 port, u32 *p, u32 *n);
-
-extern u32 abe_irq_pingpong_player_id;
+void abe_write_pdmdl_offset(u32 path, u32 offset_left, u32 offset_right);
 
 #endif/* _ABE_API_H_ */

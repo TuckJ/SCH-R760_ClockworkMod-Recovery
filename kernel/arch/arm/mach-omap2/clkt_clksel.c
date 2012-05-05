@@ -97,7 +97,7 @@ u8 _get_div_and_fieldval(struct clk *src_clk, struct clk *clk,
 				u32 *field_val)
 {
 	const struct clksel *clks;
-	const struct clksel_rate *clkr, *max_clkr;
+	const struct clksel_rate *clkr, *max_clkr = NULL;
 	u8 max_div = 0;
 
 	clks = _get_clksel_by_parent(clk, src_clk);
@@ -188,14 +188,10 @@ static u32 _clksel_to_divisor(struct clk *clk, u32 field_val)
 			break;
 	}
 
-	/* 
-	 * OMAP: clock: mute WARN when searching for fieldval .
-	 * Comment: Changes from WARN to pr_debug;
-	 */
 	if (!clkr->div) {
 		/* This indicates a data error */
-		pr_debug("clock: Could not find fieldval %d for clock %s parent "
-				"%s\n", field_val, clk->name, clk->parent->name);
+		WARN(1, "clock: Could not find fieldval %d for clock %s parent "
+		     "%s\n", field_val, clk->name, clk->parent->name);
 		return 0;
 	}
 
@@ -310,7 +306,7 @@ u32 omap2_clksel_round_rate_div(struct clk *clk, unsigned long target_rate,
 
 		test_rate = clk->parent->rate / clkr->div;
 
-		if ((test_rate / 1000000) <= (target_rate / 1000000))
+		if (test_rate <= target_rate)
 			break; /* found it */
 	}
 

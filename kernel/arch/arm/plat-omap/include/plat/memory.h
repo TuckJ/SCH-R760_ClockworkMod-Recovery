@@ -37,9 +37,9 @@
  * Physical DRAM offset.
  */
 #if defined(CONFIG_ARCH_OMAP1)
-#define PHYS_OFFSET		UL(0x10000000)
+#define PLAT_PHYS_OFFSET		UL(0x10000000)
 #else
-#define PHYS_OFFSET		UL(0x80000000)
+#define PLAT_PHYS_OFFSET		UL(0x80000000)
 #endif
 
 /*
@@ -61,17 +61,17 @@
 #define lbus_to_virt(x)		((x) - OMAP1510_LB_OFFSET + PAGE_OFFSET)
 #define is_lbus_device(dev)	(cpu_is_omap15xx() && dev && (strncmp(dev_name(dev), "ohci", 4) == 0))
 
-#define __arch_page_to_dma(dev, page)	\
-	({ dma_addr_t __dma = page_to_phys(page); \
+#define __arch_pfn_to_dma(dev, pfn)	\
+	({ dma_addr_t __dma = __pfn_to_phys(pfn); \
 	   if (is_lbus_device(dev)) \
 		__dma = __dma - PHYS_OFFSET + OMAP1510_LB_OFFSET; \
 	   __dma; })
 
-#define __arch_dma_to_page(dev, addr)	\
+#define __arch_dma_to_pfn(dev, addr)	\
 	({ dma_addr_t __dma = addr;				\
 	   if (is_lbus_device(dev))				\
 		__dma += PHYS_OFFSET - OMAP1510_LB_OFFSET;	\
-	   phys_to_page(__dma);					\
+	   __phys_to_pfn(__dma);				\
 	})
 
 #define __arch_dma_to_virt(dev, addr)	({ (void *) (is_lbus_device(dev) ? \
@@ -86,20 +86,7 @@
 #endif	/* CONFIG_ARCH_OMAP15XX */
 
 /* Override the ARM default */
-#ifdef CONFIG_FB_OMAP_CONSISTENT_DMA_SIZE
-
-#if (CONFIG_FB_OMAP_CONSISTENT_DMA_SIZE == 0)
-#undef CONFIG_FB_OMAP_CONSISTENT_DMA_SIZE
-#define CONFIG_FB_OMAP_CONSISTENT_DMA_SIZE 2
-#endif
-
-#define OMAP_ABE_CONSISTENT_DMA_SIZE 2
-
-#define CONSISTENT_DMA_SIZE \
-	((((CONFIG_FB_OMAP_CONSISTENT_DMA_SIZE + 1) & ~1) * 1024 * 1024) + \
-	OMAP_ABE_CONSISTENT_DMA_SIZE * 1024 * 1024)
-
-#endif
+#define CONSISTENT_DMA_SIZE		(14 * SZ_1M)
 
 #endif
 

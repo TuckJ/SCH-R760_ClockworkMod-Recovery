@@ -44,6 +44,7 @@
 #include <linux/usb/otg.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
+#include <linux/prefetch.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -54,7 +55,6 @@
 
 #include <plat/dma.h>
 #include <plat/usb.h>
-#include <plat/control.h>
 
 #include "omap_udc.h"
 
@@ -123,11 +123,6 @@ MODULE_PARM_DESC (use_dma, "enable/disable DMA");
 
 static const char driver_name [] = "omap_udc";
 static const char driver_desc [] = DRIVER_DESC;
-
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-static int omap_get_usb_mode(void);
-static int omap_change_usb_mode(int mode);
-#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -2107,7 +2102,8 @@ static inline int machine_without_vbus_sense(void)
 		);
 }
 
-int usb_gadget_register_driver (struct usb_gadget_driver *driver)
+int usb_gadget_probe_driver(struct usb_gadget_driver *driver,
+		int (*bind)(struct usb_gadget *))
 {
 	int		status = -ENODEV;
 	struct omap_ep	*ep;
@@ -2119,8 +2115,7 @@ int usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	if (!driver
 			// FIXME if otg, check:  driver->is_otg
 			|| driver->speed < USB_SPEED_FULL
-			|| !driver->bind
-			|| !driver->setup)
+			|| !bind || !driver->setup)
 		return -EINVAL;
 
 	spin_lock_irqsave(&udc->lock, flags);
@@ -2150,7 +2145,7 @@ int usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	if (udc->dc_clk != NULL)
 		omap_udc_enable_clock(1);
 
-	status = driver->bind (&udc->gadget);
+	status = bind(&udc->gadget);
 	if (status) {
 		DBG("bind to %s --> %d\n", driver->driver.name, status);
 		udc->gadget.dev.driver = NULL;
@@ -2191,7 +2186,7 @@ done:
 		omap_udc_enable_clock(0);
 	return status;
 }
-EXPORT_SYMBOL(usb_gadget_register_driver);
+EXPORT_SYMBOL(usb_gadget_probe_driver);
 
 int usb_gadget_unregister_driver (struct usb_gadget_driver *driver)
 {
@@ -2314,21 +2309,12 @@ static char *trx_mode(unsigned m, int enabled)
 static int proc_otg_show(struct seq_file *s)
 {
 	u32		tmp;
-	u32		trans;
-	char		*ctrl_name;
+	u32		trans = 0;
+	char		*ctrl_name = "(UNKNOWN)";
 
+	/* XXX This needs major revision for OMAP2+ */
 	tmp = omap_readl(OTG_REV);
-	if (cpu_is_omap24xx()) {
-		/*
-		 * REVISIT: Not clear how this works on OMAP2.  trans
-		 * is ANDed to produce bits 7 and 8, which might make
-		 * sense for USB_TRANSCEIVER_CTRL on OMAP1,
-		 * but with CONTROL_DEVCONF, these bits have something to
-		 * do with the frame adjustment counter and McBSP2.
-		 */
-		ctrl_name = "control_devconf";
-		trans = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0);
-	} else {
+	if (cpu_class_is_omap1()) {
 		ctrl_name = "tranceiver_ctrl";
 		trans = omap_readw(USB_TRANSCEIVER_CTRL);
 	}
@@ -2707,16 +2693,6 @@ omap_udc_setup(struct platform_device *odev, struct otg_transceiver *xceiv)
 		udc->gadget.dev.dma_mask = odev->dev.dma_mask;
 
 	udc->transceiver = xceiv;
-
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-    //udc->dev =odev;
-/* soonyong.cho : Initializes values related to change usb mode that used in usb switch */
-	atomic_set(&udc->usb_status, -1); /* -1 means that it is not ready. */
-	udc->get_usb_mode = omap_get_usb_mode;
-	udc->change_usb_mode = omap_change_usb_mode;
-    printk("[USB]%s: set drvdata : Platform device name is %s\n",__func__, odev->name);
-	platform_set_drvdata(odev,udc);
-#endif
 
 	/* ep0 is special; put it right after the SETUP buffer */
 	buf = omap_ep_setup("ep0", 0, USB_ENDPOINT_XFER_CONTROL,
@@ -3127,82 +3103,6 @@ static int omap_udc_resume(struct platform_device *dev)
 	return omap_wakeup(&udc->gadget);
 }
 
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-/* Description : Get host mode
- *		 This code refered from P1.
- * Return value :
- *                -> USB_CABLE_DETACHED   : disabled udc
- *		  -> USB_CABLE_ATTACHED   : enabled udc
- *		  -> USB_OTGHOST_DETACHED : disabled otg host
- *		  -> USB_OTGHOST_ATTACHED : enabled otg host
-                  ->                  -1  : I don't know yet. USB Switch should set usb mode first.
- * Written by SoonYong, Cho (Tue 16, Nov 2010)
- */
-static int omap_get_usb_mode()
-{
-	struct omap_udc *dev = udc;
-	CSY_DBG("current = %d\n", atomic_read(&dev->otg_host_enabled));
-
-	return atomic_read(&dev->usb_status);
-}
-
-/* Description : Change usb mode.  SYS.LSI doesn't implement OTG HOST like OMAP OTG host
- *               If we don't use host phy, we have to use otg host. But this is pilot code.
- *		 C1 model uses HSIC and it shares host core code. Please be careful.
- *		 You must not turn off USB LDO. It needs more implemetation for power control.
- *               MCCI is our coworker to implement OTG Host.
- *		 Below logic must be changed when we receive new otg host driver from MCCI
- *		 This code refered from seine and P1.
- * Parameters  : int mode
- *                -> USB_CABLE_DETACHED   : disable udc
- *		  -> USB_CABLE_ATTACHED   : enable udc
- *		  -> USB_OTGHOST_DETACHED : disable otg host
- *		  -> USB_OTGHOST_ATTACHED : enable otg host
- * Return value : 0 (success), -1 (Failed)
- * Written by SoonYong, Cho (Tue 16, Nov 2010)
- */
-static int omap_change_usb_mode(int mode)
-{
-	struct omap_udc *dev = udc;
-	int retval = 0;
-
-	CSY_DBG_ESS("usb cable = %d\n", mode);
-
-	if(atomic_read(&dev->usb_status) == USB_OTGHOST_ATTACHED) {
-		if(mode == USB_CABLE_DETACHED || mode == USB_CABLE_ATTACHED) {
-			CSY_DBG_ESS("Skip requested mode (%d), current mode=%d\n",mode, atomic_read(&dev->usb_status));
-			return -1;
-		}
-
-	}
-	if(atomic_read(&dev->usb_status) == USB_CABLE_ATTACHED) {
-		if(mode == USB_OTGHOST_DETACHED || mode == USB_OTGHOST_ATTACHED) {
-			CSY_DBG_ESS("Skip requested mode (%d), current mode=%d\n",mode, atomic_read(&dev->usb_status));
-			return -1;
-		}
-
-	}
-	if(atomic_read(&dev->usb_status) == mode) {
-		CSY_DBG_ESS("Skip requested mode (%d), current mode=%d\n",mode, atomic_read(&dev->usb_status));
-		return -1;
-	}
-
-	switch(mode) {
-		case USB_CABLE_DETACHED:
-			//retval = s3c_vbus_enable(NULL, 0); /* Disable udc using function of vbus session*/
-			atomic_set(&dev->usb_status, USB_CABLE_DETACHED);
-			break;
-
-		case USB_CABLE_ATTACHED:
-			//retval = s3c_vbus_enable(NULL, 1); /* Enable udc using function of vbus session*/
-			atomic_set(&dev->usb_status, USB_CABLE_ATTACHED);
-			break;
-	}
-	CSY_DBG_ESS("change mode ret=%d\n",retval);
-	return 0;
-}
-
-#endif /* CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE */
 /*-------------------------------------------------------------------------*/
 
 static struct platform_driver udc_driver = {

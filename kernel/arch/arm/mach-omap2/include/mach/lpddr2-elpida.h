@@ -14,11 +14,10 @@
 #ifndef _LPDDR2_ELPIDA_H
 #define _LPDDR2_ELPIDA_H
 
-extern const struct lpddr2_timings timings_elpida_200_mhz;
-extern const struct lpddr2_timings timings_elpida_333_mhz;
-extern const struct lpddr2_timings timings_elpida_400_mhz;
-extern const struct lpddr2_min_tck min_tck_elpida;
-extern struct lpddr2_device_info elpida_2G_S4;
-extern struct lpddr2_device_info elpida_4G_S4;
+extern const struct lpddr2_timings lpddr2_elpida_timings_200_mhz;
+extern const struct lpddr2_timings lpddr2_elpida_timings_333_mhz;
+extern const struct lpddr2_timings lpddr2_elpida_timings_400_mhz;
+extern const struct lpddr2_min_tck lpddr2_elpida_min_tck;
+extern struct lpddr2_device_info lpddr2_elpida_2G_S4_dev;
 
 #endif

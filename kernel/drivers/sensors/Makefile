@@ -3,9 +3,9 @@
 #
 
 # Object files in subdirectories
-obj-$(CONFIG_ACCEL)		+= accel/
-obj-$(CONFIG_OPTICAL)		+= optical/
-obj-$(CONFIG_COMPASS)		+= compass/
-obj-$(CONFIG_GYRO_MPU3050)	+= gyro-mpu3050/
-obj-$(CONFIG_MPU_SENSORS_MPU3050)	+= mpu3050/
-obj-$(CONFIG_SENSORS_CORE)	+= core/
+obj-$(CONFIG_INPUT_YAS_ACCELEROMETER)		+= accelerometer/
+obj-$(CONFIG_INPUT_YAS_MAGNETOMETER)		+= geomagnetic/
+obj-$(CONFIG_INPUT_YAS_ORIENTATION)		+= orientation/
+obj-y	+= optical/
+obj-$(CONFIG_SENSORS_CORE)		+= sensors_core.o
+

@@ -756,9 +756,6 @@ static int digest_update(struct shash_desc *desc, const u8 *data,
 {
 	struct PUBLIC_CRYPTO_SHA_OPERATION_STATE *state = shash_desc_ctx(desc);
 
-	/* Make sure SHA/MD5 HWA is accessible */
-	tf_delayed_secure_resume();
-
 	PDrvCryptoLockUnlockHWA(PUBLIC_CRYPTO_HWA_SHA, LOCK_HWA);
 
 	SCXPublicCryptoEnableClock(PUBLIC_CRYPTO_SHA2MD5_CLOCK_REG);
@@ -776,9 +773,6 @@ static int digest_final(struct shash_desc *desc, u8 *out)
 {
 	int ret;
 	struct PUBLIC_CRYPTO_SHA_OPERATION_STATE *state = shash_desc_ctx(desc);
-
-	/* Make sure SHA/MD5 HWA is accessible */
-	tf_delayed_secure_resume();
 
 	PDrvCryptoLockUnlockHWA(PUBLIC_CRYPTO_HWA_SHA, LOCK_HWA);
 

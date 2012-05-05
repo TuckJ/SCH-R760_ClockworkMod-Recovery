@@ -66,10 +66,8 @@ enum {
 	SPARE_T44,
 	SPARE_T45,
 	SPT_CTECONFIG_T46,
-	//SPARE_T46,
 	PROCI_STYLUS_T47,
 	PROCG_NOISESUPPRESSION_T48,
-	//SPARE_T48,
 	SPARE_T49,
 	SPARE_T50,
 	RESERVED_T255 = 255,
@@ -78,7 +76,7 @@ enum {
 struct mxt224_platform_data {
 	int max_finger_touches;
 	const u8 **config;
-	const u8 **config_e;	
+	const u8 **config_e;
 	int gpio_read_done;
 	int min_x;
 	int max_x;
@@ -97,29 +95,27 @@ struct mxt224_platform_data {
 	u8 noisethr_charging;
 	u8 movfilter_batt;
 	u8 movfilter_charging;
-	u8 tchthr_batt_e;
-	u8 tchthr_charging_e;
-	u8 calcfg_batt_e;
-	u8 calcfg_charging_e;
 	u8 atchfrccalthr_e;
 	u8 atchfrccalratio_e;
-	u8 chrgtime_batt_e;
-	u8 chrgtime_charging_e;
 	const u8 *t48_config_batt_e;
+	const u8 *t48_config_batt_err_e;
 	const u8 *t48_config_chrg_e;
+	const u8 *t48_config_chrg_err1_e;
+	const u8 *t48_config_chrg_err2_e;
 	void (*power_on)(void);
 	void (*power_off)(void);
-	void (*register_cb)(void*);
-	void (*read_ta_status)(void*);	
+	void (*register_cb)(void *);
+	void (*read_ta_status)(bool *);
+	void (*unregister_cb)(void);
 };
 
-typedef enum
-{
-    MXT_PAGE_UP         = 0x01,
-    MXT_PAGE_DOWN       = 0x02,
-    MXT_DELTA_MODE      = 0x10,
-    MXT_REFERENCE_MODE  = 0x11,
-    MXT_CTE_MODE        = 0x31
-}diagnostic_debug_command;
+enum diagnostic_debug_command {
+	MXT_PAGE_UP         = 0x01,
+	MXT_PAGE_DOWN       = 0x02,
+	MXT_DELTA_MODE      = 0x10,
+	MXT_REFERENCE_MODE  = 0x11,
+	MXT_CTE_MODE        = 0x31
+};
 
+extern struct class *sec_class;
 #endif

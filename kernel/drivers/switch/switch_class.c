@@ -77,7 +77,6 @@ void switch_set_state(struct switch_dev *sdev, int state)
 					prop_buf[length - 1] = 0;
 				snprintf(name_buf, sizeof(name_buf),
 					"SWITCH_NAME=%s", prop_buf);
-				printk(KERN_DEBUG "SWITCH_NAME=%s", prop_buf);
 				envp[env_offset++] = name_buf;
 			}
 			length = state_show(sdev->dev, NULL, prop_buf);
@@ -86,7 +85,6 @@ void switch_set_state(struct switch_dev *sdev, int state)
 					prop_buf[length - 1] = 0;
 				snprintf(state_buf, sizeof(state_buf),
 					"SWITCH_STATE=%s", prop_buf);
-				printk(KERN_DEBUG "SWITCH_STATE=%s\n", prop_buf);
 				envp[env_offset++] = state_buf;
 			}
 			envp[env_offset] = NULL;

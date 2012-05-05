@@ -29,20 +29,20 @@
 
 #include <linux/rwsem.h>
 
-#include <plat/display.h>
+#include <video/omapdss.h>
 
-#define DEBUG
 #ifdef DEBUG
 extern unsigned int omapfb_debug;
 #define DBG(format, ...) \
-	if (omapfb_debug) \
-		printk(KERN_INFO "OMAPFB: " format, ## __VA_ARGS__)
+	do { \
+		if (omapfb_debug) \
+			printk(KERN_DEBUG "OMAPFB: " format, ## __VA_ARGS__); \
+	} while (0)
 #else
 #define DBG(format, ...)
 #endif
 
 #define FB2OFB(fb_info) ((struct omapfb_info *)(fb_info->par))
-#define DMA_TX_TIMEOUT 10000000
 
 /* max number of overlays to which a framebuffer data can be direct */
 #define OMAPFB_MAX_OVL_PER_FB 3
@@ -71,9 +71,6 @@ struct omapfb_info {
 	enum omap_dss_rotation_type rotation_type;
 	u8 rotation[OMAPFB_MAX_OVL_PER_FB];
 	bool mirror;
-	bool fit_to_screen;
-	//CSR #OMAPS00242911 
-	u32 paddr2;
 };
 
 struct omapfb2_device {
@@ -112,33 +109,6 @@ struct omapfb_colormode {
 	struct fb_bitfield transp;
 };
 
-enum dma_channel_state {
-	DMA_CHAN_NOT_ALLOTED,
-	DMA_CHAN_ALLOTED,
-};
-
-struct oly_mgr_flds {
-int width;
-int height;
-int mode;
-unsigned long copy_buf[2];
-unsigned long copy_buf_alloc[2];
-int copy_dst_idx;
-int copy_buf_idx;
-int dma_en;
-int dma_fn;
-int dma_src_fi;
-int dma_dst_fi;
-};
-
-struct vid_Tiler_dma {
-	int dev_id;
-	int dma_ch;
-	int req_status;
-	int tx_status;
-	wait_queue_head_t wait;
-};
-
 void set_fb_fix(struct fb_info *fbi);
 int check_fb_var(struct fb_info *fbi, struct fb_var_screeninfo *var);
 int omapfb_realloc_fbmem(struct fb_info *fbi, unsigned long size, int type);
@@ -157,16 +127,6 @@ int dss_mode_to_fb_mode(enum omap_color_mode dssmode,
 
 int omapfb_setup_overlay(struct fb_info *fbi, struct omap_overlay *ovl,
 		u16 posx, u16 posy, u16 outw, u16 outh);
-
-int tiler_fb_mem_init(struct fb_info *fbi);
-
-void dma_init(void);
-
-unsigned int copy1DTo2D(int phyadd);
-
-extern struct vid_Tiler_dma tiler_dma_tx;
-extern  struct oly_mgr_flds ovlDatafld;
-
 
 /* find the display connected to this fb, if any */
 static inline struct omap_dss_device *fb2display(struct fb_info *fbi)

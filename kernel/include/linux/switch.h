@@ -31,7 +31,6 @@ struct switch_dev {
 struct gpio_switch_platform_data {
 	const char *name;
 	unsigned 	gpio;
-	void (*ear_mic_bias_cb) (bool value); /* for ear mic bias control */
 
 	/* if NULL, switch_dev.name will be printed */
 	const char *name_on;
@@ -41,29 +40,6 @@ struct gpio_switch_platform_data {
 	const char *state_off;
 };
 
-#ifdef CONFIG_SWITCH_SIO
-
-typedef enum
-{
-	USB_SW_AP,
-	USB_SW_CP
-} USB_SWITCH_MODE;
-
-typedef enum
-{
-	UART_SW_AP,
-	UART_SW_CP
-} UART_SWITCH_MODE;
-
-struct switch_sio_platform_data {
-	const char *name;
-	void (*gpio_init) (void);
-	void (*cp_usb_cb) (u8 value); 
-	void (*uart_sel_cb) (u8 value); 
-};
-#endif
-
-#ifdef CONFIG_SWITCH
 extern int switch_dev_register(struct switch_dev *sdev);
 extern void switch_dev_unregister(struct switch_dev *sdev);
 
@@ -73,11 +49,5 @@ static inline int switch_get_state(struct switch_dev *sdev)
 }
 
 extern void switch_set_state(struct switch_dev *sdev, int state);
-#else
-static inline int switch_dev_register(struct switch_dev *sdev) { return 0; }
-static inline void switch_dev_unregister(struct switch_dev *sdev) { return; }
-static inline int switch_get_state(struct switch_dev *sdev) { return 0; }
-static inline void switch_set_state(struct switch_dev *sdev, int state) { return; }
-#endif
 
 #endif /* __LINUX_SWITCH_H__ */

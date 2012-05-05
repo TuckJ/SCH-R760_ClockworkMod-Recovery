@@ -1,9 +1,10 @@
 /*
- * omap-hdmi.c  --  OMAP ALSA SoC DAI driver for HDMI audio
+ * omap-hdmi.c
  *
- * Copyright (C) 2009 Texas Instruments
- *
- * Contact: Jorge Candelaria <x0107209@ti.com>
+ * OMAP ALSA SoC DAI driver for HDMI audio on OMAP4 processors.
+ * Copyright (C) 2010-2011 Texas Instruments Incorporated - http://www.ti.com/
+ * Authors: Jorge Candelaria <jorge.candelaria@ti.com>
+ *          Ricardo Neri <ricardo.neri@ti.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,167 +31,44 @@
 #include <sound/initval.h>
 #include <sound/soc.h>
 
-#include <plat/control.h>
 #include <plat/dma.h>
-#include <plat/hdmi_lib.h>
-#include <plat/omap-pm.h>
 #include "omap-pcm.h"
 #include "omap-hdmi.h"
+#include <../../../drivers/video/hdmi_ti_4xxx_ip.h>
 
-#ifdef CONFIG_OMAP_PM
-#define HDMI_AUDIO_PM_LAT_CONSTRAINT	200
-#define HDMI_AUDIO_PM_NO_CONSTRAINT	-1
-#endif
-
-#define CONFIG_HDMI_NO_IP_MODULE
-#define OMAP_HDMI_RATES        (SNDRV_PCM_RATE_32000 | \
-	SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000)
-
-
-/* Support for 16 and 24 bits */
-#define OMAP_HDMI_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | \
-	SNDRV_PCM_FMTBIT_S24_LE)
-
-
-
-#include <plat/hdmi_lib.h>
-
-struct omap_hdmi_data {
-	struct pm_qos_request_list *qos_request;
-	struct hdmi_notifier notifier;
-	struct snd_pcm_substream *substream;
-	int active;
-};
-
-struct omap_hdmi_data hdmi_data;
+#define DRV_NAME "hdmi-audio-dai"
 
 static struct omap_pcm_dma_data omap_hdmi_dai_dma_params = {
 	.name = "HDMI playback",
-	.dma_req = OMAP44XX_DMA_DSS_HDMI_REQ,
-	.port_addr = HDMI_WP + HDMI_WP_AUDIO_DATA,
 	.sync_mode = OMAP_DMA_SYNC_PACKET,
 };
-
-static void hdmi_hpd_notifier(int state, void *data)
-{
-	struct omap_hdmi_data *hdmi_data = data;
-	struct snd_pcm_substream *substream = hdmi_data->substream;
-
-	if (state) {
-		hdmi_data->active = 1;
-	} else {
-		if (substream)
-			snd_pcm_stop(substream, SNDRV_PCM_STATE_DISCONNECTED);
-		hdmi_data->active = 0;
-	}
-}
-
-static void hdmi_pwrchange_notifier(int state, void *data)
-{
-	struct omap_hdmi_data *hdmi_data = data;
-	struct snd_pcm_substream *substream = hdmi_data->substream;
-
-	switch (state) {
-	case HDMI_EVENT_POWEROFF:
-		if (substream) {
-			snd_pcm_stop(substream, SNDRV_PCM_STATE_DISCONNECTED);
-			hdmi_set_audio_power(0);
-		}
-		hdmi_data->active = 0;
-		break;
-	case HDMI_EVENT_POWERON:
-		break;
-	case HDMI_EVENT_POWERPHYON:
-		if (substream) {
-			hdmi_wrapper_enable(HDMI_WP);
-			hdmi_start_audio_transfer(HDMI_WP);
-		}
-		break;
-	case HDMI_EVENT_POWERPHYOFF:
-		if (substream) {
-			hdmi_stop_audio_transfer(HDMI_WP);
-			hdmi_wrapper_disable(HDMI_WP);
-		}
-		break;
-	default:
-		break;
-	}
-}
 
 static int omap_hdmi_dai_startup(struct snd_pcm_substream *substream,
 				  struct snd_soc_dai *dai)
 {
-	int err = 0;
-	if (!hdmi_data.active) {
-		printk(KERN_ERR "hdmi device not available\n");
-		return -ENODEV;
-	}
+	int err;
+	/*
+	 * Make sure that the period bytes are multiple of the DMA packet size.
+	 * Largest packet size we use is 32 32-bit words = 128 bytes
+	 */
+	err = snd_pcm_hw_constraint_step(substream->runtime, 0,
+				 SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 128);
+	if (err < 0)
+		return err;
 
-#ifdef CONFIG_OMAP_PM
-	err = omap_pm_set_max_sdma_lat(&hdmi_data.qos_request,
-				       HDMI_AUDIO_PM_LAT_CONSTRAINT);
-	if (err)
-		printk(KERN_WARNING "unable to set SDMA constraint %d\n", err);
-#endif
-	hdmi_set_audio_power(1);
-	hdmi_data.substream = substream;
-	err = hdmi_w1_wrapper_enable(HDMI_WP);
-	return err;
+	return 0;
 }
+
 
 static void omap_hdmi_dai_shutdown(struct snd_pcm_substream *substream,
 				    struct snd_soc_dai *dai)
 {
-	int err = 0;
-	hdmi_wrapper_disable(HDMI_WP);
-	hdmi_data.substream = NULL;
-
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
 	if (hdmi_lib_stop_acr_wa())
-		printk(KERN_WARNING "HDMI WA may be in bad state");
-#endif
-
-	if (hdmi_data.active)
-		hdmi_set_audio_power(0);
-
-#ifdef CONFIG_OMAP_PM
-	err = omap_pm_set_max_sdma_lat(&hdmi_data.qos_request,
-				HDMI_AUDIO_PM_NO_CONSTRAINT);
-	if (err)
-		printk(KERN_WARNING
-			"unable to remove SDMA constraint %d\n", err);
+		pr_warning("HDMI WA may be in bad state\n");
 #endif
 }
 
-static int omap_hdmi_dai_trigger(struct snd_pcm_substream *substream, int cmd,
-				  struct snd_soc_dai *dai)
-{
-	int err = 0;
-
-	switch (cmd) {
-	case SNDRV_PCM_TRIGGER_START:
-	case SNDRV_PCM_TRIGGER_RESUME:
-	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-		if (cmd == SNDRV_PCM_TRIGGER_RESUME)
-			hdmi_set_audio_power(1);
-		err = hdmi_start_audio_transfer(HDMI_WP);
-		break;
-
-	case SNDRV_PCM_TRIGGER_STOP:
-	case SNDRV_PCM_TRIGGER_SUSPEND:
-	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		err = hdmi_stop_audio_transfer(HDMI_WP);
-		if (err)
-			return err;
-		if (cmd == SNDRV_PCM_TRIGGER_SUSPEND)
-			hdmi_set_audio_power(0);
-		break;
-	default:
-		err = -EINVAL;
-	}
-
-	return err;
-}
 
 static int omap_hdmi_dai_hw_params(struct snd_pcm_substream *substream,
 				    struct snd_pcm_hw_params *params,
@@ -200,50 +78,40 @@ static int omap_hdmi_dai_hw_params(struct snd_pcm_substream *substream,
 
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
-		err = hdmi_configure_audio_sample_size(HDMI_SAMPLE_16BITS);
+		omap_hdmi_dai_dma_params.packet_size = 16;
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
-		err = hdmi_configure_audio_sample_size(HDMI_SAMPLE_24BITS);
+		omap_hdmi_dai_dma_params.packet_size = 32;
 		break;
-
 	default:
-		return -EINVAL;
+		err = -EINVAL;
 	}
-	if (err)
-		return err;
-
-	err = hdmi_configure_audio_sample_freq(params_rate(params));
-	if (err)
-		return err;
 
 	omap_hdmi_dai_dma_params.data_type = OMAP_DMA_DATA_TYPE_S32;
-	omap_hdmi_dai_dma_params.packet_size = 0x20;
 
 	snd_soc_dai_set_dma_data(dai, substream,
 				 &omap_hdmi_dai_dma_params);
 
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
-	err = hdmi_lib_start_acr_wa();
+	pr_debug("sample_freq %d\n", params_rate(params));
+	err = hdmi_lib_start_acr_wa(params_rate(params));
 	if (err)
-		printk(KERN_ERR "Failed to start ACR workaround[%d]]\n", err);
+		pr_warning("Failed to start ACR workaround[%d]]\n", err);
 #endif
-
 
 	return err;
 }
 
 static struct snd_soc_dai_ops omap_hdmi_dai_ops = {
 	.startup	= omap_hdmi_dai_startup,
-	.shutdown	= omap_hdmi_dai_shutdown,
-	.trigger	= omap_hdmi_dai_trigger,
 	.hw_params	= omap_hdmi_dai_hw_params,
+	.shutdown	= omap_hdmi_dai_shutdown,
 };
 
 static struct snd_soc_dai_driver omap_hdmi_dai = {
 	.playback = {
 		.channels_min = 2,
-		/* currently we support only stereo HDMI */
-		.channels_max = 2,
+		.channels_max = 8,
 		.rates = OMAP_HDMI_RATES,
 		.formats = OMAP_HDMI_FORMATS,
 	},
@@ -252,31 +120,39 @@ static struct snd_soc_dai_driver omap_hdmi_dai = {
 
 static __devinit int omap_hdmi_probe(struct platform_device *pdev)
 {
-	struct hdmi_notifier *notifier = &hdmi_data.notifier;
+	int ret;
+	struct resource *hdmi_rsrc;
 
-	notifier->hpd_notifier = hdmi_hpd_notifier;
-	notifier->pwrchange_notifier = hdmi_pwrchange_notifier;
-	notifier->private_data = &hdmi_data;
-	hdmi_lib_init();
-	hdmi_add_notifier(notifier);
+	hdmi_rsrc = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!hdmi_rsrc) {
+		dev_err(&pdev->dev, "Cannot obtain IORESOURCE_MEM HDMI\n");
+		return -EINVAL;
+	}
 
-	return snd_soc_register_dai(&pdev->dev, &omap_hdmi_dai);
+	omap_hdmi_dai_dma_params.port_addr =  hdmi_rsrc->start
+		+ OMAP_HDMI_AUDIO_DMA_PORT;
+
+	hdmi_rsrc = platform_get_resource(pdev, IORESOURCE_DMA, 0);
+	if (!hdmi_rsrc) {
+		dev_err(&pdev->dev, "Cannot obtain IORESOURCE_DMA HDMI\n");
+		return -EINVAL;
+	}
+
+	omap_hdmi_dai_dma_params.dma_req =  hdmi_rsrc->start;
+
+	ret = snd_soc_register_dai(&pdev->dev, &omap_hdmi_dai);
+	return ret;
 }
 
 static int __devexit omap_hdmi_remove(struct platform_device *pdev)
 {
-	struct hdmi_notifier *notifier = &hdmi_data.notifier;
-
-	notifier->private_data = NULL;
-	hdmi_remove_notifier(notifier);
 	snd_soc_unregister_dai(&pdev->dev);
-
 	return 0;
 }
 
 static struct platform_driver hdmi_dai_driver = {
 	.driver = {
-		.name = "hdmi-dai",
+		.name = DRV_NAME,
 		.owner = THIS_MODULE,
 	},
 	.probe = omap_hdmi_probe,
@@ -295,6 +171,8 @@ static void __exit hdmi_dai_exit(void)
 }
 module_exit(hdmi_dai_exit);
 
-MODULE_AUTHOR("Jorge Candelaria <x0107209@ti.com");
+MODULE_AUTHOR("Jorge Candelaria <jorge.candelaria@ti.com>");
+MODULE_AUTHOR("Ricardo Neri <ricardo.neri@ti.com>");
 MODULE_DESCRIPTION("OMAP HDMI SoC Interface");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:" DRV_NAME);

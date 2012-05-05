@@ -351,6 +351,11 @@ struct SCXLNX_DEVICE {
 	spinlock_t connsLock;
 
 	struct SCXLNX_DEVICE_STATS sDeviceStats;
+
+        /* 
+         * A Mutex to provide exlusive locking of the ioctl()
+         */
+        struct mutex dev_mutex;
 };
 
 /* the bits of the nFlags field of the SCXLNX_DEVICE structure */

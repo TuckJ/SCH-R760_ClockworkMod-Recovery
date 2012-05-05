@@ -1,55 +1,42 @@
-/**
- * arch/arm/mach-omap2/sec_debug.c
+/* arch/arm/mach-omap2/sec_debug.c
  *
- * Copyright (C) 2010-2011, Samsung Electronics, Co., Ltd. All Rights Reserved.
- *  Written by System S/W Group, Open OS S/W R&D Team,
- *  Mobile Communication Division.
+ * Copyright (C) 2010-2011 Samsung Electronics Co, Ltd.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
-/**
- * Project Name : OMAP-Samsung Linux Kernel for Android
- *
- * Project Description :
- *
- * Comments : tabstop = 8, shiftwidth = 8, noexpandtab
- */
-
-/**
- * File Name : sec_debug.c
- *
- * File Description : import from U1
- *
- * Author : Kernel System Part
- * Dept : System S/W Group (Open OS S/W R&D Team)
- * Created : 30/May/2011
- * Version : Baby-Raccoon
- */
-
-#include <linux/errno.h>
 #include <linux/ctype.h>
-#include <linux/notifier.h>
-#include <linux/reboot.h>
-#include <linux/input.h>
 #include <linux/delay.h>
-#include <linux/sysrq.h>
-#include <asm/cacheflush.h>
-#include <asm/io.h>
-#include <linux/sched.h>
-#include <linux/smp.h>
-#include <linux/slab.h>
-#include <linux/spinlock.h>
-#include <linux/uaccess.h>
+#include <linux/errno.h>
+#include <linux/input.h>
+#include <linux/io.h>
+#include <linux/keyboard.h>
+#include <linux/notifier.h>
 #include <linux/proc_fs.h>
+#include <linux/reboot.h>
+#include <linux/sched.h>
+#include <linux/slab.h>
+#include <linux/smp.h>
+#include <linux/spinlock.h>
+#include <linux/sysrq.h>
+#include <linux/uaccess.h>
 
 #include <mach/system.h>
-#include <mach/sec_debug.h>
+
+#include <asm/cacheflush.h>
+
+#include "sec_debug.h"
+#include "sec_gaf.h"
 
 #if defined(CONFIG_ARCH_OMAP3) || (CONFIG_ARCH_OMAP4)
-#define outer_flush_all()       
+#define outer_flush_all()
 #endif
 enum sec_debug_upload_cause_t {
 	UPLOAD_CAUSE_INIT = 0xCAFEBABE,
@@ -143,13 +130,43 @@ struct sec_debug_core_t {
 
 };
 
-/* enable sec_debug feature */
-static unsigned enable = 1;
-static unsigned enable_user = 0;
-module_param_named(enable, enable, uint, 0644);
-module_param_named(enable_user, enable_user, uint, 0644);
+/* enable/disable sec_debug feature
+ * level = 0 when enable = 0 && enable_user = 0
+ * level = 1 when enable = 1 && enable_user = 0
+ * level = 0x10001 when enable = 1 && enable_user = 1
+ * The other cases are not considered
+ */
+union sec_debug_level_t sec_debug_level = { .en.kernel_fault = 1, };
 
-static const char *gkernel_sec_build_info_date_time[] = {
+module_param_named(enable, sec_debug_level.en.kernel_fault, ushort, 0644);
+module_param_named(enable_user, sec_debug_level.en.user_fault, ushort, 0644);
+module_param_named(level, sec_debug_level.uint_val, uint, 0644);
+
+static int __init sec_debug_parse_enable(char *str)
+{
+	if (kstrtou16(str, 0, &sec_debug_level.en.kernel_fault))
+		sec_debug_level.en.kernel_fault = 1;
+	return 0;
+}
+early_param("sec_debug.enable", sec_debug_parse_enable);
+
+static int __init sec_debug_parse_enable_user(char *str)
+{
+	if (kstrtou16(str, 0, &sec_debug_level.en.user_fault))
+		sec_debug_level.en.user_fault = 0;
+	return 0;
+}
+early_param("sec_debug.enable_user", sec_debug_parse_enable_user);
+
+static int __init sec_debug_parse_level(char *str)
+{
+	if (kstrtou32(str, 0, &sec_debug_level.uint_val))
+		sec_debug_level.uint_val = 1;
+	return 0;
+}
+early_param("sec_debug.level", sec_debug_parse_level);
+
+static const char * const gkernel_sec_build_info_date_time[] = {
 	__DATE__,
 	__TIME__
 };
@@ -158,16 +175,42 @@ static char gkernel_sec_build_info[100];
 
 /* klaatu - schedule log */
 #ifdef CONFIG_SEC_DEBUG_SCHED_LOG
-static struct sched_log gExcpTaskLog[2][SCHED_LOG_MAX] __cacheline_aligned;
-static atomic_t gExcpTaskLogIdx[2] = { ATOMIC_INIT(-1), ATOMIC_INIT(-1) };
-static unsigned long long gExcpIrqExitTime[2];
+#define SCHED_LOG_MAX		4096
+
+struct sched_log {
+	unsigned long long time;
+	union task_log {
+		struct task_info {
+			char comm[TASK_COMM_LEN];
+			pid_t pid;
+		} task;
+		struct irq_log {
+			int irq;
+			void *fn;
+			int en;
+		} irq;
+		struct work_log {
+			struct worker *worker;
+			struct work_struct *work;
+			work_func_t f;
+		} work;
+	} log;
+};
+
+static struct sched_log excp_task_log[NR_CPUS][SCHED_LOG_MAX]
+	__cacheline_aligned;
+static atomic_t excp_task_log_idx[NR_CPUS] = {
+	ATOMIC_INIT(-1), ATOMIC_INIT(-1) };
+static unsigned long long excp_irq_exit_time[NR_CPUS];
+static struct sched_log (*excp_task_log_ptr)[NR_CPUS][SCHED_LOG_MAX]
+	= (&excp_task_log);
 
 static int checksum_sched_log(void)
 {
 	int sum = 0, i;
 
-	for (i = 0; i < sizeof(gExcpTaskLog); i++)
-		sum += *((char *)gExcpTaskLog + i);
+	for (i = 0; i < sizeof(excp_task_log); i++)
+		sum += *((char *)excp_task_log + i);
 
 	return sum;
 }
@@ -180,19 +223,47 @@ static int checksum_sched_log(void)
 
 /* klaatu - semaphore log */
 #ifdef CONFIG_SEC_DEBUG_SEMAPHORE_LOG
+#define SEMAPHORE_LOG_MAX		100
+
+struct sem_debug {
+	struct list_head list;
+	struct semaphore *sem;
+	struct task_struct *task;
+	pid_t pid;
+	int cpu;
+	/* char comm[TASK_COMM_LEN]; */
+};
+
+enum {
+	READ_SEM,
+	WRITE_SEM,
+};
+
 struct sem_debug sem_debug_free_head;
 struct sem_debug sem_debug_done_head;
 int sem_debug_free_head_cnt;
 int sem_debug_done_head_cnt;
-int sem_debug_init = 0;
+int sem_debug_init;
 spinlock_t sem_debug_lock;
 
 /* rwsemaphore logging */
+#define RWSEMAPHORE_LOG_MAX		100
+
+struct rwsem_debug {
+	struct list_head list;
+	struct rw_semaphore *sem;
+	struct task_struct *task;
+	pid_t pid;
+	int cpu;
+	int direction;
+	/* char comm[TASK_COMM_LEN]; */
+};
+
 struct rwsem_debug rwsem_debug_free_head;
 struct rwsem_debug rwsem_debug_done_head;
 int rwsem_debug_free_head_cnt;
 int rwsem_debug_done_head_cnt;
-int rwsem_debug_init = 0;
+int rwsem_debug_init;
 spinlock_t rwsem_debug_lock;
 
 #endif /* CONFIG_SEC_DEBUG_SEMAPHORE_LOG */
@@ -354,7 +425,7 @@ static void sec_debug_save_context(void)
 
 static void sec_debug_set_upload_magic(unsigned int magic)
 {
-	pr_emerg("(%s) %x\n", __func__, magic);
+	pr_debug("(%s) %x\n", __func__, magic);
 
 #if defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
 	omap_writel(magic, SEC_DEBUG_MAGIC_ADDR);
@@ -387,7 +458,7 @@ static void sec_debug_set_upload_cause(enum sec_debug_upload_cause_t type)
 	__raw_writel(type, S5P_INFORM6);
 #endif /* CONFIG_ARCH_* */
 
-	pr_emerg("(%s) %x\n", __func__, type);
+	pr_debug("(%s) %x\n", __func__, type);
 }
 
 /*
@@ -397,7 +468,7 @@ static void sec_debug_set_upload_cause(enum sec_debug_upload_cause_t type)
  */
 static inline int sec_debug_dump_stack(void)
 {
-	if (!enable)
+	if (!sec_debug_level.en.kernel_fault)
 		return -1;
 
 	sec_debug_save_context();
@@ -418,49 +489,22 @@ static inline void sec_debug_hw_reset(void)
 	outer_flush_all();
 
 #if defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
-	machine_restart("Lock-Up");
+	arch_reset('L', "Lock-Up");
 #elif defined(CONFIG_ARCH_S5PV310)
 	arch_reset(0, 0);
 #endif /* CONFIG_ARCH_* */
 
-	while (1) ;
+	while (1)
+		;
 }
-
-#ifdef CONFIG_TARGET_LOCALE_NA
-int sec_debug_dpram(void)
-{
-	sec_debug_set_upload_magic(SEC_DEBUG_MAGIC_DUMP);
-	sec_debug_set_upload_cause(UPLOAD_CAUSE_CP_ERROR_FATAL);
-	pr_err("(%s) checksum_sched_log: %x\n", __func__, checksum_sched_log());
-	handle_sysrq('t', NULL);
-
-	sec_debug_dump_stack();
-	sec_debug_hw_reset();
-	return 0;
-}
-
-EXPORT_SYMBOL(sec_debug_dpram);
-
-int sec_debug_force_upload()
-{
-	sec_debug_set_upload_magic(SEC_DEBUG_MAGIC_DUMP);
-	sec_debug_set_upload_cause(UPLOAD_CAUSE_FORCED_UPLOAD);
-
-	pr_err("(%s) checksum_sched_log: %x\n", __func__, checksum_sched_log());
-	handle_sysrq('t', NULL);
-
-	sec_debug_dump_stack();
-	sec_debug_hw_reset();
-}
-
-EXPORT_SYMBOL(sec_debug_force_upload);
-#endif /* CONFIG_TARGET_LOCALE_NA */
 
 static int sec_debug_panic_handler(struct notifier_block *nb,
 				   unsigned long l, void *buf)
 {
-	if (!enable)
+	if (!sec_debug_level.en.kernel_fault)
 		return -1;
+
+	local_irq_disable();
 
 	sec_debug_set_upload_magic(SEC_DEBUG_MAGIC_DUMP);
 
@@ -477,7 +521,8 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 
 	pr_err("(%s) checksum_sched_log: %x\n", __func__, checksum_sched_log());
 
-	handle_sysrq('t', NULL);
+	sec_gaf_dump_all_task_info();
+	sec_gaf_dump_cpu_stat();
 
 	sec_debug_dump_stack();
 	sec_debug_hw_reset();
@@ -485,39 +530,109 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 	return 0;
 }
 
-void sec_debug_check_crash_key(unsigned int code, int value)
-{
-	static enum { NONE, HOME_DOWN } state = NONE;
-	static unsigned long home_down_jiffies;
+static unsigned int crash_key_code[] = { KEY_VOLUMEDOWN, KEY_VOLUMEUP,
+					 KEY_POWER };
 
-	if (!enable)
+static struct sec_crash_key dflt_crash_key = {
+	.keycode	= crash_key_code,
+	.size		= ARRAY_SIZE(crash_key_code),
+	.timeout	= 1000,		/* 1 sec */
+};
+
+static struct sec_crash_key *__sec_crash_key = &dflt_crash_key;
+
+static unsigned int sec_debug_unlock_crash_key(unsigned int value,
+					       unsigned int *unlock)
+{
+	unsigned int i;
+	unsigned int ret = 0;
+
+	for (i = 0; i < __sec_crash_key->size - 1; i++) {
+		if (value == __sec_crash_key->keycode[i]) {
+			ret = 1;
+			*unlock |= 1 << i;
+		}
+	}
+
+	return ret;
+}
+
+static void sec_debug_check_crash_key(unsigned int value, int down)
+{
+	static unsigned long unlock_jiffies;
+	static unsigned long trigger_jiffies;
+	static bool other_key_pressed;
+	static unsigned int unlock;
+	unsigned int timeout;
+
+	if (!down)
+		goto __clear_all;
+
+	if (sec_debug_unlock_crash_key(value, &unlock)) {
+		if (unlock == __sec_crash_key->unlock)
+			unlock_jiffies = jiffies;
+	} else if (value ==
+		   __sec_crash_key->keycode[__sec_crash_key->size - 1]) {
+		trigger_jiffies = jiffies;
+	} else {
+		other_key_pressed = true;
+		goto __clear_timeout;
+	}
+
+	if (unlock_jiffies && trigger_jiffies && !other_key_pressed &&
+	    time_after(trigger_jiffies, unlock_jiffies)) {
+		timeout = jiffies_to_msecs(trigger_jiffies - unlock_jiffies);
+		if (timeout < __sec_crash_key->timeout)
+			panic("Crash Key");
+		else
+			goto __clear_all;
+	}
+
+	return;
+
+__clear_all:
+	other_key_pressed = false;
+__clear_timeout:
+	unlock_jiffies = 0;
+	trigger_jiffies = 0;
+	unlock = 0;
+}
+
+static int sec_debug_keyboard_call(struct notifier_block *this,
+				   unsigned long type, void *data)
+{
+	struct keyboard_notifier_param *param = data;
+
+	if (likely(type != KBD_KEYCODE && type != KBD_UNBOUND_KEYCODE))
+		return NOTIFY_DONE;
+
+	sec_debug_check_crash_key(param->value, param->down);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block sec_debug_keyboard_notifier = {
+	.notifier_call	= sec_debug_keyboard_call,
+};
+
+void __init sec_debug_init_crash_key(struct sec_crash_key *crash_key)
+{
+	int i;
+
+	if (!sec_debug_level.en.kernel_fault)
 		return;
 
-	//pr_info("%s: %d %d\n", __func__, code, value);
-#if defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
-	panic("Crash Key");
-#elif defined(CONFIG_ARCH_S5PV310)
-	if (code == KEY_HOME) {
-		if (value) {
-			state = HOME_DOWN;
-			home_down_jiffies = jiffies;
-		} else
-			state = NONE;
-	} else if (code == KEY_VOLUMEUP) {
-		if (value) {
-			if (state == HOME_DOWN) {
-				pr_err("%s: %u msec after home down\n",
-				       __func__,
-				       jiffies_to_msecs(jiffies -
-							home_down_jiffies));
-				panic("Crash Key");
-			}
-			/* else do nothing */
-		} else
-			state = NONE;
-	} else
-		state = NONE;
-#endif /* CONFIG_ARCH_* */
+	if (crash_key) {
+		__sec_crash_key = crash_key;
+		if (__sec_crash_key->timeout == 0)
+			__sec_crash_key->timeout = dflt_crash_key.timeout;
+	}
+
+	__sec_crash_key->unlock = 0;
+	for (i = 0; i < __sec_crash_key->size - 1; i++)
+		__sec_crash_key->unlock |= 1 << i;
+
+	register_keyboard_notifier(&sec_debug_keyboard_notifier);
 }
 
 static struct notifier_block nb_reboot_block = {
@@ -538,9 +653,9 @@ static void sec_debug_set_build_info(void)
 	strncat(p, gkernel_sec_build_info_date_time[1], 9);
 }
 
-int __init sec_debug_init(void)
+static int __init sec_debug_init(void)
 {
-	if (!enable)
+	if (!sec_debug_level.en.kernel_fault)
 		return -1;
 
 	sec_debug_set_build_info();
@@ -555,37 +670,70 @@ int __init sec_debug_init(void)
 	return 0;
 }
 
+late_initcall(sec_debug_init);
+
+int sec_debug_get_level(void)
+{
+	return sec_debug_level.uint_val;
+}
+
+/* Exynos compatibility */
+int get_sec_debug_level(void)
+	__attribute__ ((weak, alias("sec_debug_get_level")));
+
 /* klaatu - schedule log */
 #ifdef CONFIG_SEC_DEBUG_SCHED_LOG
-void sec_debug_task_sched_log(int cpu, struct task_struct *task)
+void __sec_debug_task_log(int cpu, struct task_struct *task)
 {
-	unsigned i =
-	    atomic_inc_return(&gExcpTaskLogIdx[cpu]) & (SCHED_LOG_MAX - 1);
+	unsigned i;
 
-	gExcpTaskLog[cpu][i].time = cpu_clock(cpu);
-	strcpy(gExcpTaskLog[cpu][i].log.task.comm, task->comm);
-	gExcpTaskLog[cpu][i].log.task.pid = task->pid;
-	gExcpTaskLog[cpu][i].log.task.cpu = cpu;
+	if (!sec_debug_level.en.kernel_fault)
+		return;
+
+	i = atomic_inc_return(&excp_task_log_idx[cpu]) & (SCHED_LOG_MAX - 1);
+
+	(*excp_task_log_ptr)[cpu][i].time = cpu_clock(cpu);
+	strcpy((*excp_task_log_ptr)[cpu][i].log.task.comm, task->comm);
+	(*excp_task_log_ptr)[cpu][i].log.task.pid = task->pid;
 }
 
-void sec_debug_irq_sched_log(unsigned int irq, void *fn, int en)
+void __sec_debug_irq_log(unsigned int irq, void *fn, int en)
 {
-	int cpu = smp_processor_id();
-	unsigned i =
-	    atomic_inc_return(&gExcpTaskLogIdx[cpu]) & (SCHED_LOG_MAX - 1);
+	int cpu = raw_smp_processor_id();
+	unsigned i;
 
-	gExcpTaskLog[cpu][i].time = cpu_clock(cpu);
-	gExcpTaskLog[cpu][i].log.irq.cpu = cpu;
-	gExcpTaskLog[cpu][i].log.irq.irq = irq;
-	gExcpTaskLog[cpu][i].log.irq.fn = (void *)fn;
-	gExcpTaskLog[cpu][i].log.irq.en = en;
+	if (!sec_debug_level.en.kernel_fault)
+		return;
+
+	i = atomic_inc_return(&excp_task_log_idx[cpu]) & (SCHED_LOG_MAX - 1);
+
+	(*excp_task_log_ptr)[cpu][i].time = cpu_clock(cpu);
+	(*excp_task_log_ptr)[cpu][i].log.irq.irq = irq;
+	(*excp_task_log_ptr)[cpu][i].log.irq.fn = (void *)fn;
+	(*excp_task_log_ptr)[cpu][i].log.irq.en = en;
 }
 
+void __sec_debug_work_log(struct worker *worker,
+			  struct work_struct *work, work_func_t f)
+{
+	int cpu = raw_smp_processor_id();
+	unsigned i;
+
+	if (!sec_debug_level.en.kernel_fault)
+		return;
+
+	i = atomic_inc_return(&excp_task_log_idx[cpu]) & (SCHED_LOG_MAX - 1);
+
+	(*excp_task_log_ptr)[cpu][i].time = cpu_clock(cpu);
+	(*excp_task_log_ptr)[cpu][i].log.work.worker = worker;
+	(*excp_task_log_ptr)[cpu][i].log.work.work = work;
+	(*excp_task_log_ptr)[cpu][i].log.work.f = f;
+}
 #ifdef CONFIG_SEC_DEBUG_IRQ_EXIT_LOG
 void sec_debug_irq_last_exit_log(void)
 {
-	int cpu = smp_processor_id();
-	gExcpIrqExitTime[cpu] = cpu_clock(cpu);
+	int cpu = raw_smp_processor_id();
+	excp_irq_exit_time[cpu] = cpu_clock(cpu);
 }
 #endif /* CONFIG_SEC_DEBUG_IRQ_EXIT_LOG */
 #endif /* CONFIG_SEC_DEBUG_SCHED_LOG */
@@ -744,12 +892,13 @@ void debug_rwsemaphore_up_log(struct rw_semaphore *sem)
 #ifdef CONFIG_SEC_DEBUG_USER
 void sec_user_fault_dump(void)
 {
-	if (enable == 1 && enable_user == 1)
+	if (sec_debug_level.en.kernel_fault == 1 &&
+	    sec_debug_level.en.user_fault == 1)
 		panic("User Fault");
 }
 
 static int sec_user_fault_write(struct file *file, const char __user * buffer,
-				size_t count, loff_t * offs)
+				size_t count, loff_t *offs)
 {
 	char buf[100];
 

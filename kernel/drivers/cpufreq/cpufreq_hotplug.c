@@ -30,23 +30,20 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 
-#include <mach/omap4-common.h>
-#include <plat/common.h>
-
 /* greater than 80% avg load across online CPUs increases frequency */
-#define DEFAULT_UP_FREQ_MIN_LOAD			(60)
+#define DEFAULT_UP_FREQ_MIN_LOAD			(80)
 
 /* Keep 10% of idle under the up threshold when decreasing the frequency */
 #define DEFAULT_FREQ_DOWN_DIFFERENTIAL			(10)
 
-/* less than 20% avg load across online CPUs decreases frequency */
-#define DEFAULT_DOWN_FREQ_MAX_LOAD			(20)
+/* less than 35% avg load across online CPUs decreases frequency */
+#define DEFAULT_DOWN_FREQ_MAX_LOAD			(35)
 
 /* default sampling period (uSec) is bogus; 10x ondemand's default for x86 */
 #define DEFAULT_SAMPLING_PERIOD				(100000)
 
 /* default number of sampling periods to average before hotplug-in decision */
-#define DEFAULT_HOTPLUG_IN_SAMPLING_PERIODS		(4)
+#define DEFAULT_HOTPLUG_IN_SAMPLING_PERIODS		(5)
 
 /* default number of sampling periods to average before hotplug-out decision */
 #define DEFAULT_HOTPLUG_OUT_SAMPLING_PERIODS		(20)
@@ -54,7 +51,6 @@
 static void do_dbs_timer(struct work_struct *work);
 static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		unsigned int event);
-static int hotplug_boost(struct cpufreq_policy *policy);
 
 #ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_HOTPLUG
 static
@@ -62,12 +58,8 @@ static
 struct cpufreq_governor cpufreq_gov_hotplug = {
        .name                   = "hotplug",
        .governor               = cpufreq_governor_dbs,
-       .boost_cpu_freq         = hotplug_boost,
        .owner                  = THIS_MODULE,
 };
-
-
-
 
 struct cpu_dbs_info_s {
 	cputime64_t prev_cpu_idle;
@@ -75,11 +67,8 @@ struct cpu_dbs_info_s {
 	cputime64_t prev_cpu_nice;
 	struct cpufreq_policy *cur_policy;
 	struct delayed_work work;
-	struct work_struct cpu_up_work;
-	struct work_struct cpu_down_work;
 	struct cpufreq_frequency_table *freq_table;
 	int cpu;
-	unsigned int boost_applied:1;
 	/*
 	 * percpu mutex that serializes governor limit change with
 	 * do_dbs_timer invocation. We do not want do_dbs_timer to run
@@ -97,7 +86,6 @@ static unsigned int dbs_enable;	/* number of CPUs using this policy */
  */
 static DEFINE_MUTEX(dbs_mutex);
 
-
 static struct workqueue_struct	*khotplug_wq;
 
 static struct dbs_tuners {
@@ -111,7 +99,6 @@ static struct dbs_tuners {
 	unsigned int *hotplug_load_history;
 	unsigned int ignore_nice;
 	unsigned int io_is_busy;
-	unsigned int boost_timeout;
 } dbs_tuners_ins = {
 	.sampling_rate =		DEFAULT_SAMPLING_PERIOD,
 	.up_threshold =			DEFAULT_UP_FREQ_MIN_LOAD,
@@ -122,7 +109,6 @@ static struct dbs_tuners {
 	.hotplug_load_index =		0,
 	.ignore_nice =			0,
 	.io_is_busy =			0,
-	.boost_timeout = 0,
 };
 
 /*
@@ -170,21 +156,7 @@ show_one(hotplug_in_sampling_periods, hotplug_in_sampling_periods);
 show_one(hotplug_out_sampling_periods, hotplug_out_sampling_periods);
 show_one(ignore_nice_load, ignore_nice);
 show_one(io_is_busy, io_is_busy);
-show_one(boost_timeout, boost_timeout);
 
-static ssize_t store_boost_timeout(struct kobject *a, struct attribute *b,
-                                  const char *buf, size_t count)
-{
-    unsigned int input;
-    int ret;
-    ret = sscanf(buf, "%u", &input);
-    if (ret != 1)
-          return -EINVAL;
-    mutex_lock(&dbs_mutex);
-    dbs_tuners_ins.boost_timeout = input;
-    mutex_unlock(&dbs_mutex);
-    return count;
-}
 static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
 				   const char *buf, size_t count)
 {
@@ -414,7 +386,6 @@ define_one_global_rw(hotplug_in_sampling_periods);
 define_one_global_rw(hotplug_out_sampling_periods);
 define_one_global_rw(ignore_nice_load);
 define_one_global_rw(io_is_busy);
-define_one_global_rw(boost_timeout);
 
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate.attr,
@@ -425,7 +396,6 @@ static struct attribute *dbs_attributes[] = {
 	&hotplug_out_sampling_periods.attr,
 	&ignore_nice_load.attr,
 	&io_is_busy.attr,
-	&boost_timeout.attr,
 	NULL
 };
 
@@ -502,7 +472,6 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	/* calculate the average load across all related CPUs */
 	avg_load = total_load / num_online_cpus();
 
-	mutex_lock(&dbs_mutex);
 
 	/*
 	 * hotplug load accounting
@@ -546,9 +515,13 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		/* should we enable auxillary CPUs? */
 		if (num_online_cpus() < 2 && hotplug_in_avg_load >
 				dbs_tuners_ins.up_threshold) {
-
-			queue_work_on(this_dbs_info->cpu, khotplug_wq,
-							&this_dbs_info->cpu_up_work);
+			/* hotplug with cpufreq is nasty
+			 * a call to cpufreq_governor_dbs may cause a lockup.
+			 * wq is not running here so its safe.
+			 */
+			mutex_unlock(&this_dbs_info->timer_mutex);
+			cpu_up(1);
+			mutex_lock(&this_dbs_info->timer_mutex);
 			goto out;
 		}
 	}
@@ -566,16 +539,13 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	/* check for frequency decrease */
 	if (avg_load < dbs_tuners_ins.down_threshold) {
 		/* are we at the minimum frequency already? */
-		if (policy->cur <= policy->min) {
+		if (policy->cur == policy->min) {
 			/* should we disable auxillary CPUs? */
 			if (num_online_cpus() > 1 && hotplug_out_avg_load <
 					dbs_tuners_ins.down_threshold) {
-
-				printk("hotplug out avg load = %d", hotplug_out_avg_load);
-
-				queue_work_on(this_dbs_info->cpu, khotplug_wq,
-								&this_dbs_info->cpu_down_work);
-
+				mutex_unlock(&this_dbs_info->timer_mutex);
+				cpu_down(1);
+				mutex_lock(&this_dbs_info->timer_mutex);
 			}
 			goto out;
 		}
@@ -583,7 +553,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	/*
 	 * go down to the lowest frequency which can sustain the load by
-	 * keeping 20% of idle in order to not cross the up_threshold
+	 * keeping 30% of idle in order to not cross the up_threshold
 	 */
 	if ((max_load_freq <
 	    (dbs_tuners_ins.up_threshold - dbs_tuners_ins.down_differential) *
@@ -600,28 +570,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 					 CPUFREQ_RELATION_L);
 	}
 out:
-	mutex_unlock(&dbs_mutex);
 	return;
-}
-
-static struct device hotplug_dev = {
-		.init_name = "cpu_hotplug",
-};
-
-static void do_cpu_up(struct work_struct *work)
-{
-	cpu_up(1);
-	
-	if (num_online_cpus()  > 1 )
-		dpll_cascading_blocker_hold(&hotplug_dev);
-}
-
-static void do_cpu_down(struct work_struct *work)
-{
-	cpu_down(1);
-
-	if (num_online_cpus() < 2)
-		dpll_cascading_blocker_release(&hotplug_dev);
 }
 
 static void do_dbs_timer(struct work_struct *work)
@@ -630,22 +579,11 @@ static void do_dbs_timer(struct work_struct *work)
 		container_of(work, struct cpu_dbs_info_s, work.work);
 	unsigned int cpu = dbs_info->cpu;
 
-	int delay = 0;
-	mutex_lock(&dbs_info->timer_mutex);
-	if (!dbs_info->boost_applied) {
-		dbs_check_cpu(dbs_info);
-		/* We want all related CPUs to do sampling nearly on same jiffy */
-		delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
-	} else {
-		delay = usecs_to_jiffies(dbs_tuners_ins.boost_timeout);
-		dbs_info->boost_applied = 0;
-		
-		if (num_online_cpus() < 2)
-			queue_work_on(cpu, khotplug_wq, &dbs_info->cpu_up_work);
+	/* We want all related CPUs to do sampling nearly on same jiffy */
+	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
 
-		if (num_online_cpus() > 1)
-			dpll_cascading_blocker_hold(&hotplug_dev);
-  	}
+	mutex_lock(&dbs_info->timer_mutex);
+	dbs_check_cpu(dbs_info);
 	queue_delayed_work_on(cpu, khotplug_wq, &dbs_info->work, delay);
 	mutex_unlock(&dbs_info->timer_mutex);
 }
@@ -654,13 +592,9 @@ static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 {
 	/* We want all related CPUs to do sampling nearly on same jiffy */
 	int delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
-//	delay -= jiffies % delay;
-	INIT_DELAYED_WORK_DEFERRABLE(&dbs_info->work, do_dbs_timer);
-	INIT_WORK(&dbs_info->cpu_up_work, do_cpu_up);
-	INIT_WORK(&dbs_info->cpu_down_work, do_cpu_down);
+	delay -= jiffies % delay;
 
-  if (!dbs_info->boost_applied)
-        delay = usecs_to_jiffies(dbs_tuners_ins.boost_timeout);
+	INIT_DELAYED_WORK_DEFERRABLE(&dbs_info->work, do_dbs_timer);
 	queue_delayed_work_on(dbs_info->cpu, khotplug_wq, &dbs_info->work,
 		delay);
 }
@@ -725,9 +659,6 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 				return rc;
 			}
 		}
-   if (!dbs_tuners_ins.boost_timeout)
-        dbs_tuners_ins.boost_timeout =  dbs_tuners_ins.sampling_rate * 30;
-
 		mutex_unlock(&dbs_mutex);
 
 		mutex_init(&this_dbs_info->timer_mutex);
@@ -764,27 +695,6 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		break;
 	}
 	return 0;
-}
-static int hotplug_boost(struct cpufreq_policy *policy)
-{
-       unsigned int cpu = policy->cpu;
-       struct cpu_dbs_info_s *this_dbs_info;
-
-       this_dbs_info = &per_cpu(hp_cpu_dbs_info, cpu);
-
-#if 0
-       /* Already at max? */
-       if (policy->cur == policy->max)
-               return;
-#endif
-
-       mutex_lock(&this_dbs_info->timer_mutex);
-       this_dbs_info->boost_applied = 1;
-       __cpufreq_driver_target(policy, policy->max,
-               CPUFREQ_RELATION_H);
-       mutex_unlock(&this_dbs_info->timer_mutex);
-
-       return 0;
 }
 
 static int __init cpufreq_gov_dbs_init(void)

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2006-2010 Trusted Logic S.A.
+ * Copyright (c) 2011 Trusted Logic S.A.
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -63,9 +63,13 @@ schedule_secure_world:
 	b	label_smc
 
 return_from_rpc:
-	ldr	r9, =g_RPC_parameters
-	ldm	r9, {r0-r3}
-	/* fall through */
+	/* Always return success to an RPC */
+	/* The effective status is stored in the L1 shared buffer */
+	mov	r0, #0x00000000
+	mov	r1, #0x00000000
+	mov	r2, #0x00000000
+	mov	r3, #0x00000000
+	/* fall through... */
 
 return_from_irq:
 	ldr	r10, =g_secure_task_id
@@ -78,64 +82,19 @@ label_smc:
 	dsb
 	dmb
 
-#ifdef CONFIG_SMC_BENCH_SECURE_CYCLE
-	/* Come from Non Secure: activate counter 1 (write to 0 are ignored) */
-	mov	r4, #0x00000002
-
-	/* Read Count Enable Set Register */
-	mcr	p15, 0x0, r4, c9, c12, 1
-
-	/* Come from Non Secure: stop counter 0 (write to 0 are ignored) */
-	mov	r4, #0x00000001
-
-	/* Write Count Enable Clear Register */
-	mcr	p15, 0x0, r4, c9, c12, 2
-#endif
-
 	smc	#0
 	b	service_end
 	nop
 
-#ifdef CONFIG_SMC_BENCH_SECURE_CYCLE
-	/* Come from Secure: activate counter 0 (write to 0 are ignored) */
-	mov	r4, #0x00000001
-
-	/* Write Count Enable Set Register */
-	mcr	p15, 0x0, r4, c9, c12, 1
-
-	/* Come from Secure: stop counter 1 (write to 0 are ignored) */
-	mov	r4, #0x00000002
-
-	/* Write Count Enable Clear Register */
-	mcr	p15, 0x0, r4, c9, c12, 2
-#endif
-
 	INVALIDATE_BTB
-	mov	r0, #0x00
 	ldr	r8, =g_secure_task_id
 	str	r6, [r8]
-	b	schedule_secure_world_exit
+
+	mov	r0, #0x00
+	ldr	r8, =g_service_end
+	str	r0, [r8]
 
 service_end:
-	ldr	r8, =g_service_end
-	mov	r6, #0x1
-	str	r6, [r8]
-
-schedule_secure_world_exit:
-#ifdef CONFIG_SMC_BENCH_SECURE_CYCLE
-	/* Come from Secure: activate counter 0 (write to 0 are ignored) */
-	mov	r4, #0x00000001
-
-	/* Write Count Enable Set Register */
-	mcr	p15, 0x0, r4, c9, c12, 1
-
-	/* Come from Secure: stop counter 1 (write to 0 are ignored) */
-	mov	r4, #0x00000002
-
-	/* Write Count Enable Clear Register */
-	mcr	p15, 0x0, r4, c9, c12, 2
-#endif
-
 	INVALIDATE_BTB
 
 	/* Restore registers */
@@ -143,20 +102,6 @@ schedule_secure_world_exit:
 
 rpc_handler:
 	.global rpc_handler
-
-#ifdef CONFIG_SMC_BENCH_SECURE_CYCLE
-	/* Come from Secure: activate counter 0 (write to 0 are ignored) */
-	mov	r4, #0x00000001
-
-	/* Write Count Enable Set Register */
-	mcr	p15, 0x0, r4, c9, c12, 1
-
-	/* Come from Secure: stop counter 1 (write to 0 are ignored) */
-	mov	r4, #0x00000002
-
-	/* Write Count Enable Clear Register */
-	mcr	p15, 0x0, r4, c9, c12, 2
-#endif
 	INVALIDATE_BTB
 
 	/* g_RPC_advancement = RPC_ADVANCEMENT_PENDING */
@@ -164,70 +109,16 @@ rpc_handler:
 	mov	r9, #RPC_ADVANCEMENT_PENDING
 	str	r9, [r8]
 
-	ldr	r8, =g_RPC_parameters
-	stm	r8, {r0-r3}
+	/* The effective command is stored in the L1 shared buffer */
+	mov	r0, #0x00000000
 
 	ldr	r8, =g_secure_task_id
 	str	r6, [r8]
 
-	/* Restore registers */
 	mov	r0, #0x00
+	ldr	r8, =g_service_end
+	str	r0, [r8]
+
+	/* Restore registers */
 	pop	{r4-r12, pc}
 
-#ifdef CONFIG_SMC_BENCH_SECURE_CYCLE
-
-setupCounters:
-	.global setupCounters
-
-	push	{r14}
-
-	mrc	p15, 0, r2, c9, c12, 0
-	orr	r2, r2, #0x3
-	mcr	p15, 0, r2, c9, c12, 0
-
-	mrc	p15, 0, r2, c9, c12, 1
-	orr	r2, r2, #0x80000000
-	mcr	p15, 0, r2, c9, c12, 1
-
-	pop	{pc}
-
-runCodeSpeed:
-	.global runCodeSpeed
-
-	push	{r14}
-
-	/*  Reset cycle counter */
-	mov	r2, #0
-	mcr	p15, 0, r2, c9, c13, 0
-
-runCodeSpeed_loop:
-	sub	r0, r0, #1
-	cmp	r0, #0
-	bne	runCodeSpeed_loop
-
-	/* Read cycle counter */
-	mrc	p15, 0, r0, c9, c13, 0
-
-	pop	{pc}
-
-runDataSpeed:
-	.global runDataSpeed
-
-	push	{r14}
-
-	/* Reset cycle counter */
-	mov	r2, #0
-	mcr	p15, 0, r2, c9, c13, 0
-
-runDataSpeed_loop:
-	sub	r0, r0, #1
-	ldr	r2, [r1]
-	cmp	r0, #0
-	bne	runDataSpeed_loop
-
-	/* read cycle counter */
-	mrc	p15, 0, r0, c9, c13, 0
-
-	pop	{pc}
-
-#endif

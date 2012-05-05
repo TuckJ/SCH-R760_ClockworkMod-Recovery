@@ -1,5 +1,4 @@
 /*
- * cma3000_d0x.h
  * VTI CMA3000_D0x Accelerometer driver
  *
  * Copyright (C) 2010 Texas Instruments
@@ -18,31 +17,26 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef INPUT_CMA3000_H
-#define INPUT_CMA3000_H
+#ifndef _INPUT_CMA3000_H
+#define _INPUT_CMA3000_H
 
-#include <linux/i2c.h>
+#include <linux/types.h>
 #include <linux/input.h>
 
-struct cma3000_accl_data {
-#ifdef CONFIG_INPUT_CMA3000_I2C
-	struct i2c_client *client;
-#endif
-	struct input_dev *input_dev;
-	struct cma3000_platform_data pdata;
+struct device;
+struct cma3000_accl_data;
 
-	/* mutex for sysfs operations */
-	struct mutex mutex;
-	int bit_to_mg;
-	int enabled;
-	int req_rate;
+struct cma3000_bus_ops {
+	u16 bustype;
+	u8 ctrl_mod;
+	int (*read)(struct device *, u8, char *);
+	int (*write)(struct device *, u8, u8, char *);
 };
 
-int cma3000_set(struct cma3000_accl_data *, u8, u8, char *);
-int cma3000_read(struct cma3000_accl_data *, u8, char *);
-int cma3000_init(struct cma3000_accl_data *);
-int cma3000_exit(struct cma3000_accl_data *);
-int cma3000_poweron(struct cma3000_accl_data *);
-int cma3000_poweroff(struct cma3000_accl_data *);
+struct cma3000_accl_data *cma3000_init(struct device *dev, int irq,
+					const struct cma3000_bus_ops *bops);
+void cma3000_exit(struct cma3000_accl_data *);
+void cma3000_suspend(struct cma3000_accl_data *);
+void cma3000_resume(struct cma3000_accl_data *);
 
 #endif

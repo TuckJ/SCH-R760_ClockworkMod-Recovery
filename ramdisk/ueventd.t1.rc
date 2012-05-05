@@ -1,48 +1,59 @@
-##
-# Copyright (C) 2010-2011, Samsung Electronics, Co., Ltd. All Rights Reserved.
-#  Written by System S/W Group, Open OS S/W R&D Team,
-#  Mobile Communication Division.
-##
+#for DSSCOMP
+/dev/dsscomp              0666   system     system
+/dev/tiler                0666   system     system
 
-/dev/mpu		0660	system		system
-/dev/mpuirq		0660	system		system
-/dev/timerirq		0660	system		system
+#for SYSLINK
+################################################
+#rajireddy.k: user changed to system. Otherwise 
+# VideoEditor_T1 is failing to load TI OMX
+################################################
+/dev/rpmsg-omx0           0660   system    drmrpc
+/dev/rpmsg-omx1           0660   system    drmrpc
+/dev/rproc_user           0660   system    drmrpc
+/dev/tf_driver            0660   drmrpc    drmrpc
+/dev/tf_ctrl              0660   drmrpc    drmrpc
 
-/dev/i2c-4		0660	system		system
-/dev/syslink-proc4430	0660	system		system
-/dev/syslink-procmgr	0660	system		system
-/dev/notifyducatidrv	0660	system		system
-/dev/ipcnotify		0660	system		system
-/dev/syslink_ipc	0660	system		system
-/dev/syslink_platform	0660	system		system
-/dev/omap-rproc0	0660	system		system
-/dev/omap-rproc1	0660	system		system
-/dev/omap-rproc2	0660	system		system
-/dev/iovmm-omap0	0660	system		system
-/dev/iovmm-omap1	0660	system		system
-/dev/omap-devh0		0660	system		system
-/dev/omap-devh1		0660	system		system
-/dev/omap-devh2		0660	system		system
-/dev/snd/pcmC0D0c	0660	system		system
-/dev/snd/pcmC0D0p	0660	system		system
-/dev/snd/controlC0	0660	system		system
-/dev/snd/timer		0660	system		system
-/dev/snd/pcmC0D5c	0660	system		system
-/dev/snd/pcmC0D5p	0660	system		system
-/dev/video0		0660	system		system
-/dev/video1		0660	system		system
-/dev/video2		0660	system		system
-/dev/video3		0660	system		system
-/dev/video5		0660	system		camera
-/dev/tiler		0660	system		system
-/dev/onedram		0660	radio		radio
-/dev/dmm		0660	system		system
-/dev/fmradio            0660   system     audio
-/dev/tspdrv		0660	system		system
-/dev/ttyO0		0660 system		system
-/dev/ttyO1		0660 bluetooth		bluetooth
-/dev/ttyO2		0660 radio		radio
-/dev/usb/lp*		0660	system		usb
-
+#for Sensors
+/dev/mpu                  0660   system     system
+/dev/mpuirq               0660   system     system
+/dev/timerirq             0660   system     system
 # for AKM8975
 /dev/akm8975		0660	system	system
+
+#for HSPA RIL
+/dev/umts_boot0           0660   radio      radio
+/dev/umts_boot1           0660   radio      radio
+/dev/umts_ipc0            0660   radio      radio
+/dev/umts_rfs0            0660   radio      radio
+/dev/block/mmcblk0p9      0660   radio      radio
+/dev/block/mmcblk0p8      0660   radio      radio
+/dev/umts_ramdump0        0660   radio      radio
+/dev/umts_router          0660   radio      system
+/dev/umts_csd             0660   radio      system
+
+#SISO Anuradha change start
+#hdcp
+/dev/hdcp		0664	root		root
+#SISO Anuradha change end
+# used by RIL and GPS
+/dev/ttyO0                0660   system     radio
+
+# FM Device
+/dev/fmradio               0660   system     audio
+
+#for LTE RIL
+/dev/cdma_boot0		    0660	radio	radio
+/dev/lte_boot0		    0660	radio	radio
+/dev/cdma_ipc0		    0660	radio	radio
+/dev/lte_ipc0		    0660	radio	radio
+/dev/cdma_rfs0		    0660	radio	radio
+/dev/lte_rfs0		    0660	radio	radio
+/dev/lte_spi		    0660	radio	radio
+/dev/cdma_rmnet5	    0660	radio	radio
+/dev/cdma_rmnet6	    0660	radio	radio
+/dev/lte_rmnet4		    0660	radio	radio
+/dev/ttyGS1			    0660	radio	radio
+/dev/block/mmcblk0p4	0660	radio	radio
+/dev/modem_br           0660    radio   radio
+/dev/cdma_ramdump0      0660    radio   radio
+/dev/lte_ramdump0       0660    radio   radio

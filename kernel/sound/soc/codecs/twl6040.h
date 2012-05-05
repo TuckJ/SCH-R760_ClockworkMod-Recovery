@@ -22,14 +22,9 @@
 #ifndef __TWL6040_H__
 #define __TWL6040_H__
 
-struct twl6040_setup_data {
-	void (*codec_enable)(int enable);
-	void *jack;
-};
+#include <linux/mfd/twl6040-codec.h>
 
 void twl6040_hs_jack_detect(struct snd_soc_codec *codec,
 			    struct snd_soc_jack *jack, int report);
-int twl6040_set_bias_level(struct snd_soc_codec *codec,
-			   enum snd_soc_bias_level level);
 
 #endif /* End of __TWL6040_H__ */

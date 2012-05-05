@@ -45,4 +45,20 @@
 #define AK8975_FUSE_ASAY		0x11
 #define AK8975_FUSE_ASAZ		0x12
 
+#define AK8975_REG_CNTL			0x0A
+#define REG_CNTL_MODE_SHIFT             0
+#define REG_CNTL_MODE_MASK              (0xF << REG_CNTL_MODE_SHIFT)
+#define REG_CNTL_MODE_POWER_DOWN        0
+#define REG_CNTL_MODE_ONCE		0x01
+#define REG_CNTL_MODE_SELF_TEST         0x08
+#define REG_CNTL_MODE_FUSE_ROM          0x0F
+
+#define AK8975_REG_RSVC			0x0B
+#define AK8975_REG_ASTC			0x0C
+#define AK8975_REG_TS1			0x0D
+#define AK8975_REG_TS2			0x0E
+#define AK8975_REG_I2CDIS		0x0F
+#define AK8975_REG_ASAX			0x10
+#define AK8975_REG_ASAY			0x11
+#define AK8975_REG_ASAZ			0x12
 #endif /* __AK8975_REG__ */

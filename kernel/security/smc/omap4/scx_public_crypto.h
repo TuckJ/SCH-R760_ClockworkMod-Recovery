@@ -23,7 +23,7 @@
 #include <linux/io.h>
 #include <mach/io.h>
 
-#include <plat/clockdomain.h>
+#include <clockdomain.h>
 
 /*-------------------------------------------------------------------------- */
 

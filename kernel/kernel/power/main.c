@@ -11,35 +11,17 @@
 #include <linux/kobject.h>
 #include <linux/string.h>
 #include <linux/resume-trace.h>
-#include <linux/wakelock.h>
 #include <linux/workqueue.h>
+
+
+#include <mach/cpufreq_limits.h>
+#ifdef CONFIG_DVFS_LIMIT
+#include <linux/cpufreq.h>
+#endif
 
 #include "power.h"
 
 DEFINE_MUTEX(pm_mutex);
-
-unsigned int pm_flags;
-EXPORT_SYMBOL(pm_flags);
-#if 1	// added by peres to show valid current state
-suspend_state_t global_state;
-#endif
-
-#ifndef FEATURE_FTM_SLEEP
-#define FEATURE_FTM_SLEEP
-#endif
-
-#ifdef FEATURE_FTM_SLEEP
-unsigned char ftm_sleep = 0;
-EXPORT_SYMBOL(ftm_sleep);
-
-void (*ftm_enable_usb_sw)(int mode);
-EXPORT_SYMBOL(ftm_enable_usb_sw);
-
-extern void wakelock_force_suspend(void);
-extern void debug_print_active_locks(int type);
-
-static struct wake_lock ftm_wake_lock;
-#endif
 
 #ifdef CONFIG_PM_SLEEP
 
@@ -156,18 +138,6 @@ power_attr(pm_test);
 
 #endif /* CONFIG_PM_SLEEP */
 
-ssize_t wake_lock_dbg_show(
-	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	debug_print_active_locks(0);
-	return sprintf(buf, "\n");
-}
-ssize_t wake_lock_dbg_store(
-	struct kobject *kobj, struct kobj_attribute *attr,
-	const char *buf, size_t n)
-{
-	return n;
-}
 struct kobject *power_kobj;
 
 /**
@@ -205,9 +175,6 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 			   const char *buf, size_t n)
 {
-#if 1	// added by peres to show valid current state
-	const char *b = buf;
-#endif
 #ifdef CONFIG_SUSPEND
 #ifdef CONFIG_EARLYSUSPEND
 	suspend_state_t state = PM_SUSPEND_ON;
@@ -234,43 +201,15 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 		if (*s && len == strlen(*s) && !strncmp(buf, *s, len))
 			break;
 	}
-	if (state < PM_SUSPEND_MAX && *s) {
-		printk(KERN_ERR "%s: state:%d (%s)\n", __func__, state, *s);
+	if (state < PM_SUSPEND_MAX && *s)
 #ifdef CONFIG_EARLYSUSPEND
 		if (state == PM_SUSPEND_ON || valid_state(state)) {
-#if 1	// added by peres to show valid current state
-			if(state == PM_SUSPEND_ON) {
-				if (ftm_sleep == 1) {
-					pr_info("%s: wake lock for FTM\n", __func__);
-					ftm_sleep = 0;
-					wake_lock_timeout(&ftm_wake_lock, 60 * HZ);
-					if (ftm_enable_usb_sw)
-						ftm_enable_usb_sw(1);
-				}
-				sprintf(b,"%s ", pm_states[PM_SUSPEND_ON]);
-				global_state = PM_SUSPEND_ON;
-			} else {
-				if (ftm_sleep == 1) { // when ftm sleep cmd 
-					if (ftm_enable_usb_sw)
-						ftm_enable_usb_sw(0);
-				}
-				sprintf(b,"%s ", pm_states[PM_SUSPEND_MEM]);
-				global_state = PM_SUSPEND_MEM;
-			}
-#endif
 			error = 0;
 			request_suspend_state(state);
-
-#ifdef FEATURE_FTM_SLEEP
-			if (ftm_sleep && global_state == PM_SUSPEND_MEM) {
-				wakelock_force_suspend();
-			}
-#endif /* FEATURE_FTM_SLEEP */
 		}
 #else
 		error = enter_state(state);
 #endif
-	}
 #endif
 
  Exit:
@@ -279,59 +218,59 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 
 power_attr(state);
 
-#ifdef FEATURE_FTM_SLEEP /* for Factory Sleep cmd check */
+#ifdef CONFIG_PM_SLEEP
+/*
+ * The 'wakeup_count' attribute, along with the functions defined in
+ * drivers/base/power/wakeup.c, provides a means by which wakeup events can be
+ * handled in a non-racy way.
+ *
+ * If a wakeup event occurs when the system is in a sleep state, it simply is
+ * woken up.  In turn, if an event that would wake the system up from a sleep
+ * state occurs when it is undergoing a transition to that sleep state, the
+ * transition should be aborted.  Moreover, if such an event occurs when the
+ * system is in the working state, an attempt to start a transition to the
+ * given sleep state should fail during certain period after the detection of
+ * the event.  Using the 'state' attribute alone is not sufficient to satisfy
+ * these requirements, because a wakeup event may occur exactly when 'state'
+ * is being written to and may be delivered to user space right before it is
+ * frozen, so the event will remain only partially processed until the system is
+ * woken up by another event.  In particular, it won't cause the transition to
+ * a sleep state to be aborted.
+ *
+ * This difficulty may be overcome if user space uses 'wakeup_count' before
+ * writing to 'state'.  It first should read from 'wakeup_count' and store
+ * the read value.  Then, after carrying out its own preparations for the system
+ * transition to a sleep state, it should write the stored value to
+ * 'wakeup_count'.  If that fails, at least one wakeup event has occurred since
+ * 'wakeup_count' was read and 'state' should not be written to.  Otherwise, it
+ * is allowed to write to 'state', but the transition will be aborted if there
+ * are any wakeup events detected after 'wakeup_count' was written to.
+ */
 
+static ssize_t wakeup_count_show(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				char *buf)
+{
+	unsigned int val;
 
-#define ftm_attr(_name) \
-static struct kobj_attribute _name##_attr = {	\
-	.attr	= {				\
-		.name = __stringify(_name),	\
-		.mode = 0660,			\
-	},					\
-	.show	= _name##_show,			\
-	.store	= _name##_store,		\
+	return pm_get_wakeup_count(&val) ? sprintf(buf, "%u\n", val) : -EINTR;
 }
 
-
-static ssize_t ftm_sleep_show(struct kobject *kobj, struct kobj_attribute *attr,
-			  char *buf)
+static ssize_t wakeup_count_store(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t n)
 {
-	char *s = buf;
-#ifdef CONFIG_SUSPEND
-	switch(ftm_sleep) {
-		case 0 :
-			s += sprintf(s,"%d ", 0);
-			break;
-		case 1 :
-			s += sprintf(s,"%d ", 1);
-			break;
+	unsigned int val;
+
+	if (sscanf(buf, "%u", &val) == 1) {
+		if (pm_save_wakeup_count(val))
+			return n;
 	}
-#endif
-
-	if (s != buf)
-		/* convert the last space to a newline */
-		*(s-1) = '\n';
-
-	return (s - buf);
+	return -EINVAL;
 }
 
-
-static ssize_t ftm_sleep_store(struct kobject *kobj, struct kobj_attribute *attr,
-			   const char *buf, size_t n)
-{
-	ssize_t ret = -EINVAL;
-	char *after;
-	unsigned char state = (unsigned char) simple_strtoul(buf, &after, 10);
-
-	ftm_sleep = state;
-
-	printk("%s, ftm_sleep = %d\n", __func__, ftm_sleep);        
-	return ret;
-
-}
-
-ftm_attr(ftm_sleep);
-#endif /* FEATURE_FTM_SLEEP */
+power_attr(wakeup_count);
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_PM_TRACE
 int pm_trace_enabled;
@@ -356,6 +295,23 @@ pm_trace_store(struct kobject *kobj, struct kobj_attribute *attr,
 }
 
 power_attr(pm_trace);
+
+static ssize_t pm_trace_dev_match_show(struct kobject *kobj,
+				       struct kobj_attribute *attr,
+				       char *buf)
+{
+	return show_trace_dev_match(buf, PAGE_SIZE);
+}
+
+static ssize_t
+pm_trace_dev_match_store(struct kobject *kobj, struct kobj_attribute *attr,
+			 const char *buf, size_t n)
+{
+	return -EINVAL;
+}
+
+power_attr(pm_trace_dev_match);
+
 #endif /* CONFIG_PM_TRACE */
 
 #ifdef CONFIG_USER_WAKELOCK
@@ -364,13 +320,179 @@ power_attr(wake_unlock);
 power_attr(wake_lock_dbg);
 #endif
 
+#ifdef CONFIG_DVFS_LIMIT
+static int cpufreq_min_limit_val = -1;
+static int cpufreq_min_locked;
+DEFINE_MUTEX(cpufreq_min_mutex);
+
+static int cpufreq_max_limit_val = -1;
+static int cpufreq_max_locked;
+DEFINE_MUTEX(cpufreq_max_mutex);
+
+static void cpufreq_min_limit(const char *buf, size_t count)
+{
+	int ret, temp;
+
+	mutex_lock(&cpufreq_min_mutex);
+
+	temp = cpufreq_min_limit_val;
+	ret = sscanf(buf, "%d", &cpufreq_min_limit_val);
+	if (ret != 1) {
+		pr_warn("%s: invalid format(%d)\n", __func__, ret);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (cpufreq_min_limit_val == -1) {
+		if (cpufreq_min_locked) {
+			omap_cpufreq_min_limit_free(DVFS_LOCK_ID_USER);
+			cpufreq_min_locked = 0;
+			ret = 0;
+		} else {
+			pr_warn("%s: there is no min limit!\n", __func__);
+			ret = -EINVAL;
+		}
+		goto out;
+	}
+
+	pr_debug("%s: current max freq=%d req max freq=%d\n",
+		__func__, cpufreq_max_limit_val, cpufreq_min_limit_val);
+
+	if (cpufreq_min_locked)
+		omap_cpufreq_min_limit_free(DVFS_LOCK_ID_USER);
+
+	omap_cpufreq_min_limit(DVFS_LOCK_ID_USER, cpufreq_min_limit_val);
+	cpufreq_min_locked = 1;
+
+out:
+	if (ret < 0)
+		cpufreq_min_limit_val = temp;
+
+	mutex_unlock(&cpufreq_min_mutex);
+	return;
+}
+
+static ssize_t cpufreq_min_limit_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", cpufreq_min_limit_val);
+}
+
+static ssize_t cpufreq_min_limit_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t n)
+{
+	cpufreq_min_limit(buf, 0);
+	return n;
+}
+
+
+static void cpufreq_max_limit(const char *buf)
+{
+	int ret, temp;
+
+	mutex_lock(&cpufreq_max_mutex);
+
+	temp = cpufreq_max_limit_val;
+	ret = sscanf(buf, "%d", &cpufreq_max_limit_val);
+	if (ret != 1) {
+		pr_warn("%s: invalid format(%d)\n", __func__, ret);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (cpufreq_max_limit_val == -1) {
+		if (cpufreq_max_locked) {
+			omap_cpufreq_max_limit_free(DVFS_LOCK_ID_USER);
+			cpufreq_max_locked = 0;
+			ret = 0;
+		} else {
+			pr_warn("%s: there is no max limit!\n", __func__);
+			ret = -EINVAL;
+		}
+		goto out;
+	}
+
+	pr_debug("%s: current min freq=%d req max freq=%d\n",
+		__func__, cpufreq_min_limit_val, cpufreq_max_limit_val);
+
+	if (cpufreq_max_locked)
+		omap_cpufreq_max_limit_free(DVFS_LOCK_ID_USER);
+
+	omap_cpufreq_max_limit(DVFS_LOCK_ID_USER, cpufreq_max_limit_val);
+	cpufreq_max_locked = 1;
+
+out:
+	if (ret < 0)
+		cpufreq_max_limit_val = temp;
+
+	mutex_unlock(&cpufreq_max_mutex);
+	return;
+}
+
+static ssize_t cpufreq_max_limit_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", cpufreq_max_limit_val);
+}
+
+static ssize_t cpufreq_max_limit_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t n)
+{
+	cpufreq_max_limit(buf);
+	return n;
+}
+
+static ssize_t cpufreq_table_show(struct kobject *kobj,
+			struct kobj_attribute *attr, char *buf)
+{
+	ssize_t len = 0;
+	int i;
+	struct cpufreq_frequency_table *table;
+
+	table = cpufreq_frequency_get_table(0);
+
+	for (i = 0; table[i].frequency != CPUFREQ_TABLE_END; i++)
+			;
+
+	i--;
+	for (; i >= 0; i--) {
+		unsigned int freq = table[i].frequency;
+		len += sprintf(buf + len, "%u ", freq);
+	}
+
+	if (len)
+		len--;
+
+	len += sprintf(buf + len, "\n");
+
+	return len;
+}
+
+static ssize_t cpufreq_table_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t n)
+{
+	pr_warn("%s: Not supported\n", __func__);
+	return n;
+}
+
+power_attr(cpufreq_max_limit);
+power_attr(cpufreq_min_limit);
+power_attr(cpufreq_table);
+#endif
+
+
 static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
+	&pm_trace_dev_match_attr.attr,
 #endif
 #ifdef CONFIG_PM_SLEEP
 	&pm_async_attr.attr,
+	&wakeup_count_attr.attr,
 #ifdef CONFIG_PM_DEBUG
 	&pm_test_attr.attr,
 #endif
@@ -379,8 +501,14 @@ static struct attribute * g[] = {
 	&wake_unlock_attr.attr,
 	&wake_lock_dbg_attr.attr,
 #endif
-	&ftm_sleep_attr.attr,
 #endif
+
+#ifdef CONFIG_DVFS_LIMIT
+	&cpufreq_min_limit_attr.attr,
+	&cpufreq_max_limit_attr.attr,
+	&cpufreq_table_attr.attr,
+#endif
+
 	NULL,
 };
 
@@ -394,7 +522,7 @@ EXPORT_SYMBOL_GPL(pm_wq);
 
 static int __init pm_start_workqueue(void)
 {
-	pm_wq = create_freezeable_workqueue("pm");
+	pm_wq = alloc_workqueue("pm", WQ_FREEZABLE, 0);
 
 	return pm_wq ? 0 : -ENOMEM;
 }
@@ -407,12 +535,11 @@ static int __init pm_init(void)
 	int error = pm_start_workqueue();
 	if (error)
 		return error;
+	hibernate_image_size_init();
+	hibernate_reserved_size_init();
 	power_kobj = kobject_create_and_add("power", NULL);
 	if (!power_kobj)
 		return -ENOMEM;
-
-	wake_lock_init(&ftm_wake_lock, WAKE_LOCK_SUSPEND, "ftm_wake_lock");
-
 	return sysfs_create_group(power_kobj, &attr_group);
 }
 

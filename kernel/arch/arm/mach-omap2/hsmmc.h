@@ -6,6 +6,12 @@
  * published by the Free Software Foundation.
  */
 
+#include <asm/mach/mmc.h>
+
+struct mmc_card;
+
+typedef int (*mmc_card_detect_func)(struct device *dev, int slot);
+
 struct omap2_hsmmc_info {
 	u8	mmc;		/* controller 1/2/3 */
 	u32	caps;		/* 4/8 wires and any additional host
@@ -16,21 +22,21 @@ struct omap2_hsmmc_info {
 	bool	nonremovable;	/* Nonremovable e.g. eMMC */
 	bool	power_saving;	/* Try to sleep or power off when possible */
 	bool	no_off;		/* power_saving and power is not to go off */
+	bool	no_off_init;	/* no power off when not in MMC sleep state */
 	bool	vcc_aux_disable_is_sleep; /* Regulator off remapped to sleep */
+	bool	external_ldo;	/* External suppy is in use */
+	int	gpio_for_ldo;	/* gpio pin to enable external LDo */
 	int	gpio_cd;	/* or -EINVAL */
 	int	gpio_wp;	/* or -EINVAL */
 	char	*name;		/* or NULL for default */
 	struct device *dev;	/* returned: pointer to mmc adapter */
 	int	ocr_mask;	/* temporary HACK */
-	/* Remux (pad configuation) when powering on/off */
+	struct mmc_platform_data *mmc_data;
+	/* Remux (pad configuration) when powering on/off */
 	void (*remux)(struct device *dev, int slot, int power_on);
+	/* init some special card */
+	void (*init_card)(struct mmc_card *card);
 };
-
-#ifdef CONFIG_TIWLAN_SDIO
-int omap_wifi_status_register(void (*callback)(int card_present,
-        void *dev_id), void *dev_id);
-int omap_wifi_status(struct device *dev, int slot);
-#endif
 
 #if defined(CONFIG_MMC_OMAP_HS) || defined(CONFIG_MMC_OMAP_HS_MODULE)
 

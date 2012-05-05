@@ -908,9 +908,6 @@ static int aes_operate(struct ablkcipher_request *req)
 	unsigned long flags;
 	int err;
 
-	/* Make sure AES HWA is accessible */
-	tf_delayed_secure_resume();
-
 	spin_lock_irqsave(&aes_ctx->lock, flags);
 	err = ablkcipher_enqueue_request(&aes_ctx->queue, req);
 	spin_unlock_irqrestore(&aes_ctx->lock, flags);
@@ -956,9 +953,6 @@ static void aes_single_encrypt(struct crypto_tfm *tfm, u8 *out, const u8 *in)
 {
 	struct PUBLIC_CRYPTO_AES_OPERATION_STATE *state = crypto_tfm_ctx(tfm);
 
-	/* Make sure AES HWA is accessible */
-	tf_delayed_secure_resume();
-
 	state->CTRL |= AES_CTRL_DIRECTION_ENCRYPT;
 
 	PDrvCryptoLockUnlockHWA(PUBLIC_CRYPTO_HWA_AES1, LOCK_HWA);
@@ -974,9 +968,6 @@ static void aes_single_decrypt(struct crypto_tfm *tfm, u8 *out, const u8 *in)
 {
 	struct PUBLIC_CRYPTO_AES_OPERATION_STATE *state =
 		crypto_tfm_ctx(tfm);
-
-	/* Make sure AES HWA is accessible */
-	tf_delayed_secure_resume();
 
 	state->CTRL &= ~(AES_CTRL_DIRECTION_ENCRYPT);
 	state->CTRL |= AES_CTRL_DIRECTION_DECRYPT;
@@ -1131,6 +1122,7 @@ int register_smc_public_crypto_aes(void)
 
 	crypto_init_queue(&aes_ctx->queue, 1);
 	tasklet_init(&aes_ctx->task, aes_tasklet, (unsigned long)aes_ctx);
+        spin_lock_init(&aes_ctx->lock);
 
 	aes_ctx->dma_in = OMAP44XX_DMA_AES1_P_DATA_IN_REQ;
 	aes_ctx->dma_out = OMAP44XX_DMA_AES1_P_DATA_OUT_REQ;

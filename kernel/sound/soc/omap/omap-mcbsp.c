@@ -4,7 +4,7 @@
  * Copyright (C) 2008 Nokia Corporation
  *
  * Contact: Jarkko Nikula <jhnikula@gmail.com>
- *          Peter Ujfalusi <peter.ujfalusi@nokia.com>
+ *          Peter Ujfalusi <peter.ujfalusi@ti.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,7 +31,6 @@
 #include <sound/initval.h>
 #include <sound/soc.h>
 
-#include <plat/control.h>
 #include <plat/dma.h>
 #include <plat/mcbsp.h>
 #include "omap-mcbsp.h"
@@ -70,110 +69,6 @@ static struct omap_mcbsp_data mcbsp_data[NUM_LINKS];
  */
 static struct omap_pcm_dma_data omap_mcbsp_dai_dma_params[NUM_LINKS][2];
 
-#if defined(CONFIG_ARCH_OMAP15XX) || defined(CONFIG_ARCH_OMAP16XX)
-static const int omap1_dma_reqs[][2] = {
-	{ OMAP_DMA_MCBSP1_TX, OMAP_DMA_MCBSP1_RX },
-	{ OMAP_DMA_MCBSP2_TX, OMAP_DMA_MCBSP2_RX },
-	{ OMAP_DMA_MCBSP3_TX, OMAP_DMA_MCBSP3_RX },
-};
-static const unsigned long omap1_mcbsp_port[][2] = {
-	{ OMAP1510_MCBSP1_BASE + OMAP_MCBSP_REG_DXR1,
-	  OMAP1510_MCBSP1_BASE + OMAP_MCBSP_REG_DRR1 },
-	{ OMAP1510_MCBSP2_BASE + OMAP_MCBSP_REG_DXR1,
-	  OMAP1510_MCBSP2_BASE + OMAP_MCBSP_REG_DRR1 },
-	{ OMAP1510_MCBSP3_BASE + OMAP_MCBSP_REG_DXR1,
-	  OMAP1510_MCBSP3_BASE + OMAP_MCBSP_REG_DRR1 },
-};
-#else
-static const int omap1_dma_reqs[][2] = {};
-static const unsigned long omap1_mcbsp_port[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP2) || defined(CONFIG_ARCH_OMAP3)
-static const int omap24xx_dma_reqs[][2] = {
-	{ OMAP24XX_DMA_MCBSP1_TX, OMAP24XX_DMA_MCBSP1_RX },
-	{ OMAP24XX_DMA_MCBSP2_TX, OMAP24XX_DMA_MCBSP2_RX },
-#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3)
-	{ OMAP24XX_DMA_MCBSP3_TX, OMAP24XX_DMA_MCBSP3_RX },
-	{ OMAP24XX_DMA_MCBSP4_TX, OMAP24XX_DMA_MCBSP4_RX },
-	{ OMAP24XX_DMA_MCBSP5_TX, OMAP24XX_DMA_MCBSP5_RX },
-#endif
-};
-#else
-static const int omap24xx_dma_reqs[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP4)
-static const int omap44xx_dma_reqs[][2] = {
-	{ OMAP44XX_DMA_MCBSP1_TX, OMAP44XX_DMA_MCBSP1_RX },
-	{ OMAP44XX_DMA_MCBSP2_TX, OMAP44XX_DMA_MCBSP2_RX },
-	{ OMAP44XX_DMA_MCBSP3_TX, OMAP44XX_DMA_MCBSP3_RX },
-	{ OMAP44XX_DMA_MCBSP4_TX, OMAP44XX_DMA_MCBSP4_RX },
-};
-#else
-static const int omap44xx_dma_reqs[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP2420)
-static const unsigned long omap2420_mcbsp_port[][2] = {
-	{ OMAP24XX_MCBSP1_BASE + OMAP_MCBSP_REG_DXR1,
-	  OMAP24XX_MCBSP1_BASE + OMAP_MCBSP_REG_DRR1 },
-	{ OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DXR1,
-	  OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DRR1 },
-};
-#else
-static const unsigned long omap2420_mcbsp_port[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP2430)
-static const unsigned long omap2430_mcbsp_port[][2] = {
-	{ OMAP24XX_MCBSP1_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP24XX_MCBSP1_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP2430_MCBSP3_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP2430_MCBSP3_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP2430_MCBSP4_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP2430_MCBSP4_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP2430_MCBSP5_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP2430_MCBSP5_BASE + OMAP_MCBSP_REG_DRR },
-};
-#else
-static const unsigned long omap2430_mcbsp_port[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP3)
-static const unsigned long omap34xx_mcbsp_port[][2] = {
-	{ OMAP34XX_MCBSP1_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP34XX_MCBSP1_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP34XX_MCBSP2_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP34XX_MCBSP2_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP34XX_MCBSP3_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP34XX_MCBSP3_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP34XX_MCBSP4_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP34XX_MCBSP4_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP34XX_MCBSP5_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP34XX_MCBSP5_BASE + OMAP_MCBSP_REG_DRR },
-};
-#else
-static const unsigned long omap34xx_mcbsp_port[][2] = {};
-#endif
-
-#if defined(CONFIG_ARCH_OMAP4)
-static const unsigned long omap44xx_mcbsp_port[][2] = {
-	{ OMAP44XX_MCBSP1_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP44XX_MCBSP1_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP44XX_MCBSP2_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP44XX_MCBSP2_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP44XX_MCBSP3_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP44XX_MCBSP3_BASE + OMAP_MCBSP_REG_DRR },
-	{ OMAP44XX_MCBSP4_BASE + OMAP_MCBSP_REG_DXR,
-	  OMAP44XX_MCBSP4_BASE + OMAP_MCBSP_REG_DRR },
-};
-#else
-static const unsigned long omap44xx_mcbsp_port[][2] = {};
-#endif
-
 static void omap_mcbsp_set_threshold(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -200,6 +95,11 @@ static void omap_mcbsp_set_threshold(struct snd_pcm_substream *substream)
 	else
 		words = 1;
 
+#ifdef CONFIG_SND_OMAP_SOC_WM8994
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+		words = 1;
+#endif
+
 	/* Configure McBSP internal buffer usage */
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		omap_mcbsp_set_tx_threshold(mcbsp_data->bus_id, words);
@@ -207,7 +107,7 @@ static void omap_mcbsp_set_threshold(struct snd_pcm_substream *substream)
 		omap_mcbsp_set_rx_threshold(mcbsp_data->bus_id, words);
 }
 
-#if 0
+#ifdef CONFIG_SND_OMAP_SOC_SDP4430
 static int omap_mcbsp_hwrule_min_buffersize(struct snd_pcm_hw_params *params,
 				    struct snd_pcm_hw_rule *rule)
 {
@@ -258,7 +158,8 @@ static int omap_mcbsp_dai_startup(struct snd_pcm_substream *substream,
 		* Rule for the buffer size. We should not allow
 		* smaller buffer than the FIFO size to avoid underruns
 		*/
-#if 0 // FIXME: All BE must support hw_rules and constraints */
+#ifdef CONFIG_SND_OMAP_SOC_SDP4430
+		/* FIXME: All BE must support hw_rules and constraints */
 		snd_pcm_hw_rule_add(substream->runtime, 0,
 				    SNDRV_PCM_HW_PARAM_CHANNELS,
 				    omap_mcbsp_hwrule_min_buffersize,
@@ -351,24 +252,10 @@ static int omap_mcbsp_dai_hw_params(struct snd_pcm_substream *substream,
 	unsigned int format, div, framesize, master;
 
 	dma_data = &omap_mcbsp_dai_dma_params[cpu_dai->id][substream->stream];
-	if (cpu_class_is_omap1()) {
-		dma = omap1_dma_reqs[bus_id][substream->stream];
-		port = omap1_mcbsp_port[bus_id][substream->stream];
-	} else if (cpu_is_omap2420()) {
-		dma = omap24xx_dma_reqs[bus_id][substream->stream];
-		port = omap2420_mcbsp_port[bus_id][substream->stream];
-	} else if (cpu_is_omap2430()) {
-		dma = omap24xx_dma_reqs[bus_id][substream->stream];
-		port = omap2430_mcbsp_port[bus_id][substream->stream];
-	} else if (cpu_is_omap34xx()) {
-		dma = omap24xx_dma_reqs[bus_id][substream->stream];
-		port = omap34xx_mcbsp_port[bus_id][substream->stream];
-	 } else if (cpu_is_omap44xx()) {
-		dma = omap44xx_dma_reqs[bus_id][substream->stream];
-		port = omap44xx_mcbsp_port[bus_id][substream->stream];
-	} else {
-		return -ENODEV;
-	}
+
+	dma = omap_mcbsp_dma_ch_params(bus_id, substream->stream);
+	port = omap_mcbsp_dma_reg_params(bus_id, substream->stream);
+
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
 		dma_data->data_type = OMAP_DMA_DATA_TYPE_S16;
@@ -424,6 +311,11 @@ static int omap_mcbsp_dai_hw_params(struct snd_pcm_substream *substream,
 			} else {
 				sync_mode = OMAP_DMA_SYNC_FRAME;
 			}
+
+#ifdef CONFIG_SND_OMAP_SOC_WM8994
+			if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+				sync_mode = OMAP_DMA_SYNC_ELEMENT;
+#endif
 		}
 	}
 
@@ -442,15 +334,7 @@ static int omap_mcbsp_dai_hw_params(struct snd_pcm_substream *substream,
 
 	format = mcbsp_data->fmt & SND_SOC_DAIFMT_FORMAT_MASK;
 	wpf = channels = params_channels(params);
-	/*	 
-	 * [T1] - voicecall: As per CP & 2mic recommendation,
-	 * phase type	: dual 
-	 * Transmit word length  : 16bit
-	 * frame length : 32bit 
-	 */
-#if 0
-        /* Fix for voice clarity */
-	if (/*channels == 2 && */(format == SND_SOC_DAIFMT_I2S ||
+	if (channels == 2 && (format == SND_SOC_DAIFMT_I2S ||
 			      format == SND_SOC_DAIFMT_LEFT_J)) {
 		/* Use dual-phase frames */
 		regs->rcr2	|= RPHASE;
@@ -463,14 +347,6 @@ static int omap_mcbsp_dai_hw_params(struct snd_pcm_substream *substream,
 
 	regs->rcr1	|= RFRLEN1(wpf - 1);
 	regs->xcr1	|= XFRLEN1(wpf - 1);
-#else
-	if (/*channels == 2 && */(format == SND_SOC_DAIFMT_I2S ||
-			      format == SND_SOC_DAIFMT_LEFT_J)) {
-		/* Use dual-phase frames */
-		regs->rcr2	|= RPHASE;
-		regs->xcr2	|= XPHASE;
-	}
-#endif
 
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
@@ -647,93 +523,6 @@ static int omap_mcbsp_dai_set_clkdiv(struct snd_soc_dai *cpu_dai,
 	return 0;
 }
 
-static int omap_mcbsp_dai_set_clks_src(struct omap_mcbsp_data *mcbsp_data,
-				       int clk_id)
-{
-	int sel_bit;
-	u16 reg, reg_devconf1 = OMAP243X_CONTROL_DEVCONF1;
-
-	if (cpu_class_is_omap1()) {
-		/* OMAP1's can use only external source clock */
-		if (unlikely(clk_id == OMAP_MCBSP_SYSCLK_CLKS_FCLK))
-			return -EINVAL;
-		else
-			return 0;
-	}
-
-	if (cpu_is_omap2420() && mcbsp_data->bus_id > 1)
-		return -EINVAL;
-
-	if (cpu_is_omap34xx())
-		reg_devconf1 = OMAP343X_CONTROL_DEVCONF1;
-
-	switch (mcbsp_data->bus_id) {
-	case 0:
-		reg = OMAP2_CONTROL_DEVCONF0;
-		sel_bit = 2;
-		break;
-	case 1:
-		reg = OMAP2_CONTROL_DEVCONF0;
-		sel_bit = 6;
-		break;
-	case 2:
-		reg = reg_devconf1;
-		sel_bit = 0;
-		break;
-	case 3:
-		reg = reg_devconf1;
-		sel_bit = 2;
-		break;
-	case 4:
-		reg = reg_devconf1;
-		sel_bit = 4;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	if (clk_id == OMAP_MCBSP_SYSCLK_CLKS_FCLK)
-		omap_ctrl_writel(omap_ctrl_readl(reg) & ~(1 << sel_bit), reg);
-	else
-		omap_ctrl_writel(omap_ctrl_readl(reg) | (1 << sel_bit), reg);
-
-	return 0;
-}
-
-static int omap_mcbsp_dai_set_rcvr_src(struct omap_mcbsp_data *mcbsp_data,
-				       int clk_id)
-{
-	int sel_bit, set = 0;
-	u16 reg = OMAP2_CONTROL_DEVCONF0;
-
-	if (cpu_class_is_omap1())
-		return -EINVAL; /* TODO: Can this be implemented for OMAP1? */
-	if (mcbsp_data->bus_id != 0)
-		return -EINVAL;
-
-	switch (clk_id) {
-	case OMAP_MCBSP_CLKR_SRC_CLKX:
-		set = 1;
-	case OMAP_MCBSP_CLKR_SRC_CLKR:
-		sel_bit = 3;
-		break;
-	case OMAP_MCBSP_FSR_SRC_FSX:
-		set = 1;
-	case OMAP_MCBSP_FSR_SRC_FSR:
-		sel_bit = 4;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	if (set)
-		omap_ctrl_writel(omap_ctrl_readl(reg) | (1 << sel_bit), reg);
-	else
-		omap_ctrl_writel(omap_ctrl_readl(reg) & ~(1 << sel_bit), reg);
-
-	return 0;
-}
-
 static int omap_mcbsp_dai_set_dai_sysclk(struct snd_soc_dai *cpu_dai,
 					 int clk_id, unsigned int freq,
 					 int dir)
@@ -742,6 +531,21 @@ static int omap_mcbsp_dai_set_dai_sysclk(struct snd_soc_dai *cpu_dai,
 	struct omap_mcbsp_reg_cfg *regs = &mcbsp_data->regs;
 	int err = 0;
 
+	if (mcbsp_data->active) {
+		if (freq == mcbsp_data->in_freq)
+			return 0;
+		else
+			return -EBUSY;
+	}
+
+	/* The McBSP signal muxing functions are only available on McBSP1 */
+	if (clk_id == OMAP_MCBSP_CLKR_SRC_CLKR ||
+	    clk_id == OMAP_MCBSP_CLKR_SRC_CLKX ||
+	    clk_id == OMAP_MCBSP_FSR_SRC_FSR ||
+	    clk_id == OMAP_MCBSP_FSR_SRC_FSX)
+		if (cpu_class_is_omap1() || mcbsp_data->bus_id != 0)
+			return -EINVAL;
+
 	mcbsp_data->in_freq = freq;
 
 	switch (clk_id) {
@@ -749,12 +553,20 @@ static int omap_mcbsp_dai_set_dai_sysclk(struct snd_soc_dai *cpu_dai,
 		regs->srgr2	|= CLKSM;
 		break;
 	case OMAP_MCBSP_SYSCLK_CLKS_FCLK:
-		if (cpu_is_omap44xx()) {
-			regs->srgr2     |= CLKSM;
+		if (cpu_class_is_omap1()) {
+			err = -EINVAL;
 			break;
 		}
+		err = omap2_mcbsp_set_clks_src(mcbsp_data->bus_id,
+					       MCBSP_CLKS_PRCM_SRC);
+		break;
 	case OMAP_MCBSP_SYSCLK_CLKS_EXT:
-		err = omap_mcbsp_dai_set_clks_src(mcbsp_data, clk_id);
+		if (cpu_class_is_omap1()) {
+			err = 0;
+			break;
+		}
+		err = omap2_mcbsp_set_clks_src(mcbsp_data->bus_id,
+					       MCBSP_CLKS_PAD_SRC);
 		break;
 
 	case OMAP_MCBSP_SYSCLK_CLKX_EXT:
@@ -763,11 +575,26 @@ static int omap_mcbsp_dai_set_dai_sysclk(struct snd_soc_dai *cpu_dai,
 		regs->pcr0	|= SCLKME;
 		break;
 
+
 	case OMAP_MCBSP_CLKR_SRC_CLKR:
+		if (cpu_class_is_omap1())
+			break;
+		omap2_mcbsp1_mux_clkr_src(CLKR_SRC_CLKR);
+		break;
 	case OMAP_MCBSP_CLKR_SRC_CLKX:
+		if (cpu_class_is_omap1())
+			break;
+		omap2_mcbsp1_mux_clkr_src(CLKR_SRC_CLKX);
+		break;
 	case OMAP_MCBSP_FSR_SRC_FSR:
+		if (cpu_class_is_omap1())
+			break;
+		omap2_mcbsp1_mux_fsr_src(FSR_SRC_FSR);
+		break;
 	case OMAP_MCBSP_FSR_SRC_FSX:
-		err = omap_mcbsp_dai_set_rcvr_src(mcbsp_data, clk_id);
+		if (cpu_class_is_omap1())
+			break;
+		omap2_mcbsp1_mux_fsr_src(FSR_SRC_FSX);
 		break;
 	default:
 		err = -ENODEV;
@@ -812,8 +639,6 @@ static struct snd_soc_dai_driver omap_mcbsp_dai =
 	.ops = &mcbsp_dai_ops,
 };
 
-EXPORT_SYMBOL_GPL(omap_mcbsp_dai);
-
 static int omap_mcbsp_st_info_volsw(struct snd_kcontrol *kcontrol,
 			struct snd_ctl_elem_info *uinfo)
 {
@@ -852,7 +677,7 @@ static int								\
 omap_mcbsp##id##_get_st_ch##channel##_volume(struct snd_kcontrol *kc,	\
 					struct snd_ctl_elem_value *uc)	\
 {									\
-	s16 chgain = 0;							\
+	s16 chgain;							\
 									\
 	if (omap_st_get_chgain((id)-1, channel, &chgain))		\
 		return -EAGAIN;						\

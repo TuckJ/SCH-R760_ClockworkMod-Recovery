@@ -1,393 +1,340 @@
-/**
- * drivers/mfd/twl6030-power.c
+/*
+ * Handling for Resource Mapping for TWL6030 Family of chips
  *
- * Copyright (C) 2010-2011, Samsung Electronics, Co., Ltd. All Rights Reserved.
- *  Written by System S/W Group, Open OS S/W R&D Team,
- *  Mobile Communication Division.
+ * Copyright (C) 2011 Texas Instruments Incorporated - http://www.ti.com/
+ *	Nishanth Menon
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
+
+ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
+ * kind, whether express or implied; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
-/**
- * Project Name : OMAP-Samsung Linux Kernel for Android
- *
- * Project Description :
- *
- * Comments : tabstop = 8, shiftwidth = 8, noexpandtab
- */
-
-/**
- * File Name : twl6030-power.c
- *
- * File Description :
- *
- * Author : System Platform 2
- * Dept : System S/W Group (Open OS S/W R&D Team)
- * Created : 24/Mar/2011
- * Version : Baby-Raccoon
- */
-
+#include <linux/module.h>
+#include <linux/pm.h>
 #include <linux/i2c/twl.h>
-#include <plat/io.h>
+#include <linux/platform_device.h>
+#include <linux/suspend.h>
 
-/* <Regulator>_CFG_GRP registers */
-#define NO_GROUP		0x00
-#define GROUP_APP		0x01
-#define GROUP_CON		0x02
-#define GROUP_MOD		0x04
+#include <asm/mach-types.h>
 
-/* <Regulator>_CFG_TRANS registers */
-#define ON_STATE_TO_ON		0x03
-#define ON_STATE_TO_AMS		0x01
-#define ON_STATE_TO_OFF		0x00
+#define VREG_GRP		0
 
-#define SLEEP_STATE_TO_ON	0x0C
-#define SLEEP_STATE_TO_AMS	0x04
-#define SLEEP_STATE_TO_OFF	0x00
+static u8 dev_on_group;
 
-#define OFF_STATE_TO_ON		0x30
-#define OFF_STATE_TO_AMS	0x10
-#define OFF_STATE_TO_OFF	0x00
+/**
+ * struct twl6030_resource_map - describe the resource mapping for TWL6030
+ * @name:	name of the resource
+ * @res_id:	resource ID
+ * @base_addr:	base address
+ * @group:	which device group can control this resource?
+ */
+struct twl6030_resource_map {
+	char *name;
+	u8 res_id;
+	u8 base_addr;
+	u8 group;
+	u8 offset;
+};
 
-/* <Regulator>_CFG_STATE registers */
-#define STATE_MOD_NOGRP		0x00
-#define STATE_MOD_APP		0x20
-#define STATE_MOD_CON		0x40
-#define STATE_MOD_MOD		0x80
+/* list of all s/w modifiable resources in TWL6030 */
+static __initdata struct twl6030_resource_map twl6030_res_map[] = {
+	{.res_id = RES_V1V29,.name = "V1V29",.base_addr = 0x40,.group = DEV_GRP_P1,},
+	{.res_id = RES_V1V8,.name = "V1V8",.base_addr = 0x46,.group = DEV_GRP_P1,},
+	{.res_id = RES_V2V1,.name = "V2V1",.base_addr = 0x4c,.group = DEV_GRP_P1,},
+	{.res_id = RES_VDD1,.name = "CORE1",.base_addr = 0x52,.group = DEV_GRP_P1,},
+	{.res_id = RES_VDD2,.name = "CORE2",.base_addr = 0x58,.group = DEV_GRP_P1,},
+	{.res_id = RES_VDD3,.name = "CORE3",.base_addr = 0x5e,.group = DEV_GRP_P1,},
+	{.res_id = RES_VMEM,.name = "VMEM",.base_addr = 0x64,.group = DEV_GRP_P1,},
+	/* VANA cannot be modified */
+	{.res_id = RES_VUAX1,.name = "VUAX1",.base_addr = 0x84,.group = DEV_GRP_P1,},
+	{.res_id = RES_VAUX2,.name = "VAUX2",.base_addr = 0x88,.group = DEV_GRP_P1,},
+	{.res_id = RES_VAUX3,.name = "VAUX3",.base_addr = 0x8c,.group = DEV_GRP_P1,},
+	{.res_id = RES_VCXIO,.name = "VCXIO",.base_addr = 0x90,.group = DEV_GRP_P1,},
+	{.res_id = RES_VDAC,.name = "VDAC",.base_addr = 0x94,.group = DEV_GRP_P1,},
+	{.res_id = RES_VMMC1,.name = "VMMC",.base_addr = 0x98,.group = DEV_GRP_P1,},
+	{.res_id = RES_VPP,.name = "VPP",.base_addr = 0x9c,.group = DEV_GRP_P1,},
+	/* VRTC cannot be modified */
+	{.res_id = RES_VUSBCP,.name = "VUSB",.base_addr = 0xa0,.group = DEV_GRP_P1,},
+	{.res_id = RES_VSIM,.name = "VSIM",.base_addr = 0xa4,.group = DEV_GRP_P1,},
+	{.res_id = RES_REGEN,.name = "REGEN1",.base_addr = 0xad,.group = DEV_GRP_P1,},
+	{.res_id = RES_REGEN2,.name = "REGEN2",.base_addr = 0xb0,.group = DEV_GRP_P1,},
+	{.res_id = RES_SYSEN,.name = "SYSEN",.base_addr = 0xb3,.group = DEV_GRP_P1,},
+	/* NRES_PWRON cannot be modified */
+	/* 32KCLKAO cannot be modified */
+	{.res_id = RES_32KCLKG,.name = "32KCLKG",.base_addr = 0xbc,.group = DEV_GRP_P1,},
+	{.res_id = RES_32KCLKAUDIO,.name = "32KCLKAUDIO",.base_addr = 0xbf,.group = DEV_GRP_P1,},
+	/* BIAS cannot be modified */
+	/* VBATMIN_HI cannot be modified */
+	/* RC6MHZ cannot be modified */
+	/* TEMP cannot be modified */
+};
+static __initdata struct twl6030_resource_map twl6025_res_map[] = {
+	{.res_id = RES_LDOUSB, .name = "LDOUSB",
+		.offset = 5, .group = DEV_GRP_P1,},
+	{.res_id = RES_SMPS5, .name = "SMPS5",
+		.offset = 4, .group = DEV_GRP_P1,},
+	{.res_id = RES_SMPS4, .name = "SMPS4",
+		.offset = 3, .group = DEV_GRP_P1,},
+	{.res_id = RES_SMPS3, .name = "SMPS3",
+		.offset = 2, .group = DEV_GRP_P1,},
+	{.res_id = RES_SMPS2, .name = "SMPS2",
+		.offset = 1, .group = DEV_GRP_P1,},
+	{.res_id = RES_SMPS1, .name = "SMPS1",
+		.offset = 0, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDOLN, .name = "LDOLN",
+		.offset = 15, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO7, .name = "LDO7",
+		.offset = 14, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO6, .name = "LDO6",
+		.offset = 13, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO5, .name = "LDO5",
+		.offset = 12, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO4, .name = "LDO4",
+		.offset = 11, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO3, .name = "LDO3",
+		.offset = 10, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO2, .name = "LDO2",
+		.offset = 9, .group = DEV_GRP_P1,},
+	{.res_id = RES_LDO1, .name = "LDO1",
+		.offset = 8, .group = DEV_GRP_P1,},
+	{.res_id = RES_REGEN, .name = "REGEN1",
+		.offset = 16, .group = DEV_GRP_P1,},
+	{.res_id = RES_REGEN2, .name = "REGEN2",
+		.offset = 17, .group = DEV_GRP_P1,},
+	{.res_id = RES_SYSEN, .name = "SYSEN",
+		.offset = 18, .group = DEV_GRP_P1,},
+	/* NRES_PWRON cannot be modified */
+	/* 32KCLKAO cannot be modified */
+	{.res_id = RES_32KCLKG, .name = "32KCLKG",
+		.offset = 20, .group = DEV_GRP_P1,},
+	{.res_id = RES_32KCLKAUDIO, .name = "32KCLKAUDIO",
+		.offset = 19, .group = DEV_GRP_P1,},
+	/* BIAS cannot be modified */
+	/* VBATMIN_HI cannot be modified */
+	/* RC6MHZ cannot be modified */
+	/* TEMP cannot be modified */
+};
 
-#define STATE_MOD_ON		0x01
-#define STATE_MOD_SLEEP		0x03
-#define STATE_MOD_OFF		0x00
+static struct twl4030_system_config twl6030_sys_config[] = {
+	{.name = "DEV_ON", .group =  DEV_GRP_P1,},
+};
 
-/* PHOENIX_DEV_ON register */
-#define APP_DEV_OFF		0x01
-#define CON_DEV_OFF		0x02
-#define MOD_DEV_OFF		0x04
-#define APP_DEV_ON		0x08
-#define CON_DEV_ON		0x10
-#define MOD_DEV_ON		0x20
+/* Actual power groups that TWL understands */
+#define P3_GRP_6030	BIT(2)		/* secondary processor, modem, etc */
+#define P2_GRP_6030	BIT(1)		/* "peripherals" */
+#define P1_GRP_6030	BIT(0)		/* CPU/Linux */
 
-#define TWL6030_LDO_ON(LDO)						\
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,				\
-	STATE_MOD_APP|STATE_MOD_CON|STATE_MOD_MOD|STATE_MOD_ON,		\
-	TWL6030_REG_##LDO##_CFG_STATE)
-
-#define TWL6030_LDO_SLEEP(LDO)						\
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,				\
-	STATE_MOD_APP|STATE_MOD_CON|STATE_MOD_MOD|STATE_MOD_SLEEP,	\
-	TWL6030_REG_##LDO##_CFG_STATE)
-
-#define TWL6030_LDO_OFF(LDO)						\
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,				\
-	STATE_MOD_APP|STATE_MOD_CON|STATE_MOD_MOD|STATE_MOD_OFF,	\
-	TWL6030_REG_##LDO##_CFG_STATE)
-
-extern unsigned int system_rev;
-
-#if defined(CONFIG_MACH_SAMSUNG_T1)
-void twl6030_t1_set_ldo_group(void)
+static __init void twl6030_process_system_config(void)
 {
-	/* APP power group - ldo that turn off in suspend */
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VANA_CFG_GRP);
-#endif
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VANA_CFG_TRANS);
+	u8 grp;
+	int r;
+	bool i = false;
 
-	if (system_rev == 2 || system_rev == 3) {
-		twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VAUX2_CFG_GRP);
-		twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VAUX2_CFG_TRANS);
-	}
+	struct twl4030_system_config *sys_config;
+	sys_config = twl6030_sys_config;
 
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_V2V1_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_V2V1_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VCXIO_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VCXIO_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VDAC_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VDAC_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_MOD,
-			TWL6030_REG_VUSB_CFG_GRP);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF |ON_STATE_TO_AMS,
-			TWL6030_REG_VUSB_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			STATE_MOD_APP | STATE_MOD_CON | STATE_MOD_OFF,
-			TWL6030_REG_VUSB_CFG_STATE);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			STATE_MOD_MOD | STATE_MOD_ON,
-			TWL6030_REG_VUSB_CFG_STATE);
-
-	/* APP power group - Movinand/sdcard power group */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_REGEN1_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_REGEN1_CFG_TRANS);
-
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_SYSEN_CFG_GRP);
-#endif 
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_SYSEN_CFG_TRANS);
-
-	/* CON power group - not used in t1*/
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_CON,
-			TWL6030_REG_VPP_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VPP_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_CON,
-			TWL6030_REG_VUSIM_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VUSIM_CFG_TRANS);
-
-	/* Set CLK32KG/CLK32KAUDIO alaways on */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, NO_GROUP,
-			TWL6030_REG_CLK32KG_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_CLK32KG_CFG_TRANS);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_NOGRP | STATE_MOD_ON,
-			TWL6030_REG_CLK32KG_CFG_STATE);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, NO_GROUP,
-			TWL6030_REG_CLK32KAUDIO_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_CLK32KAUDIO_CFG_TRANS);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_NOGRP | STATE_MOD_ON,
-			TWL6030_REG_CLK32KAUDIO_CFG_STATE);
-
-}
-
-#elif defined(CONFIG_MACH_SAMSUNG_Q1)
-void twl6030_q1_set_ldo_group(void)
-{
-	/* APP power group - ldo that turn off in suspend */
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VANA_CFG_GRP);
-#endif
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VANA_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_V2V1_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_V2V1_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VCXIO_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VCXIO_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VDAC_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VDAC_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VUSB_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VUSB_CFG_TRANS);
-
-	/* APP power group - Movinand/sdcard power group */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_REGEN1_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_REGEN1_CFG_TRANS);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_SYSEN_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_SYSEN_CFG_TRANS);
-
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_APP,
-			TWL6030_REG_VMMC_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VMMC_CFG_TRANS);
-#endif
-
-	/* CON power group - not used in t1*/
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, GROUP_CON,
-			TWL6030_REG_VPP_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_VPP_CFG_TRANS);
-
-	/* Set CLK32KG/CLK32KAUDIO alaways on */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, NO_GROUP,
-			TWL6030_REG_CLK32KG_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_CLK32KG_CFG_TRANS);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_NOGRP | STATE_MOD_ON,
-			TWL6030_REG_CLK32KG_CFG_STATE);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, NO_GROUP,
-			TWL6030_REG_CLK32KAUDIO_CFG_GRP);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0,
-			OFF_STATE_TO_OFF|SLEEP_STATE_TO_OFF|ON_STATE_TO_AMS,
-			TWL6030_REG_CLK32KAUDIO_CFG_TRANS);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_NOGRP | STATE_MOD_ON,
-			TWL6030_REG_CLK32KAUDIO_CFG_STATE);
-}
-#endif
-
-void twl6030_power_init(void)
-{
-	/* TWL6030 configuration */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0xC0,
-				TWL6030_REG_PHOENIX_MSK_TRANSITION);
-
-	/* Turn off charger block */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00,
-				TWL6030_REG_CONTROLLER_CTRL1);
-
-	/* Set pull-up/down configuration */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x25,
-				TWL6030_REG_CFG_INPUT_PUPD2);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x19,
-				TWL6030_REG_CFG_INPUT_PUPD3);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00,
-				TWL6030_REG_CFG_INPUT_PUPD4);
-
-	/* Set ldo&smps pull-up/down configuration */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0xFF,
-				TWL6030_REG_CFG_LDO_PD1);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x01,
-				TWL6030_REG_CFG_LDO_PD2);
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x3C,
-				TWL6030_REG_CFG_SMPS_PD);
-
-
-	/* Set misc1, 2 register */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00,
-				TWL6030_REG_MISC1);
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x10,
-				TWL6030_REG_MISC2);
-
-	/* Set backup battery charge mode */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x7C,
-				TWL6030_REG_BBSPOR_CFG);
-
-	/* Set usb charger mode */
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0x21,
-				TWL6030_REG_CHARGERUSB_CTRL3);
-
-	/* Turn off fuel gauge and vabrator module */
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0x50,
-				TWL6030_REG_TOGGLE1);
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0x40,
-				TWL6030_REG_TOGGLE1);
-
-	/* Set ldo group */
-#if defined(CONFIG_MACH_SAMSUNG_T1)
-	twl6030_t1_set_ldo_group();
-#elif defined(CONFIG_MACH_SAMSUNG_Q1)
-	twl6030_q1_set_ldo_group();
-#endif
-
-	/* Turn off ldo that is not used in T1 */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, CON_DEV_OFF,
-				TWL6030_REG_PHOENIX_DEV_ON);
-}
-
-void twl6030_suspend_ldo_off(void)
-{
-	/* Disable backup battery charge mode */
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x7C, TWL6030_REG_BBSPOR_CFG);
-
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00,
-				TWL6030_REG_MISC2);
-#endif
-
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_MOD | STATE_MOD_OFF,
-			TWL6030_REG_VUSB_CFG_STATE);
-
-
-	/* Congiuratoin for OTG & GPADC Module */
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0xFF,
-				TWL6030_REG_USB_VBUS_CTRL_CLR);
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0xFF,
-				TWL6030_REG_USB_ID_CTRL_CLR);
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0x00,
-				TWL6030_REG_GPADC_CTRL);
-	twl_i2c_write_u8(TWL6030_MODULE_ID1, 0x51,
-				TWL6030_REG_TOGGLE1);
-
-	/* Turn off con and mod group ldo */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, CON_DEV_OFF|MOD_DEV_OFF,
-				TWL6030_REG_PHOENIX_DEV_ON);
-}
-
-void twl6030_resume_ldo_on(void)
-{
-	u8 reg_val = 0;
-	u8 reg_addr = 0;
-
-	/* Check TWL6030 Interrupt state */
-	reg_addr = TWL6030_REG_INT_STS_A;
-	while (reg_addr <= TWL6030_REG_INT_STS_C) {
-		twl_i2c_read_u8(TWL6030_MODULE_ID1, &reg_val, reg_addr);
-		if (reg_val) {
-			printk(KERN_ERR"[TWL6030 Interrupt] 0x%02X=0x%02X\n",
-				reg_addr, reg_val);
+	while (sys_config && sys_config->name) {
+		if (!strcmp(sys_config->name, "DEV_ON")) {
+			dev_on_group = sys_config->group;
+			i = true;
+			break;
 		}
-		reg_val = 0;
-		reg_addr += 1;
+		sys_config++;
+	}
+	if (!i)
+		pr_err("%s: Couldn't find DEV_ON resource configuration!"
+			" MOD & CON group would be kept active.\n", __func__);
+
+	if (dev_on_group) {
+		r = twl_i2c_read_u8(TWL6030_MODULE_ID0, &grp,
+				TWL6030_PHOENIX_DEV_ON);
+		if (r) {
+			pr_err("%s: Error(%d) reading  {addr=0x%02x}",
+				__func__, r, TWL6030_PHOENIX_DEV_ON);
+			/*
+			 * On error resetting to 0, so that all the process
+			 * groups are kept active.
+			 */
+			dev_on_group = 0;
+		} else {
+			/*
+			 * Unmapped processor groups are disabled by writing
+			 * 1 to corresponding group in DEV_ON.
+			 */
+			grp |= (dev_on_group & DEV_GRP_P1) ? 0 : P1_GRP_6030;
+			grp |= (dev_on_group & DEV_GRP_P2) ? 0 : P2_GRP_6030;
+			grp |= (dev_on_group & DEV_GRP_P3) ? 0 : P3_GRP_6030;
+			dev_on_group = grp;
+		}
+	}
+}
+
+static __init void twl6030_program_map(void)
+{
+	struct twl6030_resource_map *res = twl6030_res_map;
+	int r, i;
+
+	for (i = 0; i < ARRAY_SIZE(twl6030_res_map); i++) {
+		u8 grp = 0;
+
+		/* map back from generic device id to TWL6030 ID */
+		grp |= (res->group & DEV_GRP_P1) ? P1_GRP_6030 : 0;
+		grp |= (res->group & DEV_GRP_P2) ? P2_GRP_6030 : 0;
+		grp |= (res->group & DEV_GRP_P3) ? P3_GRP_6030 : 0;
+
+		r = twl_i2c_write_u8(TWL6030_MODULE_ID0, res->group,
+				     res->base_addr);
+		if (r)
+			pr_err("%s: Error(%d) programming map %s {addr=0x%02x},"
+			       "grp=0x%02X\n", __func__, r, res->name,
+			       res->base_addr, res->group);
+		res++;
 	}
 
-	/* Enable backup battery charge mode */
-#if 0
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x7C, TWL6030_REG_BBSPOR_CFG);
+	return;
+}
+static __init void twl6025_program_map(void)
+{
+	struct twl6030_resource_map *res = twl6025_res_map;
+	u8 preq1_res_ass[3] = { 0, };
+	int r, i, offset;
+
+	for (i = 0; i < ARRAY_SIZE(twl6025_res_map); i++) {
+		int reg = 0;
+
+		offset = res->offset;
+		while ((offset - 8) >= 0) {
+			reg++;
+			offset -= 8;
+		}
+
+		if (res->group & DEV_GRP_P1)
+			preq1_res_ass[reg] |= 1<<(res->offset - reg*8);
+
+		res++;
+	}
+
+	r = twl_i2c_write_u8(TWL6030_MODULE_ID0, preq1_res_ass[0],
+			0xD7);
+	r |= twl_i2c_write_u8(TWL6030_MODULE_ID0, preq1_res_ass[1],
+			0xD8);
+	r |= twl_i2c_write_u8(TWL6030_MODULE_ID0, preq1_res_ass[2],
+			0xD9);
+	if (r)
+		pr_err("%s: Error(%d) programming twl6025 map\n", __func__, r);
+
+	return;
+}
+
+static __init void twl6030_update_system_map
+			(struct twl4030_system_config *sys_list)
+{
+	int i;
+	struct twl4030_system_config *sys_res;
+
+	while (sys_list && sys_list->name)  {
+		sys_res = twl6030_sys_config;
+		for (i = 0; i < ARRAY_SIZE(twl6030_sys_config); i++) {
+			if (!strcmp(sys_res->name, sys_list->name))
+				sys_res->group = sys_list->group &
+					(DEV_GRP_P1 | DEV_GRP_P2 | DEV_GRP_P3);
+			sys_res++;
+		}
+		sys_list++;
+	}
+}
+
+static __init void twl6030_update_map(struct twl4030_resconfig *res_list)
+{
+	int i, size, res_idx = 0;
+	struct twl6030_resource_map *res;
+
+	while (res_list->resource != TWL4030_RESCONFIG_UNDEF) {
+		if (is_twl6030_lite()) {
+			res = twl6025_res_map;
+			size = ARRAY_SIZE(twl6025_res_map);
+		} else {
+			res = twl6030_res_map;
+			size = ARRAY_SIZE(twl6030_res_map);
+		}
+
+		for (i = 0; i < size; i++) {
+			if (res->res_id == res_list->resource) {
+				res->group = res_list->devgroup &
+				    (DEV_GRP_P1 | DEV_GRP_P2 | DEV_GRP_P3);
+				break;
+			}
+			res++;
+		}
+
+		if (i == size) {
+			pr_err("%s: in platform_data resource index %d, cannot"
+			       " find match for resource 0x%02x. NO Update!\n",
+			       __func__, res_idx, res_list->resource);
+		}
+		res_list++;
+		res_idx++;
+	}
+}
 
 
-	/* Enable VUSB power supply */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x10, TWL6030_REG_MISC2);
-#endif
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, STATE_MOD_MOD | STATE_MOD_ON,
-			TWL6030_REG_VUSB_CFG_STATE);
+static int twl6030_power_notifier_cb(struct notifier_block *notifier,
+					unsigned long pm_event,  void *unused)
+{
+	int r = 0;
 
-	/* Turn off ldo that is not used in T1 */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, CON_DEV_OFF,
-				TWL6030_REG_PHOENIX_DEV_ON);
+	switch (pm_event) {
+	case PM_SUSPEND_PREPARE:
+		r = twl_i2c_write_u8(TWL6030_MODULE_ID0, dev_on_group,
+				TWL6030_PHOENIX_DEV_ON);
+		if (r)
+			pr_err("%s: Error(%d) programming {addr=0x%02x}",
+				__func__, r, TWL6030_PHOENIX_DEV_ON);
+		break;
+	}
+
+	return notifier_from_errno(r);
+}
+
+static struct notifier_block twl6030_power_pm_notifier = {
+	.notifier_call = twl6030_power_notifier_cb,
+};
+
+/**
+ * twl6030_power_init() - Update the power map to reflect connectivity of board
+ * @power_data:	power resource map to update (OPTIONAL) - use this if a resource
+ *		is used by other devices other than APP (DEV_GRP_P1)
+ */
+void __init twl6030_power_init(struct twl4030_power_data *power_data)
+{
+	int r;
+
+	if (power_data) {
+		if (power_data->resource_config)
+			twl6030_update_map(power_data->resource_config);
+
+		if (power_data->sys_config)
+			twl6030_update_system_map(power_data->sys_config);
+
+		if (power_data->twl4030_board_init)
+			power_data->twl4030_board_init();
+	}
+
+	twl6030_process_system_config();
+
+	if (!is_twl6030_lite())
+		twl6030_program_map();
+	else
+		twl6025_program_map();
+
+	r = register_pm_notifier(&twl6030_power_pm_notifier);
+	if (r)
+		pr_err("%s: twl6030 power registration failed!\n", __func__);
+
+	return;
 }

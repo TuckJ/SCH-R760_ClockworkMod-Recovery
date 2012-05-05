@@ -23,13 +23,12 @@
 #include "sdio_cis.h"
 #include "bus.h"
 
-#define dev_to_mmc_card(d)	container_of(d, struct mmc_card, dev)
 #define to_mmc_driver(d)	container_of(d, struct mmc_driver, drv)
 
 static ssize_t mmc_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	switch (card->type) {
 	case MMC_TYPE_MMC:
@@ -38,6 +37,8 @@ static ssize_t mmc_type_show(struct device *dev,
 		return sprintf(buf, "SD\n");
 	case MMC_TYPE_SDIO:
 		return sprintf(buf, "SDIO\n");
+	case MMC_TYPE_SD_COMBO:
+		return sprintf(buf, "SDcombo\n");
 	default:
 		return -EFAULT;
 	}
@@ -61,7 +62,7 @@ static int mmc_bus_match(struct device *dev, struct device_driver *drv)
 static int
 mmc_bus_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 	const char *type;
 	int retval = 0;
 
@@ -74,6 +75,9 @@ mmc_bus_uevent(struct device *dev, struct kobj_uevent_env *env)
 		break;
 	case MMC_TYPE_SDIO:
 		type = "SDIO";
+		break;
+	case MMC_TYPE_SD_COMBO:
+		type = "SDcombo";
 		break;
 	default:
 		type = NULL;
@@ -101,7 +105,7 @@ mmc_bus_uevent(struct device *dev, struct kobj_uevent_env *env)
 static int mmc_bus_probe(struct device *dev)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	return drv->probe(card);
 }
@@ -109,7 +113,7 @@ static int mmc_bus_probe(struct device *dev)
 static int mmc_bus_remove(struct device *dev)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	drv->remove(card);
 
@@ -119,7 +123,7 @@ static int mmc_bus_remove(struct device *dev)
 static int mmc_bus_suspend(struct device *dev, pm_message_t state)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 	int ret = 0;
 
 	if (dev->driver && drv->suspend)
@@ -130,7 +134,7 @@ static int mmc_bus_suspend(struct device *dev, pm_message_t state)
 static int mmc_bus_resume(struct device *dev)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 	int ret = 0;
 
 	if (dev->driver && drv->resume)
@@ -142,14 +146,14 @@ static int mmc_bus_resume(struct device *dev)
 
 static int mmc_runtime_suspend(struct device *dev)
 {
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	return mmc_power_save_host(card->host);
 }
 
 static int mmc_runtime_resume(struct device *dev)
 {
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	return mmc_power_restore_host(card->host);
 }
@@ -221,7 +225,7 @@ EXPORT_SYMBOL(mmc_unregister_driver);
 
 static void mmc_release_card(struct device *dev)
 {
-	struct mmc_card *card = dev_to_mmc_card(dev);
+	struct mmc_card *card = mmc_dev_to_card(dev);
 
 	sdio_free_common_cis(card);
 
@@ -270,11 +274,20 @@ int mmc_add_card(struct mmc_card *card)
 		break;
 	case MMC_TYPE_SD:
 		type = "SD";
-		if (mmc_card_blockaddr(card))
-			type = "SDHC";
+		if (mmc_card_blockaddr(card)) {
+			if (mmc_card_ext_capacity(card))
+				type = "SDXC";
+			else
+				type = "SDHC";
+		}
 		break;
 	case MMC_TYPE_SDIO:
 		type = "SDIO";
+		break;
+	case MMC_TYPE_SD_COMBO:
+		type = "SD-combo";
+		if (mmc_card_blockaddr(card))
+			type = "SDHC-combo";
 		break;
 	default:
 		type = "?";
@@ -290,18 +303,20 @@ int mmc_add_card(struct mmc_card *card)
 	} else {
 		printk(KERN_INFO "%s: new %s%s%s card at address %04x\n",
 			mmc_hostname(card->host),
-			mmc_card_highspeed(card) ? "high speed " : "",
+			mmc_sd_card_uhs(card) ? "ultra high speed " :
+			(mmc_card_highspeed(card) ? "high speed " : ""),
 			mmc_card_ddr_mode(card) ? "DDR " : "",
 			type, card->rca);
 	}
-
-	ret = device_add(&card->dev);
-	if (ret)
-		return ret;
+	mmc_card_set_inserted(card);
 
 #ifdef CONFIG_DEBUG_FS
 	mmc_add_card_debugfs(card);
 #endif
+
+	ret = device_add(&card->dev);
+	if (ret)
+		return ret;
 
 	mmc_card_set_present(card);
 
@@ -326,6 +341,7 @@ void mmc_remove_card(struct mmc_card *card)
 			printk(KERN_INFO "%s: card %04x removed\n",
 				mmc_hostname(card->host), card->rca);
 		}
+		card->state &= ~MMC_STATE_INSERTED;
 		device_del(&card->dev);
 	}
 

@@ -21,9 +21,9 @@
 #ifndef __SAMSUNG_IPC_V4_H__
 #define __SAMSUNG_IPC_V4_H__
 
-/* IPC4.1 NEW PARTITION MAP 
+/* IPC4.1 NEW PARTITION MAP
  * This map is seen by AP side
- 
+
 	0x00_0000       ===========================================
 			MAGIC(4)| ACCESS(4)     |       RESERVED(8)
 	0x00_0010       -------------------------------------------
@@ -55,9 +55,10 @@
 			RemoteFS In                     (1MB)
 	0x51_E000       ===========================================
 
-	0xFF_FFFF       ===========================================     
+	0xFF_FFFF       ===========================================
 */
 
+#if defined(CONFIG_PHONE_IPC_SPI)
 #define FMT_OUT	0x0FE000
 #define FMT_IN		0x10E000
 #define FMT_SZ		0x10000   /* 65536 bytes */
@@ -69,6 +70,21 @@
 #define RFS_OUT	0x31E000
 #define RFS_IN		0x41E000
 #define RFS_SZ		0x100000 /* 1 MB */
+#else
+#if defined(CONFIG_PHONE_IPC_HSI)
+#define FMT_OUT	0x0FE000
+#define FMT_IN		0x10E000
+#define FMT_SZ		0x10000   /* 65536 bytes */
+
+#define RAW_OUT	0x11E000
+#define RAW_IN		0x21E000
+#define RAW_SZ		0x100000 /* 1 MB */
+
+#define RFS_OUT	0x31E000
+#define RFS_IN		0x41E000
+#define RFS_SZ		0x100000 /* 1 MB */
+#endif
+#endif
 
 #define FATAL_DISP     0x001000
 #define FATAL_DISP_SZ  0xA0  /* 160 bytes */
@@ -108,7 +124,7 @@ struct sipc_mapped { /* map to the onedram start addr */
 #define res_to_ridx(x) ((x) >> 5)
 
 /*
- * IPC Frame Format 
+ * IPC Frame Format
  */
 #define HDLC_START	0x7F
 #define HDLC_END	0x7E
@@ -117,7 +133,7 @@ struct sipc_mapped { /* map to the onedram start addr */
 struct fmt_hdr {
 	u16 len;
 	u8 control;
-} __attribute__ ((packed));
+} __packed;
 
 #define FMT_ID_MASK 0x7F /* Information ID mask */
 #define FMT_ID_SIZE 0x80 /* = 128 ( 0 ~ 127 ) */
@@ -132,7 +148,7 @@ struct raw_hdr {
 	u32 len;
 	u8 channel;
 	u8 control;
-} __attribute__ ((packed));
+} __packed;
 
 
 /* RFS IPC Frame */
@@ -140,10 +156,10 @@ struct rfs_hdr {
 	u32 len;
 	u8 cmd;
 	u8 id;
-} __attribute__ ((packed));
+} __packed;
 
 /*
- * RAW frame channel ID 
+ * RAW frame channel ID
  */
 enum {
 	CHID_0 = 0,
@@ -216,21 +232,21 @@ enum {
  */
 enum {
 	MBC_NONE = 0,
-	MBC_INIT_START,    // 0x0001
-	MBC_INIT_END,      // 0x0002
-	MBC_REQ_ACTIVE,    // 0x0003
-	MBC_RES_ACTIVE,    // 0x0004
-	MBC_TIME_SYNC,     // 0x0005
-	MBC_POWER_OFF,     // 0x0006
-	MBC_RESET,         // 0x0007
-	MBC_PHONE_START,   // 0x0008
-	MBC_ERR_DISPLAY,   // 0x0009
-	MBC_POWER_SAVE,    // 0x000A
-	MBC_NV_REBUILD,    // 0x000B
-	MBC_EMER_DOWN,     // 0x000C
-	MBC_REQ_SEM,       // 0x000D
-	MBC_RES_SEM,       // 0x000E
-	MBC_MAX            // 0x000F
+	MBC_INIT_START,
+	MBC_INIT_END,
+	MBC_REQ_ACTIVE,
+	MBC_RES_ACTIVE,
+	MBC_TIME_SYNC,
+	MBC_POWER_OFF,
+	MBC_RESET,
+	MBC_PHONE_START,
+	MBC_ERR_DISPLAY,
+	MBC_POWER_SAVE,
+	MBC_NV_REBUILD,
+	MBC_EMER_DOWN,
+	MBC_REQ_SEM,
+	MBC_RES_SEM,
+	MBC_MAX
 };
 #define MBC_MASK 0xFF
 
@@ -247,5 +263,5 @@ enum {
 #define CP_INFINEON        0x0200
 #define CP_BROADCOM        0x0300
 
-#endif /* __SAMSUNG_IPC_V4_H__ */
 
+#endif /* __SAMSUNG_IPC_V4_H__ */

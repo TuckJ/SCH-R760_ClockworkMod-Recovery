@@ -23,8 +23,8 @@
 #include <linux/spinlock.h>
 #include <linux/sysdev.h>
 #include <linux/wakelock.h>
-#if defined(CONFIG_MACH_T1_CHN)
-#include <mach/sec_param.h>
+#if defined(CONFIG_RTC_CHN_ALARM_BOOT)
+#include <linux/i2c/twl.h>
 #endif
 
 #define ANDROID_ALARM_PRINT_ERROR (1U << 0)
@@ -36,6 +36,7 @@
 #define ANDROID_ALARM_PRINT_FLOW (1U << 6)
 
 static int debug_mask = ANDROID_ALARM_PRINT_ERROR | \
+			ANDROID_ALARM_PRINT_SUSPEND | \
 			ANDROID_ALARM_PRINT_INIT_STATUS;
 module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -100,7 +101,7 @@ static void update_timer_locked(struct alarm_queue *base, bool head_removed)
 	}
 
 	hrtimer_try_to_cancel(&base->timer);
-	base->timer._expires = ktime_add(base->delta, alarm->expires);
+	base->timer.node.expires = ktime_add(base->delta, alarm->expires);
 	base->timer._softexpires = ktime_add(base->delta, alarm->softexpires);
 	hrtimer_start_expires(&base->timer, HRTIMER_MODE_ABS);
 }
@@ -112,12 +113,15 @@ static void alarm_enqueue_locked(struct alarm *alarm)
 	struct rb_node *parent = NULL;
 	struct alarm *entry;
 	int leftmost = 1;
+	bool was_first = false;
 
 	pr_alarm(FLOW, "added alarm, type %d, func %pF at %lld\n",
 		alarm->type, alarm->function, ktime_to_ns(alarm->expires));
 
-	if (base->first == &alarm->node)
+	if (base->first == &alarm->node) {
 		base->first = rb_next(&alarm->node);
+		was_first = true;
+	}
 	if (!RB_EMPTY_NODE(&alarm->node)) {
 		rb_erase(&alarm->node, &base->alarms);
 		RB_CLEAR_NODE(&alarm->node);
@@ -137,14 +141,81 @@ static void alarm_enqueue_locked(struct alarm *alarm)
 			leftmost = 0;
 		}
 	}
-	if (leftmost) {
+	if (leftmost)
 		base->first = &alarm->node;
-		update_timer_locked(base, false);
-	}
+	if (leftmost || was_first)
+		update_timer_locked(base, was_first);
 
 	rb_link_node(&alarm->node, parent, link);
 	rb_insert_color(&alarm->node, &base->alarms);
 }
+
+#if defined(CONFIG_RTC_CHN_ALARM_BOOT)
+/*
+*	meaning of an character array
+*	which used to communicate
+*	between platform and kernel
+*
+*	 0|1234|56|78|90|12
+*	 1|2010|01|01|00|00
+*	en yyyy mm dd hh mm
+*/
+struct rtc_wkalrm autoboot_alm_exit;
+EXPORT_SYMBOL(autoboot_alm_exit);
+#define BOOTALM_BIT_EN       0
+#define BOOTALM_BIT_YEAR     1
+#define BOOTALM_BIT_MONTH    5
+#define BOOTALM_BIT_DAY      7
+#define BOOTALM_BIT_HOUR     9
+#define BOOTALM_BIT_MIN     11
+#define BOOTALM_BIT_TOTAL   13
+
+void alarm_set_alarmboot(char *alarm_data)
+{
+	int ret;
+	struct rtc_wkalrm alm;
+	char buf_ptr[BOOTALM_BIT_TOTAL+1];
+
+	if (!alarm_rtc_dev) {
+		pr_alarm(ERROR,
+			"alarm_set_alarm: no RTC, time will be lost on reboot\n");
+		return;
+	}
+
+	pr_info("BSY STAR : alarm_set_alarm using AlarmManager!\n");
+	strlcpy(buf_ptr, alarm_data, BOOTALM_BIT_TOTAL+1);
+
+	alm.time.tm_sec = 0;
+	alm.time.tm_min  =  (buf_ptr[BOOTALM_BIT_MIN] - '0') * 10
+		+ (buf_ptr[BOOTALM_BIT_MIN+1] - '0');
+	alm.time.tm_hour =  (buf_ptr[BOOTALM_BIT_HOUR] - '0') * 10
+		+ (buf_ptr[BOOTALM_BIT_HOUR+1] - '0');
+	alm.time.tm_mday =  (buf_ptr[BOOTALM_BIT_DAY] - '0') * 10
+		+ (buf_ptr[BOOTALM_BIT_DAY+1] - '0');
+	alm.time.tm_mon  =  (buf_ptr[BOOTALM_BIT_MONTH] - '0') * 10
+		+ (buf_ptr[BOOTALM_BIT_MONTH+1] - '0');
+	alm.time.tm_year =  (buf_ptr[BOOTALM_BIT_YEAR] - '0') * 1000
+		+ (buf_ptr[BOOTALM_BIT_YEAR+1] - '0') * 100
+		+ (buf_ptr[BOOTALM_BIT_YEAR+2] - '0') * 10
+		+ (buf_ptr[BOOTALM_BIT_YEAR+3] - '0');
+	alm.enabled = (*buf_ptr == '1');
+
+	if (alm.enabled) {
+		alm.time.tm_mon -= 1;
+		alm.time.tm_year -= 1900;
+	} else {
+		alm.time.tm_year = 70;
+		alm.time.tm_mon = 0;
+		alm.time.tm_mday = 1;
+		alm.time.tm_hour = 0;
+		alm.time.tm_min = 0;
+		alm.time.tm_sec = 0;
+	}
+
+	autoboot_alm_exit = alm;
+
+}
+#endif
 
 /**
  * alarm_init - initialize an alarm
@@ -299,74 +370,6 @@ err:
 	return ret;
 }
 
-#if defined(CONFIG_MACH_T1_CHN)
-// 0|1234|56|78|90|12
-// 1|2010|01|01|00|00
-//en yyyy mm dd hh mm
-#define BOOTALM_BIT_EN       0
-#define BOOTALM_BIT_YEAR     1
-#define BOOTALM_BIT_MONTH    5
-#define BOOTALM_BIT_DAY      7
-#define BOOTALM_BIT_HOUR     9
-#define BOOTALM_BIT_MIN     11
-#define BOOTALM_BIT_TOTAL   13
-
-extern int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm);
-extern void (*sec_set_param_value) (int idx, void *value);
-
-int alarm_set_alarm(char* alarm_data)
-{
-	struct rtc_wkalrm alm;
-	int ret;
-	char buf_ptr[BOOTALM_BIT_TOTAL+1];
-	int bootalarm_bit = 0;
-
-	if (!alarm_rtc_dev) {
-		pr_alarm(ERROR,
-			"alarm_set_alarm: no RTC, time will be lost on reboot\n");
-		return -1;
-	}
-
-	printk("BSY STAR : alarm_set_alarm using AlarmManager!\n");
-
-	strlcpy(buf_ptr, alarm_data, BOOTALM_BIT_TOTAL+1);
-
-	alm.time.tm_sec = 0;
-
-	alm.time.tm_min  =  (buf_ptr[BOOTALM_BIT_MIN]    -'0') * 10
-                      + (buf_ptr[BOOTALM_BIT_MIN+1]  -'0');
-	alm.time.tm_hour =  (buf_ptr[BOOTALM_BIT_HOUR]   -'0') * 10
-                      + (buf_ptr[BOOTALM_BIT_HOUR+1] -'0');
-	alm.time.tm_mday =  (buf_ptr[BOOTALM_BIT_DAY]    -'0') * 10
-                      + (buf_ptr[BOOTALM_BIT_DAY+1]  -'0');
-	alm.time.tm_mon  =  (buf_ptr[BOOTALM_BIT_MONTH]  -'0') * 10
-                      + (buf_ptr[BOOTALM_BIT_MONTH+1]-'0');
-	alm.time.tm_year =  (buf_ptr[BOOTALM_BIT_YEAR]   -'0') * 1000
-                      + (buf_ptr[BOOTALM_BIT_YEAR+1] -'0') * 100
-                      + (buf_ptr[BOOTALM_BIT_YEAR+2] -'0') * 10
-                      + (buf_ptr[BOOTALM_BIT_YEAR+3] -'0');
-
-	alm.enabled = (*buf_ptr == '1');
-
-	if(alm.enabled)
-		bootalarm_bit = 1;
-	else
-		bootalarm_bit = 0;
-
-	sec_set_param_value(__PARAM_INT_14, &bootalarm_bit);
-
-	printk("%s : tm(%d %04d.%02d.%02d %02d:%02d:%02d)\n", __func__,alm.enabled,
-		alm.time.tm_year, alm.time.tm_mon, alm.time.tm_mday, alm.time.tm_hour, alm.time.tm_min, alm.time.tm_sec);
-
-	alm.time.tm_mon -= 1;
-	alm.time.tm_year -= 1900;
-
-	ret = rtc_set_alarm(alarm_rtc_dev, &alm);
-	
-	return ret;
-}
-#endif
-
 /**
  * alarm_get_elapsed_realtime - get the elapsed real time in ktime_t format
  *
@@ -448,9 +451,6 @@ static int alarm_suspend(struct platform_device *pdev, pm_message_t state)
 	struct timespec     wall_time;
 	struct alarm_queue *wakeup_queue = NULL;
 	struct alarm_queue *tmp_queue = NULL;
-#if defined(CONFIG_MACH_T1_CHN)
-	extern u32 power_on_alarm_check;
-#endif
 
 	pr_alarm(SUSPEND, "alarm_suspend(%p, %d)\n", pdev, state.event);
 
@@ -460,7 +460,7 @@ static int alarm_suspend(struct platform_device *pdev, pm_message_t state)
 
 	hrtimer_cancel(&alarms[ANDROID_ALARM_RTC_WAKEUP].timer);
 	hrtimer_cancel(&alarms[
-			ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP_MASK].timer);
+			ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP].timer);
 
 	tmp_queue = &alarms[ANDROID_ALARM_RTC_WAKEUP];
 	if (tmp_queue->first)
@@ -483,19 +483,6 @@ static int alarm_suspend(struct platform_device *pdev, pm_message_t state)
 			rtc_delta).tv_sec;
 
 		rtc_time_to_tm(rtc_alarm_time, &rtc_alarm.time);
-#if defined(CONFIG_MACH_T1_CHN)
-		rtc_tm_to_time(&rtc_current_rtc_time, &rtc_current_time);
-		if(power_on_alarm_check == 1) {
-			printk("alarm_suspend : power_on_alarm_check = 1\n");
-			power_on_alarm_check = 0;
-		} 
-		else {
-			if(rtc_alarm_time - rtc_current_time > 60) {
-				rtc_alarm.time.tm_min -= 1;
-				printk("alarm_suspend : power_on_alarm_check = 0\n");
-			}
-		}
-#endif
 		rtc_alarm.enabled = 1;
 		rtc_set_alarm(alarm_rtc_dev, &rtc_alarm);
 		rtc_read_time(alarm_rtc_dev, &rtc_current_rtc_time);

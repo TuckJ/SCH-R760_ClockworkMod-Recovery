@@ -7,23 +7,14 @@
  * published by the Free Software Foundation.
  */
 
-#ifdef CONFIG_ARCH_OMAP2420
 #include "mux2420.h"
 #include "mux2430.h"
-#endif
-
-#ifdef CONFIG_ARCH_OMAP3
 #include "mux34xx.h"
-#endif
-
-#ifdef CONFIG_ARCH_OMAP4
 #include "mux44xx.h"
-#endif
 
 #define OMAP_MUX_TERMINATOR	0xffff
 
-/* 34xx/44xx mux mode options for each pin. See TRM for options */
-#define OMAP_MUX_MODE_MASK  0x7
+/* 34xx mux mode options for each pin. See TRM for options */
 #define OMAP_MUX_MODE0      0
 #define OMAP_MUX_MODE1      1
 #define OMAP_MUX_MODE2      2
@@ -38,15 +29,10 @@
 #define OMAP_PULL_UP			(1 << 4)
 #define OMAP_ALTELECTRICALSEL		(1 << 5)
 
-/* 34xx/44xx mux bit defines */
+/* 34xx specific mux bit defines */
 #define OMAP_INPUT_EN			(1 << 8)
 #define OMAP_OFF_EN			(1 << 9)
-#ifdef CONFIG_ARCH_OMAP3
 #define OMAP_OFFOUT_EN			(1 << 10)
-#endif
-#ifdef CONFIG_ARCH_OMAP4
-#define OMAP_OFFIN_EN			(1 << 10)
-#endif
 #define OMAP_OFFOUT_VAL			(1 << 11)
 #define OMAP_OFF_PULL_EN		(1 << 12)
 #define OMAP_OFF_PULL_UP		(1 << 13)
@@ -64,23 +50,12 @@
 
 /* Off mode states */
 #define OMAP_PIN_OFF_NONE		0
-#ifdef CONFIG_ARCH_OMAP3
-#define OMAP_PIN_OFF_OUTPUT_HIGH	(OMAP_OFF_EN | OMAP_OFFOUT_EN \
-						| OMAP_OFFOUT_VAL)
-#define OMAP_PIN_OFF_OUTPUT_LOW		(OMAP_OFF_EN | OMAP_OFFOUT_EN)
-#define OMAP_PIN_OFF_INPUT_PULLUP	(OMAP_OFF_EN | OMAP_OFF_PULL_EN \
-					| OMAP_OFF_PULL_UP)
-#define OMAP_PIN_OFF_INPUT_PULLDOWN	(OMAP_OFF_EN | OMAP_OFF_PULL_EN)
-#endif
-
-#ifdef CONFIG_ARCH_OMAP4
 #define OMAP_PIN_OFF_OUTPUT_HIGH	(OMAP_OFF_EN | OMAP_OFFOUT_VAL)
-#define OMAP_PIN_OFF_OUTPUT_LOW		(OMAP_OFF_EN)
-#define OMAP_PIN_OFF_INPUT_PULLUP	(OMAP_OFF_EN | OMAP_OFFIN_EN | \
-					OMAP_OFF_PULL_EN | OMAP_OFF_PULL_UP)
-#define OMAP_PIN_OFF_INPUT_PULLDOWN	(OMAP_OFF_EN | OMAP_OFFIN_EN | \
-					OMAP_OFF_PULL_EN)
-#endif
+#define OMAP_PIN_OFF_OUTPUT_LOW		OMAP_OFF_EN
+#define OMAP_PIN_OFF_INPUT_PULLUP	(OMAP_OFF_EN | OMAP_OFFOUT_EN \
+					| OMAP_OFF_PULL_EN | OMAP_OFF_PULL_UP)
+#define OMAP_PIN_OFF_INPUT_PULLDOWN	(OMAP_OFF_EN | OMAP_OFFOUT_EN \
+					| OMAP_OFF_PULL_EN)
 #define OMAP_PIN_OFF_WAKEUPENABLE	OMAP_WAKEUP_EN
 
 #define OMAP_MODE_GPIO(x)	(((x) & OMAP_MUX_MODE7) == OMAP_MUX_MODE4)
@@ -112,6 +87,20 @@
 #define OMAP_MUX_GPIO_IN_MODE3		(1 << 1)
 
 /**
+ * struct omap_board_data - board specific device data
+ * @id: instance id
+ * @flags: additional flags for platform init code
+ * @pads: array of device specific pads
+ * @pads_cnt: ARRAY_SIZE() of pads
+ */
+struct omap_board_data {
+	int			id;
+	u32			flags;
+	struct omap_device_pad	*pads;
+	int			pads_cnt;
+};
+
+/**
  * struct mux_partition - contain partition related information
  * @name: name of the current partition
  * @flags: flags specific to this partition
@@ -135,17 +124,18 @@ struct omap_mux_partition {
  * struct omap_mux - data for omap mux register offset and it's value
  * @reg_offset:	mux register offset from the mux base
  * @gpio:	GPIO number
- * @id:		Partition identifier
  * @muxnames:	available signal modes for a ball
+ * @balls:	available balls on the package
+ * @partition:	mux partition
  */
 struct omap_mux {
 	u16	reg_offset;
 	u16	gpio;
+	struct omap_mux_partition *partition;
 #ifdef CONFIG_OMAP_MUX
 	char	*muxnames[OMAP_MUX_NR_MODES];
 #ifdef CONFIG_DEBUG_FS
 	char	*balls[OMAP_MUX_NR_SIDES];
-	struct omap_mux_partition *partition;
 #endif
 #endif
 };
@@ -153,7 +143,6 @@ struct omap_mux {
 /**
  * struct omap_ball - data for balls on omap package
  * @reg_offset:	mux register offset from the mux base
- * @id:		Partition identifier
  * @balls:	available balls on the package
  */
 struct omap_ball {
@@ -165,12 +154,44 @@ struct omap_ball {
  * struct omap_board_mux - data for initializing mux registers
  * @reg_offset:	mux register offset from the mux base
  * @mux_value:	desired mux value to set
- * @id:		Partition identifier
  */
 struct omap_board_mux {
 	u16	reg_offset;
 	u16	value;
 };
+
+#define OMAP_DEVICE_PAD_REMUX		BIT(1)	/* Dynamically remux a pad,
+						   needs enable, idle and off
+						   values */
+#define OMAP_DEVICE_PAD_WAKEUP		BIT(0)	/* Pad is wake-up capable */
+
+/**
+ * struct omap_device_pad - device specific pad configuration
+ * @name:		signal name
+ * @flags:		pad specific runtime flags
+ * @enable:		runtime value for a pad
+ * @idle:		idle value for a pad
+ * @off:		off value for a pad, defaults to safe mode
+ * @partition:		mux partition
+ * @mux:		mux register
+ */
+struct omap_device_pad {
+	char				*name;
+	u8				flags;
+	u16				enable;
+	u16				idle;
+	u16				off;
+	struct omap_mux_partition	*partition;
+	struct omap_mux			*mux;
+};
+
+struct omap_hwmod_mux_info;
+
+#define OMAP_MUX_STATIC(signal, mode)					\
+{									\
+	.name	= (signal),						\
+	.enable	= (mode),						\
+}
 
 #if defined(CONFIG_OMAP_MUX)
 
@@ -187,11 +208,43 @@ int omap_mux_init_gpio(int gpio, int val);
  * @val:		Options for the mux register value
  */
 int omap_mux_init_signal(const char *muxname, int val);
-u16 omap_mux_read_signal(const char *muxname);
-int omap_mux_enable_wakeup(const char *muxname);
-int omap_mux_disable_wakeup(const char *muxname);
 
+/**
+ * omap_mux_enable_wkup - set/clear the pad wakup bit.
+ * @muxname:		Mux name in mode0_name.signal_name format
+ */
+
+/**
+ * omap_hwmod_mux_init - initialize hwmod specific mux data
+ * @bpads:		Board specific device signal names
+ * @nr_pads:		Number of signal names for the device
+ */
+extern struct omap_hwmod_mux_info *
+omap_hwmod_mux_init(struct omap_device_pad *bpads, int nr_pads);
+
+/**
+ * omap_hwmod_mux - omap hwmod specific pin muxing
+ * @hmux:		Pads for a hwmod
+ * @state:		Desired _HWMOD_STATE
+ *
+ * Called only from omap_hwmod.c, do not use.
+ */
+void omap_hwmod_mux(struct omap_hwmod_mux_info *hmux, u8 state);
+
+/**
+ * omap_hwmod_mux_get_wake_status - omap hwmod check pad wakeup
+ * @hmux:		Pads for a hwmod
+ *
+ * Called only from omap_hwmod.c, do not use.
+ */
+int omap_hwmod_mux_get_wake_status(struct omap_hwmod_mux_info *hmux);
 #else
+
+static inline int
+omap_hwmod_mux_get_wake_status(struct omap_hwmod_mux_info *hmux)
+{
+	return 0;
+}
 
 static inline int omap_mux_init_gpio(int gpio, int val)
 {
@@ -201,19 +254,47 @@ static inline int omap_mux_init_signal(char *muxname, int val)
 {
 	return 0;
 }
-static inline int omap_mux_enable_wakeup(char *muxname)
+
+static inline struct omap_hwmod_mux_info *
+omap_hwmod_mux_init(struct omap_device_pad *bpads, int nr_pads)
 {
-	return 0;
+	return NULL;
 }
+
+static inline void omap_hwmod_mux(struct omap_hwmod_mux_info *hmux, u8 state)
+{
+}
+
+static struct omap_board_mux *board_mux __initdata __maybe_unused;
 
 #endif
 
 /**
- * omap_mux_get_gpio() - get mux register value based on GPIO number
+ * omap_mux_get_gpio() - get mux struct based on GPIO number
  * @gpio:		GPIO number
  *
  */
-u16 omap_mux_get_gpio(int gpio);
+struct omap_mux *omap_mux_get_gpio(int gpio);
+
+/** omap_mux_set_wakeupenable() - set the wakeupenable bit on a mux struct
+ * @m:			mux struct
+ */
+int omap_mux_set_wakeupenable(struct omap_mux *m);
+
+/** omap_mux_clear_wakeupenable() - clear the wakeupenable bit on a mux struct
+ * @m:			mux struct
+ */
+int omap_mux_clear_wakeupenable(struct omap_mux *m);
+
+/** omap_mux_get_wakeupenable() - get the wakeupenable bit from a mux struct
+ * @m:			mux struct
+ */
+bool omap_mux_get_wakeupenable(struct omap_mux *m);
+
+/** omap_mux_get_wakeupevent() - get the wakeupevent bit from a mux struct
+ * @m:			mux struct
+ */
+bool omap_mux_get_wakeupevent(struct omap_mux *m);
 
 /**
  * omap_mux_set_gpio() - set mux register value based on GPIO number
@@ -222,6 +303,41 @@ u16 omap_mux_get_gpio(int gpio);
  *
  */
 void omap_mux_set_gpio(u16 val, int gpio);
+
+/**
+ * omap_mux_get() - get a mux partition by name
+ * @name:		Name of the mux partition
+ *
+ */
+struct omap_mux_partition *omap_mux_get(const char *name);
+
+/**
+ * omap_mux_read() - read mux register
+ * @partition:		Mux partition
+ * @mux_offset:		Offset of the mux register
+ *
+ */
+u16 omap_mux_read(struct omap_mux_partition *p, u16 mux_offset);
+
+/**
+ * omap_mux_write() - write mux register
+ * @partition:		Mux partition
+ * @val:		New mux register value
+ * @mux_offset:		Offset of the mux register
+ *
+ * This should be only needed for dynamic remuxing of non-gpio signals.
+ */
+void omap_mux_write(struct omap_mux_partition *p, u16 val, u16 mux_offset);
+
+/**
+ * omap_mux_write_array() - write an array of mux registers
+ * @partition:		Mux partition
+ * @board_mux:		Array of mux registers terminated by MAP_MUX_TERMINATOR
+ *
+ * This should be only needed for dynamic remuxing of non-gpio signals.
+ */
+void omap_mux_write_array(struct omap_mux_partition *p,
+			  struct omap_board_mux *board_mux);
 
 /**
  * omap2420_mux_init() - initialize mux system with board specific set
@@ -246,11 +362,12 @@ int omap3_mux_init(struct omap_board_mux *board_mux, int flags);
 
 /**
  * omap4_mux_init() - initialize mux system with board specific set
- * @board_mux:		Board specific mux table
+ * @board_subset:	Board specific mux table
+ * @board_wkup_subset:	Board specific mux table for wakeup instance
  * @flags:		OMAP package type used for the board
  */
-int omap4_mux_init(struct omap_board_mux *board_core_subset,
-                struct omap_board_mux *board_wk_subset, int flags);
+int omap4_mux_init(struct omap_board_mux *board_subset,
+	struct omap_board_mux *board_wkup_subset, int flags);
 
 /**
  * omap_mux_init - private mux init function, do not call
