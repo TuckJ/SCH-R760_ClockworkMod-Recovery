@@ -71,4 +71,6 @@ void omap4_t1_fmradio_init(void);
 
 /** @category Connector */
 extern void t1_init_ta_nconnected(int);
+
+void __init omap4_t1_cam_init(void);
 #endif /* __BOARD_T1_H__ */

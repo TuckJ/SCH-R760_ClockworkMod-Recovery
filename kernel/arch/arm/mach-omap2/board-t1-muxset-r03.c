@@ -29,7 +29,9 @@ static struct omap_muxtbl muxtbl[] __initdata = {
 		     56, "CP_DUMP_INT"),
 	/* [-----] usbb1_ulpitll_dat6 - gpio_94 - MOTOR_PWM */
 	OMAP4_MUXTBL(OMAP4_MUXTBL_DOMAIN_CORE,
-		     USBB1_ULPITLL_DAT6, OMAP_MUX_MODE1 | OMAP_PIN_OUTPUT,
+		     USBB1_ULPITLL_DAT6, OMAP_MUX_MODE1 | OMAP_PIN_OUTPUT |
+		 	 OMAP_PIN_OFF_OUTPUT_LOW,
+
 		     94, "MOTOR_PWM"),
 	/* [IN---] usbb1_ulpitll_dat7 - gpio_95 - EAR_SEND_END */
 	OMAP4_MUXTBL(OMAP4_MUXTBL_DOMAIN_CORE,

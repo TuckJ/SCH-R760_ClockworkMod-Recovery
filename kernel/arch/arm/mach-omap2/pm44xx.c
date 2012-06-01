@@ -708,6 +708,19 @@ static int omap4_restore_pwdms_after_suspend(void)
 			ret = -1;
 		}
 
+		/*
+		 * REVISIT:
+		 * In ES2.2, the mp3/FM currents are high ~7mA after off mode
+		 * due to per target state ON instead of RET (L4PER_PWRSTCTRL)
+		 * The below check ensures that the per_next_state is as RET
+		 */
+		if ((omap_rev() == OMAP4430_REV_ES2_2) &&
+			(!strcmp(pwrst->pwrdm->name, "l4per_pwrdm"))) {
+				omap_set_pwrdm_state(pwrst->pwrdm,
+					pwrst->saved_state);
+			continue;
+		}
+
 		/* If state already ON due to h/w dep, don't do anything */
 		if (cstate == PWRDM_POWER_ON)
 			continue;

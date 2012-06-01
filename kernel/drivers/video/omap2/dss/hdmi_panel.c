@@ -179,8 +179,7 @@ static int hdmi_panel_suspend(struct omap_dss_device *dssdev)
 	}
 
 	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
-
-/* Do not send HPD uevent when sleep and wakeup
+/* Do not send HPD uevent when sleep and resume
 	hdmi_panel_hpd_handler(0);
 */
 	omapdss_hdmi_display_disable(dssdev);

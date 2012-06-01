@@ -374,10 +374,10 @@ static void espresso10_ap_usb_attach(struct omap4_otg *otg)
 
 	otg->otg.default_a = false;
 	otg->otg.state = OTG_STATE_B_IDLE;
-	otg->otg.last_event = USB_EVENT_VBUS_CHARGER;
+	otg->otg.last_event = USB_EVENT_VBUS;
 
 	atomic_notifier_call_chain(&otg->otg.notifier,
-			USB_EVENT_VBUS_CHARGER,
+			USB_EVENT_VBUS,
 			otg->otg.gadget);
 }
 
@@ -387,20 +387,11 @@ static void espresso10_ap_usb_detach(struct omap4_otg *otg)
 
 	otg->otg.default_a = false;
 	otg->otg.state = OTG_STATE_B_IDLE;
-
-	if (otg->otg.last_event != USB_EVENT_VBUS_CHARGER) {
-		otg->otg.last_event = USB_EVENT_NONE;
-		atomic_notifier_call_chain(&otg->otg.notifier,
-				USB_EVENT_NONE,
-				otg->otg.gadget);
-	} else {
-		otg->otg.last_event = USB_EVENT_NONE;
-		pr_info("VBUS OFF before detecting the cable type\n");
-	}
+	otg->otg.last_event = USB_EVENT_NONE;
 
 	atomic_notifier_call_chain(&otg->otg.notifier,
-				USB_EVENT_CHARGER_NONE,
-				otg->otg.gadget);
+			USB_EVENT_NONE,
+			otg->otg.gadget);
 }
 
 static void espresso10_usb_host_attach(struct omap4_otg *otg)
@@ -538,57 +529,21 @@ int omap4_espresso10_get_adc(enum espresso10_adc_ch ch)
 	return adc;
 }
 
-static void espresso10_con_usb_charger_attached(struct omap4_otg *otg)
+static void espresso10_con_usb_charger_attached(void)
 {
-	int val;
-
-	/* USB cable connected */
-	pr_info("%s, USB_EVENT_VBUS\n", __func__);
-
-	val = gpio_get_value(otg->ta_nconnected);
-	if (val < 0) {
-		pr_err("usb ta_nconnected: gpio_get_value error %d\n", val);
-		return;
-	}
-
-	if (!val) { /* connected */
-		otg->otg.default_a = false;
-		otg->otg.state = OTG_STATE_B_IDLE;
-		otg->otg.last_event = USB_EVENT_VBUS;
-
-		atomic_notifier_call_chain(&otg->otg.notifier,
-			USB_EVENT_VBUS, otg->otg.gadget);
-	} else {  /* disconnected */
-		pr_info("%s, VBUS OFF : USB_EVENT_VBUS is not sent\n",
-						__func__);
-	}
 }
 
 static void espresso10_con_ta_charger_attached(struct omap4_otg *otg)
 {
-	int val;
-
 	/* Change to USB_EVENT_CHARGER for sleep */
 	pr_info("%s, USB_EVENT_CHARGER\n", __func__);
+	otg->otg.default_a = false;
+	otg->otg.state = OTG_STATE_B_IDLE;
+	otg->otg.last_event = USB_EVENT_CHARGER;
 
-	val = gpio_get_value(otg->ta_nconnected);
-	if (val < 0) {
-		pr_err("usb ta_nconnected: gpio_get_value error %d\n", val);
-		return;
-	}
-
-	if (!val) { /* connected */
-		otg->otg.default_a = false;
-		otg->otg.state = OTG_STATE_B_IDLE;
-		otg->otg.last_event = USB_EVENT_CHARGER;
-
-		atomic_notifier_call_chain(&otg->otg.notifier,
+	atomic_notifier_call_chain(&otg->otg.notifier,
 			USB_EVENT_CHARGER,
 			otg->otg.gadget);
-	} else { /* disconnected */
-		pr_info("%s, VBUS OFF : USB_EVENT_CHARGER is not sent\n",
-						__func__);
-	}
 }
 
 static void espresso10_con_charger_detached(void)
@@ -738,7 +693,7 @@ static void espresso10_30pin_detected(int device, bool connected)
 		break;
 	case P30_USB:
 		if (connected)
-			espresso10_con_usb_charger_attached(espresso10_otg);
+			espresso10_con_usb_charger_attached();
 		else
 			espresso10_con_charger_detached();
 		break;
@@ -1091,7 +1046,6 @@ static int espresso10_vbus_detect_init(struct omap4_otg *otg)
 {
 	int status = 0;
 	int irq = 0;
-	int val;
 	int ta_nconnected =
 		omap_muxtbl_get_gpio_by_name("TA_nCONNECTED");
 
@@ -1113,11 +1067,10 @@ static int espresso10_vbus_detect_init(struct omap4_otg *otg)
 	otg->ta_nconnected = ta_nconnected;
 	irq = gpio_to_irq(ta_nconnected);
 	dev_info(&otg->dev, "request_irq : %d(gpio: %d)\n", irq, ta_nconnected);
-	val = gpio_get_value(ta_nconnected);
 
 	status = request_threaded_irq(irq, NULL, ta_nconnected_irq,
-			(val ? IRQF_TRIGGER_LOW : IRQF_TRIGGER_HIGH) | \
-			IRQF_ONESHOT | IRQF_NO_SUSPEND,
+			IRQF_TRIGGER_LOW | IRQF_ONESHOT | \
+			IRQF_NO_SUSPEND,
 			"TA_nConnected", otg);
 	if (status < 0) {
 		dev_err(&otg->dev, "request irq %d failed for gpio %d\n",
@@ -1307,8 +1260,11 @@ static int __init espresso10_plugged_usb_cable_init(void)
 	struct omap4_otg *espresso10_otg = &espresso10_otg_xceiv;
 
 	/* USB connected */
-	if (gpio_get_value(espresso10_otg->ta_nconnected) == 0)
-		omap4_vusb_enable(espresso10_otg, true);
+	if (gpio_get_value(espresso10_otg->ta_nconnected) == 0) {
+		mutex_lock(&espresso10_otg->lock);
+		espresso10_ap_usb_attach(espresso10_otg);
+		mutex_unlock(&espresso10_otg->lock);
+	}
 
 	return 0;
 }

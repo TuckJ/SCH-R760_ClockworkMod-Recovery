@@ -16,14 +16,6 @@
 #define DEBUG_PRINT			1
 #define FACTORY_TESTING			1
 #define TOUCH_BOOST			1
-#define CONTROL_JITTER			1
-
-#if DEBUG_PRINT
-#define	tsp_debug(fmt, args...) \
-				pr_info("tsp: %s: " fmt, __func__, ## args)
-#else
-#define tsp_debug(fmt, args...)
-#endif
 
 #include <linux/module.h>
 #include <linux/delay.h>
@@ -114,10 +106,6 @@ struct ts_data {
 #if TOUCH_BOOST
 	struct timer_list		timer;
 #endif
-#if CONTROL_JITTER
-	bool				jitter_on;
-	bool				enable;
-#endif
 };
 
 static int ts_read_reg_data(const struct i2c_client *client, u8 address,
@@ -154,38 +142,6 @@ static void set_ta_mode(int *ta_state)
 	return;
 }
 
-#if CONTROL_JITTER
-#define F11_2D_CTRL			0x56
-
-static void set_jitter_filter(struct ts_data *ts, bool on)
-{
-	static bool prev_jitter = false;
-	u8 command;
-
-	if (!ts->enable) {
-		if (on && prev_jitter == false)
-			ts->jitter_on = prev_jitter = true;
-		else
-			ts->jitter_on = prev_jitter = false;
-		return;
-	}
-
-	if (on) {
-		command = 0x09;
-		prev_jitter = true;
-		pr_info("tsp: %s: jitter filter on.", __func__);
-	} else {
-		command = 0x01;
-		prev_jitter = false;
-		pr_info("tsp: %s: jitter filter off.", __func__);
-	}
-
-	ts_write_reg_data(ts->client, F11_2D_CTRL, &command, 1);
-
-	return;
-}
-#endif
-
 #define FW_ADDRESS			0x34
 
 static u8 get_reg_address(const struct i2c_client *client, const int reg_name)
@@ -214,8 +170,9 @@ static bool fw_updater(struct ts_data *ts, char *mode)
 	u8 buf[5] = {0, };
 	bool ret = false;
 
-	tsp_debug("Enter the fw_updater.");
-
+#if DEBUG_PRINT
+	pr_info("tsp: Enter the fw_updater.");
+#endif
 	/* To check whether touch IC in bootloader mode.
 	 * It means that fw. update failed at previous booting.
 	 */
@@ -565,9 +522,10 @@ static void run_raw_cap_read(void *device_data)
 			temp = ts_data->node_data->raw_cap_data[x * rx + y];
 			max_value = max(max_value, temp);
 			min_value = min(min_value, temp);
-
-			tsp_debug("%d, %d, data: %d", x, y,
+#if DEBUG_PRINT
+			pr_info("%d, %d, data: %d", x, y,
 				ts_data->node_data->raw_cap_data[x * rx + y]);
+#endif
 		}
 	}
 
@@ -604,9 +562,10 @@ static void run_rx_to_rx_read(void *device_data)
 			temp = ts_data->node_data->rx_to_rx_data[x * rx + y];
 			max_value = max(max_value, temp);
 			min_value = min(min_value, temp);
-
-			tsp_debug("%d, %d, data: %d", x, y,
+#if DEBUG_PRINT
+			pr_info("%d, %d, data: %d", x, y,
 				ts_data->node_data->rx_to_rx_data[x * rx + y]);
+#endif
 		}
 	}
 
@@ -644,9 +603,10 @@ static void run_tx_to_tx_read(void *device_data)
 		temp = ts_data->node_data->tx_to_tx_data[x];
 		max_value = max(max_value, temp);
 		min_value = min(min_value, temp);
-
-		tsp_debug("%d, data: %d", x,
+#if DEBUG_PRINT
+		pr_info("%d, data: %d", x,
 					ts_data->node_data->tx_to_tx_data[x]);
+#endif
 	}
 
 	enable_irq(ts_data->client->irq);
@@ -683,9 +643,10 @@ static void run_tx_to_gnd_read(void *device_data)
 		temp = ts_data->node_data->tx_to_gnd_data[x];
 		max_value = max(max_value, temp);
 		min_value = min(min_value, temp);
-
-		tsp_debug("%d, data: %d", x,
+#if DEBUG_PRINT
+		pr_info("%d, data: %d", x,
 					ts_data->node_data->tx_to_gnd_data[x]);
+#endif
 	}
 
 	enable_irq(ts_data->client->irq);
@@ -864,38 +825,14 @@ static ssize_t cmd_result_show(struct device *dev,
 	return sprintf(buf, "%s\n", data->cmd_result);
 }
 
-#if CONTROL_JITTER
-static ssize_t set_jitter_store(struct device *dev,
-		struct device_attribute *devattr, const char *buf, size_t count)
-{
-	struct ts_data *ts_data = dev_get_drvdata(dev);
-	u8 buff[count];
-
-	memcpy(buff, buf, 1);
-
-	if (buff[0] == '1')
-		set_jitter_filter(ts_data, true);
-	else
-		set_jitter_filter(ts_data, false);
-
-	return count;
-}
-#endif
-
 static DEVICE_ATTR(cmd, S_IWUSR | S_IWGRP, NULL, cmd_store);
 static DEVICE_ATTR(cmd_status, S_IRUGO, cmd_status_show, NULL);
 static DEVICE_ATTR(cmd_result, S_IRUGO, cmd_result_show, NULL);
-#if CONTROL_JITTER
-static DEVICE_ATTR(set_jitter, S_IWUSR | S_IWGRP, NULL, set_jitter_store);
-#endif
 
 static struct attribute *touchscreen_attributes[] = {
 	&dev_attr_cmd.attr,
 	&dev_attr_cmd_status.attr,
 	&dev_attr_cmd_result.attr,
-#if CONTROL_JITTER
-	&dev_attr_set_jitter.attr,
-#endif
 	NULL,
 };
 
@@ -915,8 +852,9 @@ static void reset_points(struct ts_data *ts)
 					false);
 	}
 	input_sync(ts->input_dev);
-
-	tsp_debug("reset_all_fingers.");
+#if DEBUG_PRINT
+	pr_info("tsp: reset_all_fingers.");
+#endif
 	return;
 }
 
@@ -938,11 +876,9 @@ static int init_tsp(struct ts_data *ts)
 		pr_err("tsp: init_tsp: read reg_data failed.\n");
 
 	set_ta_mode(&(ts->platform_data->ta_state));
-#if CONTROL_JITTER
-	ts->enable = true;
-	set_jitter_filter(ts, ts->jitter_on);
+#if DEBUG_PRINT
+	pr_info("tsp: init_tsp done.");
 #endif
-	tsp_debug("init_tsp done.");
 	return true;
 }
 
@@ -973,9 +909,7 @@ static void ts_early_suspend(struct early_suspend *h)
 		del_timer_sync(&ts->timer);
 	}
 #endif
-#if CONTROL_JITTER
-	ts->enable = false;
-#endif
+
 	return ;
 }
 
@@ -1143,9 +1077,9 @@ static int __devinit ts_probe(struct i2c_client *client,
 	struct node_data *node_data;
 	u32 rx, tx;
 #endif
-
+#if DEBUG_PRINT
 	pr_info("tsp: ts_probe\n");
-
+#endif
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("tsp: ts_probe: need I2C_FUNC_I2C\n");
 		ret = -ENODEV;
@@ -1166,7 +1100,8 @@ static int __devinit ts_probe(struct i2c_client *client,
 	ts->platform_data->link = ts;
 
 	if (ts->platform_data->panel_name && system_rev >= 7)
-		tsp_debug("attached panel: %s", ts->platform_data->panel_name);
+		pr_info("tsp: ts_probe: attached panel: %s",
+						ts->platform_data->panel_name);
 
 	ts->input_dev = input_allocate_device();
 	if (!ts->input_dev) {
@@ -1198,17 +1133,19 @@ static int __devinit ts_probe(struct i2c_client *client,
 #if TOUCH_BOOST
 	setup_timer(&ts->timer, timer_cb, 0);
 #endif
-
-	tsp_debug("succeed to register input device\n");
+#if DEBUG_PRINT
+	pr_info("tsp: ts_probe: succeed to register input device\n");
+#endif
 
 	/* Check the new fw. and update */
 	set_fw_version(FW_KERNEL_VERSION, FW_DATE);
 	fw_updater(ts, "normal");
 
 	if (ts->client->irq) {
-		tsp_debug("trying to request irq: %s %d\n", ts->client->name,
-							ts->client->irq);
-
+#if DEBUG_PRINT
+		pr_info("tsp: ts_probe: trying to request irq: %s %d\n",
+			ts->client->name, ts->client->irq);
+#endif
 		ret = request_threaded_irq(ts->client->irq, NULL,
 					 ts_irq_handler,
 					 IRQF_TRIGGER_LOW | IRQF_ONESHOT,
@@ -1268,14 +1205,11 @@ static int __devinit ts_probe(struct i2c_client *client,
 	ts->node_data = node_data;
 #endif
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#if CONFIG_HAS_EARLYSUSPEND
 	ts->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	ts->early_suspend.suspend = ts_early_suspend;
 	ts->early_suspend.resume = ts_late_resume;
 	register_early_suspend(&ts->early_suspend);
-#endif
-#if CONTROL_JITTER
-	ts->jitter_on = true;
 #endif
 	reset_tsp(ts);
 
@@ -1283,7 +1217,7 @@ static int __devinit ts_probe(struct i2c_client *client,
 	set_ta_mode(&(ts->platform_data->ta_state));
 
 	pr_info("tsp: ts_probe: Start touchscreen. name: %s, irq: %d\n",
-					ts->client->name, ts->client->irq);
+		ts->client->name, ts->client->irq);
 
 	return 0;
 
@@ -1346,7 +1280,7 @@ static const struct i2c_device_id ts_id[] = {
 static struct i2c_driver ts_driver = {
 	.driver = {
 		   .name = SYNAPTICS_TS_NAME,
-		},
+		   },
 	.id_table = ts_id,
 	.probe = ts_probe,
 	.remove = __devexit_p(ts_remove),

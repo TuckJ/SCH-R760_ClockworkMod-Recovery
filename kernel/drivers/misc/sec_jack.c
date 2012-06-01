@@ -259,7 +259,8 @@ static void determine_jack_type(struct sec_jack_info *hi)
 							  zones[i].jack_type);
 					return;
 				}
-				msleep(zones[i].delay_ms);
+				usleep_range(zones[i].delay_ms*1000,
+						zones[i].delay_ms*1100);
 				break;
 			}
 		}
@@ -297,7 +298,7 @@ void sec_jack_detect_work(struct work_struct *work)
 			handle_jack_not_inserted(hi);
 			return;
 		}
-		msleep(10);
+		usleep_range(10000, 11000);
 		time_left_ms -= 10;
 	}
 

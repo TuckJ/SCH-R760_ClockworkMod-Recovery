@@ -35,7 +35,7 @@ static struct omap_muxtbl muxtbl[] __initdata = {
 	OMAP4_MUXTBL(OMAP4_MUXTBL_DOMAIN_CORE,
 		     HDMI_HPD, OMAP_MUX_MODE3 | OMAP_PIN_INPUT_PULLUP,
 		     63, "HDMI_HPD"),
-	/* [-----] hdmi_cec - gpio_64 - NC  */
+	/* [-N-C-] hdmi_cec - gpio_64 - NC */
 	OMAP4_MUXTBL(OMAP4_MUXTBL_DOMAIN_CORE,
 		     HDMI_CEC, OMAP_MUX_MODE7 | OMAP_PIN_INPUT_PULLDOWN,
 		     64, "hdmi_cec.nc"),

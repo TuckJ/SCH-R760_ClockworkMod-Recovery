@@ -266,7 +266,7 @@ static void __init t1_init(void)
 	omap4_t1_vibrator_init();
 	omap4_t1_fmradio_init();
 	omap4_t1_reboot_init();
-
+	omap4_t1_cam_init();
 #ifdef CONFIG_OMAP_HSI_DEVICE
 	/* Allow HSI omap_device to be registered later */
 	omap_hsi_allow_registration();
@@ -322,7 +322,7 @@ static void __init t1_reserve(void)
 	omap_reserve();
 }
 
-MACHINE_START(OMAP4_SAMSUNG, "t1")
+MACHINE_START(OMAP4_SAMSUNG, "T1 Samsung board")
 	/* Maintainer: Shankar Bandal Samsung India (shankar.b@samsung.com) */
 	.boot_params	= 0x80000100,
 	.reserve	= t1_reserve,

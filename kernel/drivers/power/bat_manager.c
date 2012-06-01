@@ -528,11 +528,11 @@ static int otg_handle_notification(struct notifier_block *nb,
 			struct charger_device_info, otg_nb);
 
 	switch (event) {
-	case USB_EVENT_VBUS_CHARGER:
+	case USB_EVENT_VBUS:
 		pr_info("[BAT_MANAGER] Charger Connected\n");
 		di->is_low_batt_alarm = false;
 		break;
-	case USB_EVENT_CHARGER_NONE:
+	case USB_EVENT_NONE:
 		pr_info("[BAT_MANAGER] Charger Disconnect\n");
 		break;
 	default:

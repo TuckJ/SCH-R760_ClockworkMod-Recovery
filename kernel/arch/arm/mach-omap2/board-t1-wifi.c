@@ -160,9 +160,9 @@ static unsigned char t1_mac_addr[IFHWADDRLEN]
 static struct resource t1_wifi_resources[] = {
 	[0] = {
 		.name	= "bcmdhd_wlan_irq",
-		.flags	= IORESOURCE_IRQ
-			| IORESOURCE_IRQ_HIGHLEVEL
-			| IORESOURCE_IRQ_SHAREABLE,
+		.flags	= IORESOURCE_IRQ /*| IORESOURCE_IRQ_HIGHEDGE,*/
+                        | IORESOURCE_IRQ_HIGHLEVEL
+                        | IORESOURCE_IRQ_SHAREABLE,
 	},
 };
 

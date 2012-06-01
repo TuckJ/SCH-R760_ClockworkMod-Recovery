@@ -21,14 +21,18 @@
 #include <linux/max17040_battery.h>
 #include <linux/slab.h>
 #include <linux/android_alarm.h>
-#ifdef CONFIG_HAS_EARLYSUSPEND
-#include <linux/earlysuspend.h>
-#endif
 #include <linux/suspend.h>
 #include <linux/interrupt.h>
 #include <linux/reboot.h>
 #include <linux/pm.h>
 #include <linux/workqueue.h>
+
+
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
+#endif
+
 
 #define MAX17040_VCELL_MSB	0x02
 #define MAX17040_VCELL_LSB	0x03
@@ -44,11 +48,12 @@
 #define MAX17040_CMD_LSB	0xFF
 
 #define MAX17040_BATTERY_FULL	100
+#define MAX17040_VCELL_FULL	4200000
 
 #define HAS_ALERT_INTERRUPT(ver)	(ver >= 3)
 
-#define FAST_POLL		(1 * 60)
-#define SLOW_POLL		(20 * 60)
+#define FAST_POLL		(1 * 30)
+#define SLOW_POLL		(10 * 60)
 
 #define STATUS_CHARGABLE	0x0
 #define STATUS_CHARGE_FULL	0x1
@@ -57,6 +62,29 @@
 
 #define MIN_SOC_CAPACITY	300
 #define MAX_SOC_CAPACITY	96100
+
+#define PDA_POWER_CHARGE_AC  (1 << 0)
+#define PDA_POWER_CHARGE_USB (1 << 1)
+
+#define OFFSET_MP3		(0x1 << 0)
+#define OFFSET_VIDEO		(0x1 << 1)
+#define OFFSET_CAMERA		(0x1 << 2)
+#define OFFSET_CAMERA_RECORD	(0x1 << 3)
+
+#define EVT_CASE (OFFSET_MP3 | \
+		  OFFSET_VIDEO | \
+		  OFFSET_CAMERA)
+
+enum charger_mode {
+	USB500 = 0,
+	ISET,
+};
+
+enum {
+	NOT_FULL = 0,
+	FULL_CHARGED_PRE,
+	FULL_CHARGED
+};
 
 struct max17040_chip {
 	struct i2c_client		*client;
@@ -76,13 +104,16 @@ struct max17040_chip {
 	int bat_health;
 	/* Temperature of Battery */
 	int bat_temp;
+	int bat_temp_adc;
 
-#ifndef CONFIG_HAS_EARLYSUSPEND
 	struct notifier_block	pm_notifier;
-#else
-	struct early_suspend	earlysuspend;
-#endif
 	struct wake_lock	work_wake_lock;
+
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+	struct proc_dir_entry *max17040_battery_proc;
+	struct proc_dir_entry *cam_recording_proc;
+	char cam_recording_value[2];
+#endif
 
 	struct alarm	alarm;
 	ktime_t last_poll;
@@ -93,10 +124,16 @@ struct max17040_chip {
 
 	int charger_status;
 	bool is_full_charged;
+	bool is_full_charged_pre;
+	bool current_adjusted;
 	unsigned long chg_limit_time;
+	bool event_mode;
+	u32 event_list;
 
 	bool is_timer_flag;
 	struct delayed_work full_batt_work;
+	int bat_removal_irq;
+	struct work_struct bat_removal_work;
 };
 
 static struct wake_lock full_batt_wake_lock;
@@ -135,6 +172,25 @@ static int max17040_get_property(struct power_supply *psy,
 	default:
 		return -EINVAL;
 	}
+	return 0;
+}
+
+static int max17040_set_property(struct power_supply *psy,
+				 enum power_supply_property psp,
+				 const union power_supply_propval *val)
+{
+	struct max17040_chip *chip = container_of(psy,
+				struct max17040_chip, battery);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		wake_lock(&chip->work_wake_lock);
+		schedule_work(&chip->work);
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -246,26 +302,66 @@ static void max17040_get_status(struct i2c_client *client)
 {
 	struct max17040_chip *chip = i2c_get_clientdata(client);
 
-	if (!chip->pdata->charger_online || !chip->pdata->charger_enable) {
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+	if (!chip->pdata->charger_online ||
+	    !chip->pdata->charger_enable ||
+	    !chip->pdata->get_charging_source ||
+	    !chip->pdata->get_charging_state) {
+#else
+	if (!chip->pdata->charger_online ||
+	    !chip->pdata->get_charging_source ||
+	    !chip->pdata->charger_enable) {
+#endif
 		chip->status = POWER_SUPPLY_STATUS_UNKNOWN;
 		return;
 	}
 
-	if (chip->pdata->charger_online()) {
-		if (chip->pdata->charger_enable()) {
+	if (chip->pdata->charger_online() &&
+	    (chip->pdata->get_charging_source() ||
+	     chip->pdata->bootmode == 5)) {
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		if (chip->charger_status == STATUS_CHARGABLE &&
+		    chip->is_full_charged_pre)
+			chip->status = POWER_SUPPLY_STATUS_FULL;
+		else if (chip->pdata->get_charging_state())
+#else
+		if (chip->pdata->charger_enable())
+#endif
 			chip->status = POWER_SUPPLY_STATUS_CHARGING;
-			chip->is_full_charged = false;
-		} else {
+		else
 			chip->status =
 				chip->charger_status == STATUS_CHARGE_FULL ?
 				POWER_SUPPLY_STATUS_FULL :
 				POWER_SUPPLY_STATUS_NOT_CHARGING;
-		}
+
 	} else {
 		chip->status = POWER_SUPPLY_STATUS_DISCHARGING;
+		chip->bat_health = POWER_SUPPLY_HEALTH_GOOD;
 		chip->chg_limit_time = 0;
 		chip->charger_status = STATUS_CHARGABLE;
 		chip->is_full_charged = false;
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		chip->is_full_charged_pre = false;
+#endif
+	}
+}
+
+static void max17040_get_vf_status(struct max17040_chip *chip)
+{
+	bool vf_present = false;
+
+	if (chip->pdata->vf_present) {
+		vf_present = chip->pdata->vf_present();
+		if (!vf_present &&
+		    chip->bat_health != POWER_SUPPLY_HEALTH_UNSPEC_FAILURE) {
+			chip->bat_health = POWER_SUPPLY_HEALTH_UNSPEC_FAILURE;
+			dev_info(&chip->client->dev, "vf error occur");
+		} else if (vf_present &&
+			   chip->bat_health ==
+			   POWER_SUPPLY_HEALTH_UNSPEC_FAILURE) {
+			chip->bat_health = POWER_SUPPLY_HEALTH_GOOD;
+			dev_info(&chip->client->dev, "vf error is recovered");
+		}
 	}
 }
 
@@ -273,11 +369,12 @@ static void max17040_get_temp_status(struct max17040_chip *chip)
 {
 	int r;
 	int t;
+	int t_adc;
 
 	if (!chip->pdata->get_bat_temp)
 		return;
 
-	r = chip->pdata->get_bat_temp(&t);
+	r = chip->pdata->get_bat_temp(&t, &t_adc);
 
 	if (r < 0) {
 		dev_err(&chip->client->dev,
@@ -287,6 +384,7 @@ static void max17040_get_temp_status(struct max17040_chip *chip)
 	}
 
 	chip->bat_temp = t;
+	chip->bat_temp_adc = t_adc;
 
 	if (chip->bat_temp >= chip->pdata->high_block_temp) {
 		chip->bat_health = POWER_SUPPLY_HEALTH_OVERHEAT;
@@ -302,6 +400,7 @@ static void max17040_charger_update(struct max17040_chip *chip)
 {
 	ktime_t ktime;
 	struct timespec cur_time;
+	int full_charge_state;
 
 	if (!chip->pdata->is_full_charge || !chip->pdata->allow_charging)
 		return;
@@ -311,6 +410,23 @@ static void max17040_charger_update(struct max17040_chip *chip)
 
 	switch (chip->charger_status) {
 	case STATUS_CHARGABLE:
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		if (chip->soc >= MAX17040_BATTERY_FULL &&
+		    chip->vcell > chip->pdata->fully_charged_vol) {
+			full_charge_state = NOT_FULL;
+			if (chip->pdata->is_full_charge)
+				full_charge_state =
+					chip->pdata->is_full_charge(true);
+
+			if (full_charge_state == FULL_CHARGED_PRE) {
+				chip->is_full_charged_pre = true;
+				chip->is_full_charged = false;
+			} else if (full_charge_state == FULL_CHARGED) {
+				chip->is_full_charged_pre = true;
+				chip->is_full_charged = true;
+			}
+		}
+#endif
 		if (chip->is_full_charged &&
 			chip->soc >= MAX17040_BATTERY_FULL &&
 				chip->vcell > chip->pdata->fully_charged_vol) {
@@ -329,13 +445,58 @@ static void max17040_charger_update(struct max17040_chip *chip)
 			chip->charger_status = STATUS_ABNORMAL_TEMP;
 			chip->chg_limit_time = 0;
 			chip->pdata->allow_charging(0);
+		} else if (chip->bat_health ==
+			   POWER_SUPPLY_HEALTH_UNSPEC_FAILURE) {
+			chip->chg_limit_time = 0;
+			chip->pdata->allow_charging(0);
 		}
+
+		if (chip->charger_status == STATUS_CHARGABLE  &&
+		    chip->bat_health == POWER_SUPPLY_HEALTH_GOOD) {
+			if (chip->pdata->get_charging_state) {
+				if (!chip->pdata->get_charging_state()) {
+					if (chip->pdata->restore_charger_mode)
+						chip->pdata->
+							restore_charger_mode();
+					else
+						chip->pdata->allow_charging(1);
+				}
+			} else if (chip->pdata->charger_enable) {
+				if (!chip->pdata->charger_enable()) {
+					if (chip->pdata->restore_charger_mode)
+						chip->pdata->
+							restore_charger_mode();
+					else
+						chip->pdata->allow_charging(1);
+				}
+			}
+		}
+
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		if (!(chip->charger_status == STATUS_CHARGABLE ||
+		      chip->charger_status == STATUS_CHARGE_FULL)) {
+			chip->is_full_charged_pre = false;
+			chip->is_full_charged = false;
+			if (chip->pdata->is_full_charge)
+				chip->pdata->is_full_charge(false);
+		}
+#endif
 		break;
 
 	case STATUS_CHARGE_FULL:
 		if (chip->vcell <= chip->pdata->recharge_vol) {
 			chip->charger_status = STATUS_CHARGABLE;
-			chip->pdata->allow_charging(1);
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+			chip->is_full_charged = false;
+			if (chip->pdata->is_full_charge)
+				chip->pdata->is_full_charge(false);
+
+#endif
+			if (chip->pdata->restore_charger_mode)
+				chip->pdata->
+					restore_charger_mode();
+			else
+				chip->pdata->allow_charging(1);
 		}
 		break;
 
@@ -344,14 +505,22 @@ static void max17040_charger_update(struct max17040_chip *chip)
 			chip->bat_temp >=
 				chip->pdata->low_recover_temp) {
 			chip->charger_status = STATUS_CHARGABLE;
-			chip->pdata->allow_charging(1);
+			if (chip->pdata->restore_charger_mode)
+				chip->pdata->
+					restore_charger_mode();
+			else
+				chip->pdata->allow_charging(1);
 		}
 		break;
 
 	case STATUS_CHARGE_TIMEOVER:
 		if (chip->vcell <= chip->pdata->fully_charged_vol) {
 			chip->charger_status = STATUS_CHARGABLE;
-			chip->pdata->allow_charging(1);
+			if (chip->pdata->restore_charger_mode)
+				chip->pdata->
+					restore_charger_mode();
+			else
+				chip->pdata->allow_charging(1);
 		}
 		break;
 
@@ -368,6 +537,44 @@ static void max17040_charger_update(struct max17040_chip *chip)
 			cur_time.tv_sec + chip->pdata->limit_charging_time;
 	}
 
+#ifdef CONFIG_ADJUST_EVENT_CHARGING_CURRENT
+	if (chip->event_list & EVT_CASE) {
+		if (!chip->event_mode)
+			chip->event_mode = true;
+	} else
+		chip->event_mode = false;
+
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+	if (chip->event_list & OFFSET_CAMERA_RECORD) {
+		if (chip->pdata->check_temp_block_state) {
+			if (!chip->event_mode &&
+			    chip->pdata->check_temp_block_state(chip->bat_temp))
+				chip->event_mode = true;
+		}
+	}
+#endif
+	if (chip->charger_status == STATUS_CHARGABLE &&
+	    chip->pdata->get_charging_source &&
+	    chip->pdata->get_charging_source() == PDA_POWER_CHARGE_AC) {
+		if (chip->event_mode) {
+			if (!chip->current_adjusted) {
+				chip->pdata->adjust_charger_mode(
+					PDA_POWER_CHARGE_USB);
+				chip->current_adjusted = true;
+			}
+		} else {
+			if (chip->current_adjusted) {
+				if (chip->pdata->restore_charger_mode)
+					chip->pdata->restore_charger_mode();
+				chip->current_adjusted = false;
+			}
+		}
+	} else {
+		if (chip->current_adjusted)
+			chip->current_adjusted = false;
+	}
+#endif
+
 	dev_dbg(&chip->client->dev, "%s, Charger Status : %d, Limit Time : %ld\n",
 			__func__, chip->charger_status, chip->chg_limit_time);
 }
@@ -381,13 +588,36 @@ static void max17040_update(struct max17040_chip *chip)
 	max17040_get_soc(chip->client);
 	max17040_get_online(chip->client);
 	max17040_get_temp_status(chip);
-	if (chip->pdata->charger_online())
+
+	if (chip->pdata->charger_online()) {
+		max17040_get_vf_status(chip);
 		max17040_charger_update(chip);
-	else
+	} else {
 		chip->is_timer_flag = false;
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		if (chip->pdata->is_full_charge)
+			chip->pdata->is_full_charge(false);
+#endif
+#ifdef CONFIG_ADJUST_EVENT_CHARGING_CURRENT
+		if (chip->current_adjusted)
+			chip->current_adjusted = false;
+#endif
+	}
+
 	max17040_get_status(chip->client);
 	if ((chip->soc != prev_soc) || (chip->status != prev_status))
 		power_supply_changed(&chip->battery);
+
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+	if (chip->status != prev_status) {
+		if (chip->status == POWER_SUPPLY_STATUS_FULL)
+			wake_lock(&full_batt_wake_lock);
+		else {
+			if (wake_lock_active(&full_batt_wake_lock))
+				wake_unlock(&full_batt_wake_lock);
+		}
+	}
+#endif
 
 	dev_info(&chip->client->dev, "online = %d vcell = %d soc = %d "
 		"status = %d health = %d temp = %d "
@@ -413,6 +643,7 @@ static void max17040_work(struct work_struct *work)
 	struct max17040_chip *chip;
 
 	chip = container_of(work, struct max17040_chip, work);
+
 	max17040_update(chip);
 
 	chip->last_poll = alarm_get_elapsed_realtime();
@@ -455,7 +686,6 @@ static enum power_supply_property max17040_battery_props[] = {
 	POWER_SUPPLY_PROP_TEMP,
 };
 
-#ifndef CONFIG_HAS_EARLYSUSPEND
 static int max17040_pm_notifier(struct notifier_block *notifier,
 		unsigned long pm_event,
 		void *unused)
@@ -465,16 +695,25 @@ static int max17040_pm_notifier(struct notifier_block *notifier,
 
 	switch (pm_event) {
 	case PM_SUSPEND_PREPARE:
-		cancel_work_sync(&chip->work);
+#ifdef CONFIG_USE_CHG_ADC_POLLING
+		if (chip->pdata->get_charging_state) {
+			if (!chip->pdata->get_charging_state()) {
+				cancel_work_sync(&chip->work);
+				max17040_program_alarm(chip, SLOW_POLL);
+			}
+		}
+#else
 		/* After charge completion interrupt, if there is no other
 		 * wakeup, the battery charging will not be re-enabled even
 		 * when TA stays connected. So, wakeup after sometime so that
 		 * charging can be re-enable if required.
 		 */
+		cancel_work_sync(&chip->work);
 		if (chip->charger_status == STATUS_CHARGE_FULL)
 			max17040_program_alarm(chip, SLOW_POLL);
 		else
 			alarm_cancel(&chip->alarm);
+#endif
 		break;
 
 	case PM_POST_SUSPEND:
@@ -494,32 +733,6 @@ static struct notifier_block max17040_pm_notifier_block = {
 	.notifier_call = max17040_pm_notifier,
 };
 
-#else
-
-static void max17040_early_suspend(struct early_suspend *h)
-{
-	struct max17040_chip *chip =
-		container_of(h, struct max17040_chip, earlysuspend);
-	cancel_work_sync(&chip->work);
-	/* After charge completion interrupt, if there is no other
-	 * wakeup, the battery charging will not be re-enabled even
-	 * when TA stays connected. So, wakeup after sometime so that
-	 * charging can be re-enable if required.
-	 */
-	if (chip->charger_status == STATUS_CHARGE_FULL)
-		max17040_program_alarm(chip, SLOW_POLL);
-	else
-		alarm_cancel(&chip->alarm);
-}
-
-static void max17040_late_resume(struct early_suspend *h)
-{
-	struct max17040_chip *chip =
-		container_of(h, struct max17040_chip, earlysuspend);
-	max17040_program_alarm(chip, FAST_POLL);
-}
-#endif
-
 static irqreturn_t max17040_alert(int irq, void *data)
 {
 	struct max17040_chip *chip = data;
@@ -532,6 +745,7 @@ static irqreturn_t max17040_alert(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+#ifndef CONFIG_USE_CHG_ADC_POLLING
 static irqreturn_t full_charge_alert(int irq, void *data)
 {
 	struct max17040_chip *chip = data;
@@ -558,13 +772,121 @@ void full_charge_workhandler(struct work_struct *work)
 	 * Indication for full battery charge
 	 * Charger should be online and Charger should not be charging
 	 */
-	if (chip->pdata->charger_online() && !chip->pdata->charger_enable()) {
+	max17040_get_soc(chip->client);
+	max17040_get_vcell(chip->client);
+	if (chip->pdata->charger_online() && !chip->pdata->charger_enable()
+			&& chip->vcell > MAX17040_VCELL_FULL
+			&& chip->soc == MAX17040_BATTERY_FULL) {
 		dev_info(&client->dev, "Full battery alert...!!!!\n");
 		chip->is_full_charged = true;
 		power_supply_changed(&chip->battery);
 	} else {
 		wake_unlock(&full_batt_wake_lock);
 	}
+}
+#endif
+
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+static int proc_read_cam_recording(char *page, char **start,
+		off_t off, int count, int *eof, void *data)
+{
+	struct max17040_chip *chip = container_of(data,
+		  struct max17040_chip, cam_recording_value);
+	int len;
+
+	len = sprintf(page, "%d\n",
+		      (chip->event_list &
+		       ~(0x1 << OFFSET_CAMERA_RECORD))
+		      >> OFFSET_CAMERA_RECORD);
+
+	return len;
+}
+
+static int proc_write_cam_recording(struct file *filp,
+	       const char __user *buffer, unsigned long count, void *data)
+{
+	struct max17040_chip *chip = container_of(data,
+			  struct max17040_chip, cam_recording_value);
+	struct i2c_client *client = chip->client;
+
+	int len = count;
+	unsigned long value;
+
+	if (copy_from_user(chip->cam_recording_value, buffer, len))
+		return -EFAULT;
+
+
+	chip->cam_recording_value[1] = '\0';
+
+	if (kstrtoul(chip->cam_recording_value, 10, &value))
+			return -EFAULT;
+
+	if (value)
+		chip->event_list |= OFFSET_CAMERA_RECORD;
+	else
+		chip->event_list &= ~OFFSET_CAMERA_RECORD;
+
+	schedule_work(&chip->work);
+
+	dev_info(&client->dev, "Camera recording state : %d, 0x%x\n",
+		 (int)value, chip->event_list);
+
+	return len;
+}
+
+static int max17040_proc_init(struct max17040_chip *chip)
+{
+	int ret = 1;
+
+	chip->max17040_battery_proc = NULL;
+	chip->cam_recording_proc = NULL;
+
+	chip->max17040_battery_proc = proc_mkdir("battery", NULL);
+	if (chip->max17040_battery_proc == NULL)
+		goto out;
+
+	chip->cam_recording_proc =
+		create_proc_entry("camera_recording",
+				  0666,
+				  chip->max17040_battery_proc);
+
+	if (chip->cam_recording_proc == NULL)
+		goto out;
+
+	chip->cam_recording_proc->data = chip->cam_recording_value;
+	chip->cam_recording_proc->read_proc = proc_read_cam_recording;
+	chip->cam_recording_proc->write_proc = proc_write_cam_recording;
+
+	return 0;
+out:
+	return ret;
+}
+
+static void max17040_proc_remove(struct max17040_chip *chip)
+{
+	remove_proc_entry("camera_recording",
+			  chip->max17040_battery_proc);
+	remove_proc_entry("battery", NULL);
+}
+#endif
+
+static void bat_work(struct work_struct *work)
+{
+	struct max17040_chip *chip = container_of(work,
+			struct max17040_chip, bat_removal_work);
+
+	if (chip->pdata->vf_present) {
+		if (!chip->pdata->vf_present())
+			chip->pdata->allow_charging(0);
+	}
+}
+
+static irqreturn_t bat_removal_isr(int irq, void *data)
+{
+	struct max17040_chip *chip = data;
+	disable_irq_nosync(chip->bat_removal_irq);
+	schedule_work(&chip->bat_removal_work);
+	return IRQ_HANDLED;
 }
 
 enum {
@@ -646,6 +968,12 @@ static ssize_t max17040_show_attrs(struct device *dev,
 		max17040_get_temp_status(chip);
 		ret = sprintf(buf, "%d\n", chip->bat_temp);
 		break;
+
+	case BATT_TEMP_ADC:
+		max17040_get_temp_status(chip);
+		ret = sprintf(buf, "%d\n", chip->bat_temp_adc);
+		break;
+
 	default:
 		ret = -EINVAL;
 	}
@@ -676,7 +1004,10 @@ static int __devinit max17040_probe(struct i2c_client *client,
 {
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	struct max17040_chip *chip;
-	int ret, irq;
+	int ret;
+#ifndef CONFIG_USE_CHG_ADC_POLLING
+	int irq;
+#endif
 	u16 val;
 	u16 athd;
 	int num_props = ARRAY_SIZE(max17040_battery_props);
@@ -699,6 +1030,7 @@ static int __devinit max17040_probe(struct i2c_client *client,
 	chip->battery.name		= "battery";
 	chip->battery.type		= POWER_SUPPLY_TYPE_BATTERY;
 	chip->battery.get_property	= max17040_get_property;
+	chip->battery.set_property	= max17040_set_property;
 	chip->battery.properties	= max17040_battery_props;
 	chip->battery.num_properties	= num_props;
 	chip->battery.external_power_changed	= max17040_ext_power_changed;
@@ -708,6 +1040,7 @@ static int __devinit max17040_probe(struct i2c_client *client,
 	chip->is_timer_flag = false;
 	chip->chg_limit_time = 0;
 	chip->is_full_charged = false;
+	chip->is_full_charged_pre = false;
 
 	if (!chip->pdata->high_block_temp)
 		chip->pdata->high_block_temp = 500;
@@ -739,8 +1072,10 @@ static int __devinit max17040_probe(struct i2c_client *client,
 
 	max17040_get_version(client);
 	INIT_WORK(&chip->work, max17040_work);
+#ifndef CONFIG_USE_CHG_ADC_POLLING
 	INIT_DELAYED_WORK(&chip->full_batt_work, full_charge_workhandler);
-
+#endif
+	INIT_WORK(&chip->bat_removal_work, bat_work);
 	ret = power_supply_register(&client->dev, &chip->battery);
 	if (ret) {
 		dev_err(&client->dev, "failed: power supply register\n");
@@ -751,7 +1086,6 @@ static int __devinit max17040_probe(struct i2c_client *client,
 	if (ret)
 		pr_err("%s : Failed to create_attrs\n", __func__);
 
-#ifndef CONFIG_HAS_EARLYSUSPEND
 	/* i2c-core does not support dev_pm_ops.prepare and .complete
 	 * So, used pm_notifier for use android_alarm.
 	 */
@@ -761,16 +1095,9 @@ static int __devinit max17040_probe(struct i2c_client *client,
 		dev_err(&client->dev, "failed: register pm notifier\n");
 		goto err_pm_notifier;
 	}
-
-#else
-
-	chip->earlysuspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN,
-	chip->earlysuspend.suspend = max17040_early_suspend,
-	chip->earlysuspend.resume = max17040_late_resume,
-	register_early_suspend(&chip->earlysuspend);
-#endif
 	schedule_work(&chip->work);
 
+#ifndef CONFIG_USE_CHG_ADC_POLLING
 	/* Bootloader can enable the battery charging. Consider a scenario
 	 * where fully charged battery is inserted into the device and it
 	 * booted in LPM mode by connecting TA/USB. Charging will be enabled
@@ -785,6 +1112,7 @@ static int __devinit max17040_probe(struct i2c_client *client,
 		chip->is_full_charged = true;
 		power_supply_changed(&chip->battery);
 	}
+#endif
 
 	if (HAS_ALERT_INTERRUPT(chip->ver) && chip->pdata->use_fuel_alert) {
 		/* setting the low SOC alert threshold */
@@ -808,6 +1136,16 @@ static int __devinit max17040_probe(struct i2c_client *client,
 		}
 	}
 
+	if (chip->pdata->bat_removal_irq) {
+		chip->bat_removal_irq = chip->pdata->bat_removal_irq();
+		ret = request_threaded_irq(chip->bat_removal_irq, NULL,
+			 bat_removal_isr,
+			IRQF_DISABLED | IRQF_TRIGGER_FALLING | IRQF_NO_SUSPEND
+			| IRQF_TRIGGER_RISING,
+			"battery_removed", chip);
+	}
+
+#ifndef CONFIG_USE_CHG_ADC_POLLING
 	/*Registering IRQ for full battery charge indication*/
 	if (chip->pdata->full_charge_irq) {
 		irq = chip->pdata->full_charge_irq();
@@ -822,6 +1160,17 @@ static int __devinit max17040_probe(struct i2c_client *client,
 		}
 		enable_irq_wake(irq);
 	}
+#endif
+
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+	ret = max17040_proc_init(chip);
+	if (ret)
+		dev_err(&client->dev,
+			"failed to make proc node");
+#endif
+
+	if (chip->pdata->set_charger_start_state)
+		chip->pdata->set_charger_start_state();
 
 	return 0;
 
@@ -840,11 +1189,7 @@ static int __devexit max17040_remove(struct i2c_client *client)
 {
 	struct max17040_chip *chip = i2c_get_clientdata(client);
 	chip->shutdown = 1;
-#ifndef CONFIG_HAS_EARLYSUSPEND
 	unregister_pm_notifier(&chip->pm_notifier);
-#else
-	unregister_early_suspend(&chip->earlysuspend);
-#endif
 	power_supply_unregister(&chip->battery);
 	alarm_cancel(&chip->alarm);
 	cancel_work_sync(&chip->work);
@@ -853,6 +1198,9 @@ static int __devexit max17040_remove(struct i2c_client *client)
 		free_irq(client->irq, chip);
 	if (chip->pdata->full_charge_irq)
 		free_irq(chip->pdata->full_charge_irq(), chip);
+#ifdef CONFIG_TEMP_BLOCK_FOR_CAM_RECORDING
+	max17040_proc_remove(chip);
+#endif
 	kfree(chip);
 	return 0;
 }

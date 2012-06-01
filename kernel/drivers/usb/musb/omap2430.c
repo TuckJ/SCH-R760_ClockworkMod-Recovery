@@ -290,14 +290,7 @@ static void musb_otg_notifier_work(struct work_struct *data_notifier_work)
 			musb_otg_init(musb);
 		}
 		break;
-	case USB_EVENT_VBUS_CHARGER:
-		dev_info(musb->controller, "USB/TA Connect\n");
-		/*  This event received from ta_connect_irq
-		 * when a usb cable is connected. Logic has still
-		 * not identified whether this is a usb cable or TA.
-		 *  So just break here.
-		 */
-		break;
+
 	case USB_EVENT_VBUS:
 		dev_info(musb->controller, "VBUS Connect\n");
 
@@ -311,10 +304,13 @@ static void musb_otg_notifier_work(struct work_struct *data_notifier_work)
 	case USB_EVENT_CHARGER:
 		dev_info(musb->controller, "Dedicated charger connect\n");
 		musb->is_ac_charger = true;
+#ifdef CONFIG_USB_SWITCH_FSA9480
 		break;
+#endif
 	case USB_EVENT_HOST_NONE:
 	case USB_EVENT_NONE:
-		if (musb->is_ac_charger) {
+		if (musb->is_ac_charger && xceiv_event
+				!= USB_EVENT_CHARGER) {
 			dev_info(musb->controller,
 				"Dedicated charger disconnect\n");
 			musb->is_ac_charger = false;

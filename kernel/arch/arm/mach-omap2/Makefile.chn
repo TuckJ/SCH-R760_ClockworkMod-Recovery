@@ -39,7 +39,8 @@ obj-$(CONFIG_MACH_SAMSUNG_T1_CHN_CMCC)  += board-t1.o \
                                            board-t1-vibrator.o \
                                            board-t1-fmradio.o \
 					   board-t1-spi.o \
-					   board-t1-cmcc-modems.o
+					   board-t1-cmcc-modems.o \
+					   board-t1-camera.o
 
 obj-$(CONFIG_MACH_SAMSUNG_T1_CHN_CMCC)   += board-t1-muxset-r02.o \
                                            board-t1-muxset-r03.o \

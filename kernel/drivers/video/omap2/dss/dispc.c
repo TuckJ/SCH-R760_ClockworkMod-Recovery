@@ -522,6 +522,7 @@ static u32 dispc_calculate_threshold(enum omap_plane plane, u32 paddr,
 int dispc_runtime_get(void)
 {
 	int r;
+	struct powerdomain *dss_powerdomain = pwrdm_lookup("dss_pwrdm");
 
 	mutex_lock(&dispc.runtime_lock);
 
@@ -558,8 +559,10 @@ int dispc_runtime_get(void)
 		}
 
 		/* Removes latency constraint */
-		 omap_pm_set_max_dev_wakeup_lat(&dispc.pdev->dev,
-						&dispc.pdev->dev, -1);
+		omap_pm_set_max_dev_wakeup_lat(&dispc.pdev->dev,
+			&dispc.pdev->dev,
+			dss_powerdomain->wakeup_lat[PWRDM_FUNC_PWRST_ON]);
+
 		r = dss_runtime_get();
 		if (r)
 			goto err_dss_get;
@@ -590,7 +593,6 @@ err_dss_get:
 
 void dispc_runtime_put(void)
 {
-	 struct powerdomain *dss_powerdomain = pwrdm_lookup("dss_pwrdm");
 	mutex_lock(&dispc.runtime_lock);
 
 	if (--dispc.runtime_count == 0) {
@@ -605,7 +607,7 @@ void dispc_runtime_put(void)
 		 omap_pm_set_max_dev_wakeup_lat(
 			 &dispc.pdev->dev,
 			&dispc.pdev->dev,
-			dss_powerdomain->wakeup_lat[PWRDM_FUNC_PWRST_OFF]);
+			-1);
 
 		r = pm_runtime_put_sync(&dispc.pdev->dev);
 		WARN_ON(r);
@@ -1664,6 +1666,9 @@ static void _dispc_set_rotation_attrs(enum omap_plane plane, u8 rotation,
 			row_repeat = true;
 		else
 			row_repeat = false;
+	} else if (color_mode == OMAP_DSS_COLOR_NV12) {
+		/* WA for OMAP4+ UV plane overread HW bug */
+		vidrot = 1;
 	}
 
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), vidrot, 13, 12);

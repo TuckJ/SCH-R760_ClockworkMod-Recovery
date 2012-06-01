@@ -25,6 +25,10 @@
 
 #include <mach/hardware.h>
 
+#if defined(CONFIG_ARCH_OMAP)
+#include <plat/omap-serial.h>
+#endif
+
 #include "sec_common.h"
 #include "sec_debug.h"
 #include "sec_getlog.h"
@@ -205,10 +209,35 @@ static void __init sec_log_buf_create_sysfs(void)
 		pr_err("(%s): failed to create device file(log)!\n", __func__);
 }
 
+#if defined(CONFIG_ARCH_OMAP)
+static bool __init sec_log_buf_disable(void)
+{
+	char console_opt[32];
+	int i;
+
+	/* using ttyOx means, developer is watching kernel logs through out
+	 * the uart-serial. at this time, we don't need sec_log_buf to save
+	 * serial log and __log_buf is enough to analyze kernel log.
+	 */
+	for (i = 0; i < OMAP_MAX_HSUART_PORTS; i++) {
+		sprintf(console_opt, "console=%s%d", OMAP_SERIAL_NAME, i);
+		if (cmdline_find_option(console_opt))
+			return true;
+	}
+
+	return false;
+}
+#else
+#define sec_log_buf_disable()	false
+#endif
+
 int __init sec_log_buf_init(void)
 {
 	void *start;
 	int tmp_console_loglevel = console_loglevel;
+
+	if (unlikely(sec_log_buf_disable()))
+		return 0;
 
 	if (unlikely(!sec_log_buf_start || !sec_log_buf_size))
 		return 0;

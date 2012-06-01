@@ -598,9 +598,11 @@ static int __devinit cptk_i2c_probe(struct i2c_client *client,
 	pr_info("cptk :firm ver = 0x%x, mod ver = 0x%x\n",
 			cptk->cur_firm_ver[1], cptk->cur_firm_ver[2]);
 
-	if (cptk->cur_firm_ver[1] < cptk->pdata->firm_ver) {
-		pr_info("cptk: force firmware update\n");
-		cptk_update_firmware(cptk);
+	if (cptk->cur_firm_ver[2] <= cptk->pdata->mod_ver) {
+		if (cptk->cur_firm_ver[1] < cptk->pdata->firm_ver) {
+			pr_info("cptk: force firmware update\n");
+			cptk_update_firmware(cptk);
+		}
 	}
 
 #ifdef CONFIG_HAS_EARLYSUSPEND

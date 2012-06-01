@@ -365,7 +365,7 @@ static inline int twl6040_hs_ramp_step(struct snd_soc_codec *codec,
 
 	if (headset->ramp == TWL6040_RAMP_UP) {
 		/* ramp step up */
-		if (val < headset->left_vol) {
+		if (val != headset->left_vol) {
 			if (val + left_step > headset->left_vol)
 				val = headset->left_vol;
 			else
@@ -379,7 +379,7 @@ static inline int twl6040_hs_ramp_step(struct snd_soc_codec *codec,
 		}
 	} else if (headset->ramp == TWL6040_RAMP_DOWN) {
 		/* ramp step down */
-		if (val > 0x0) {
+		if (val != 0x0) {
 			if ((int)val - (int)left_step < 0)
 				val = 0;
 			else
@@ -400,7 +400,7 @@ static inline int twl6040_hs_ramp_step(struct snd_soc_codec *codec,
 
 	if (headset->ramp == TWL6040_RAMP_UP) {
 		/* ramp step up */
-		if (val < headset->right_vol) {
+		if (val != headset->right_vol) {
 			if (val + right_step > headset->right_vol)
 				val = headset->right_vol;
 			else
@@ -414,7 +414,7 @@ static inline int twl6040_hs_ramp_step(struct snd_soc_codec *codec,
 		}
 	} else if (headset->ramp == TWL6040_RAMP_DOWN) {
 		/* ramp step down */
-		if (val > 0x0) {
+		if (val != 0x0) {
 			if ((int)val - (int)right_step < 0)
 				val = 0;
 			else
@@ -449,7 +449,7 @@ static inline int twl6040_hf_ramp_step(struct snd_soc_codec *codec,
 	val = (reg & TWL6040_HF_VOL_MASK);
 	if (handsfree->ramp == TWL6040_RAMP_UP) {
 		/* ramp step up */
-		if (val < handsfree->left_vol) {
+		if (val != handsfree->left_vol) {
 			if (val + left_step > handsfree->left_vol)
 				val = handsfree->left_vol;
 			else
@@ -463,7 +463,7 @@ static inline int twl6040_hf_ramp_step(struct snd_soc_codec *codec,
 		}
 	} else if (handsfree->ramp == TWL6040_RAMP_DOWN) {
 		/* ramp step down */
-		if (val > 0) {
+		if (val != 0) {
 			if ((int)val - (int)left_step < 0)
 				val = 0;
 			else
@@ -484,7 +484,7 @@ static inline int twl6040_hf_ramp_step(struct snd_soc_codec *codec,
 	val = (reg & TWL6040_HF_VOL_MASK);
 	if (handsfree->ramp == TWL6040_RAMP_UP) {
 		/* ramp step up */
-		if (val < handsfree->right_vol) {
+		if (val != handsfree->right_vol) {
 			if (val + right_step > handsfree->right_vol)
 				val = handsfree->right_vol;
 			else
@@ -498,7 +498,7 @@ static inline int twl6040_hf_ramp_step(struct snd_soc_codec *codec,
 		}
 	} else if (handsfree->ramp == TWL6040_RAMP_DOWN) {
 		/* ramp step down */
-		if (val > 0) {
+		if (val != 0) {
 			if ((int)val - (int)right_step < 0)
 				val = 0;
 			else
@@ -533,7 +533,7 @@ static inline int twl6040_ep_ramp_step(struct snd_soc_codec *codec,
 
 	if (earphone->ramp == TWL6040_RAMP_UP) {
 		/* ramp step up */
-		if (val < earphone->left_vol) {
+		if (val != earphone->left_vol) {
 			if (val + step > earphone->left_vol)
 				val = earphone->left_vol;
 			else
@@ -548,7 +548,7 @@ static inline int twl6040_ep_ramp_step(struct snd_soc_codec *codec,
 		}
 	} else if (earphone->ramp == TWL6040_RAMP_DOWN) {
 		/* ramp step down */
-		if (val > 0x0) {
+		if (val != 0x0) {
 			if ((int)val - (int)step < 0)
 				val = 0;
 			else
@@ -1231,10 +1231,12 @@ static const struct snd_soc_dapm_widget twl6040_dapm_widgets[] = {
 			TWL6040_REG_MICRCTL, 2, 0),
 
 	/* Microphone bias */
+#ifdef CONFIG_TWL6040_CODEC_INTERNAL_MICBIAS
 	SND_SOC_DAPM_MICBIAS("Headset Mic Bias",
 			TWL6040_REG_AMICBCTL, 0, 0),
 	SND_SOC_DAPM_MICBIAS("Main Mic Bias",
 			TWL6040_REG_AMICBCTL, 4, 0),
+#endif
 	SND_SOC_DAPM_MICBIAS("Digital Mic1 Bias",
 			TWL6040_REG_DMICBCTL, 0, 0),
 	SND_SOC_DAPM_MICBIAS("Digital Mic2 Bias",

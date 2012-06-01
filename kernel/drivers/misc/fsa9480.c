@@ -880,7 +880,7 @@ static irqreturn_t usb_id_irq_thread(int irq, void *data)
 		 */
 		_detected(usbsw, FSA9480_DETECT_NONE);
 
-		dev_dbg(&client->dev, "usb host detach workaround, resetting"
+		dev_info(&client->dev, "usb host detach workaround, resetting"
 				" FSA9480 chip\n");
 
 		/* The FSA9480 will not be able to detect a new cable until it

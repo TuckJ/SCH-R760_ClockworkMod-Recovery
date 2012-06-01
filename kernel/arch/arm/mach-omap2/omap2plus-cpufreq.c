@@ -205,7 +205,7 @@ int omap_cpufreq_alloc(unsigned int nId, unsigned long req_freq, int type)
 	cur_freq = omap_getspeed(0);
 
 
-	printk(KERN_DEBUG"[CPUFREQ] curr freq=%d KHz cur_lock_freq=%d KHz\n",
+	pr_debug("[CPUFREQ] curr freq=%d KHz cur_lock_freq=%d KHz\n",
 				cur_freq, cpufreq_lock->cur_lock_freq);
 
 	if (cpufreq_compare(cpufreq_lock->is_ceil,
@@ -216,7 +216,7 @@ int omap_cpufreq_alloc(unsigned int nId, unsigned long req_freq, int type)
 					cpufreq_lock->cur_lock_freq,
 					CPUFREQ_RELATION_H);
 
-		printk(KERN_INFO"[CPUFREQ] Need to update current target(%d KHz)\n",
+		pr_debug("[CPUFREQ] Need to update current target(%d KHz)\n",
 			cpufreq_lock->cur_lock_freq);
 	}
 
@@ -255,7 +255,7 @@ void omap_cpufreq_lock_free(unsigned int nId, int type)
 					cpufreq_lock->value[i];
 		}
 	}
-	printk(KERN_DEBUG"[CPUFREQ] cur_lock_freq=%d KHz\n",
+	pr_debug("[CPUFREQ] cur_lock_freq=%d KHz\n",
 				cpufreq_lock->cur_lock_freq);
 	mutex_unlock(&omap_cpufreq_alloc_lock);
 

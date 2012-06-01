@@ -775,18 +775,21 @@ static long  mtpg_ioctl(struct file *fd, unsigned int code, unsigned long arg)
 
 	switch (code) {
 	case MTP_ONLY_ENABLE:
-	printk("[%s:%d] calling mtp_function_enable\n",__func__,__LINE__);
-	if (dev->cdev && dev->cdev->gadget )
-	{
-		usb_gadget_disconnect(cdev->gadget);
-		printk("[%s] B4 disconnecting gadget\tline = [%d] \n", __func__,__LINE__);
-		//usb_composite_force_reset(dev->cdev);
-		msleep(5);
-		usb_gadget_connect(cdev->gadget);
-		printk("[%s] \tline = [%d] calling usb_gadget_connect after msleep of 5 \n", __func__,__LINE__);
-	}
-		 status = 10;
-		printk("[%s]  [%d] MTP_ONLY_ENABLE ioctl and clearing the error = 0 \n", __func__,__LINE__);
+		printk(KERN_DEBUG "[%s:%d] calling mtp_function_enable\n",
+				__func__, __LINE__);
+		if (dev->cdev && dev->cdev->gadget) {
+			usb_gadget_disconnect(cdev->gadget);
+			printk(KERN_DEBUG "[%s] B4 disconnecting gadget\tline = [%d]\n",
+					__func__, __LINE__);
+			/* usb_composite_force_reset(dev->cdev); */
+			usleep_range(5000, 5500);
+			usb_gadget_connect(cdev->gadget);
+			printk(KERN_DEBUG "[%s] \tline = [%d] calling usb_gadget_connect after msleep of 5\n",
+					__func__, __LINE__);
+		}
+		status = 10;
+		printk(KERN_DEBUG "[%s]  [%d] MTP_ONLY_ENABLE ioctl and clearing the error = 0\n",
+				__func__, __LINE__);
 		the_mtpg->error = 0;
 		break;
 

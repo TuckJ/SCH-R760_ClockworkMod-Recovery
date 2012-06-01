@@ -231,6 +231,7 @@ static int secvib_forceout_set_samples(struct secvib_data *secvib,
 		int8_t *buf)
 {
 	int8_t vib_force;
+	static int8_t pre_vib_force;
 
 	switch (bit_depth) {
 	case 8:
@@ -259,10 +260,12 @@ static int secvib_forceout_set_samples(struct secvib_data *secvib,
 	if (vib_force == 0)
 		/* Set 50% duty cycle or disable amp */
 		secvib_vibrator_enable(secvib, actr_index, 0);
-	else {
+	else if (pre_vib_force != vib_force) {
 		secvib->pdata->pwm_set(actr_index, vib_force);
 		secvib_vibrator_enable(secvib, actr_index, 1);
 	}
+
+	pre_vib_force = vib_force;
 
 	return 0;
 
