@@ -6,20 +6,21 @@ on init
     export ANDROID_ROOT /system
     export ANDROID_DATA /data
     export ANDROID_CACHE /cache
-    export SECONDARY_STORAGE /emmc
     export EXTERNAL_STORAGE /sdcard
+    export SECONDARY_STORAGE /emmc
 
+    symlink /misc /etc
     symlink /system/etc /etc
 
-    mkdir /emmc
     mkdir /sdcard
-    mkdir /usbdisk
+    mkdir /emmc
     mkdir /system
     mkdir /data
     mkdir /cache
-    mkdir /preload
+    mkdir /preload    
+    mkdir /tmp
     mkdir /mnt 0775 root root
-    mount /tmp /tmp tmpfs
+    mount /tmp /tmp tmpfs   
 
 on fs
     mount ext4 /dev/block/mmcblk0p9 /system noatime wait
