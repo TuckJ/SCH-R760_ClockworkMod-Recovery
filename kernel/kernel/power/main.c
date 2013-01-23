@@ -13,10 +13,13 @@
 #include <linux/resume-trace.h>
 #include <linux/workqueue.h>
 
+#if defined(CONFIG_CPU_FREQ) && defined(CONFIG_ARCH_EXYNOS4)
+#define CONFIG_DVFS_LIMIT
+#endif
 
-#include <mach/cpufreq_limits.h>
 #ifdef CONFIG_DVFS_LIMIT
 #include <linux/cpufreq.h>
+#include <mach/cpufreq.h>
 #endif
 
 #include "power.h"
@@ -317,121 +320,89 @@ power_attr(pm_trace_dev_match);
 #ifdef CONFIG_USER_WAKELOCK
 power_attr(wake_lock);
 power_attr(wake_unlock);
-power_attr(wake_lock_dbg);
 #endif
 
 #ifdef CONFIG_DVFS_LIMIT
-static int cpufreq_min_limit_val = -1;
-static int cpufreq_min_locked;
-DEFINE_MUTEX(cpufreq_min_mutex);
-
 static int cpufreq_max_limit_val = -1;
-static int cpufreq_max_locked;
-DEFINE_MUTEX(cpufreq_max_mutex);
+static int cpufreq_min_limit_val = -1;
+DEFINE_MUTEX(cpufreq_limit_mutex);
 
-static void cpufreq_min_limit(const char *buf, size_t count)
+static ssize_t cpufreq_table_show(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				char *buf)
 {
-	int ret, temp;
+	ssize_t count = 0;
+	struct cpufreq_frequency_table *table;
+	struct cpufreq_policy *policy;
+	unsigned int min_freq = ~0;
+	unsigned int max_freq = 0;
+	unsigned int i = 0;
 
-	mutex_lock(&cpufreq_min_mutex);
-
-	temp = cpufreq_min_limit_val;
-	ret = sscanf(buf, "%d", &cpufreq_min_limit_val);
-	if (ret != 1) {
-		pr_warn("%s: invalid format(%d)\n", __func__, ret);
-		ret = -EINVAL;
-		goto out;
+	table = cpufreq_frequency_get_table(0);
+	if (!table) {
+		printk(KERN_ERR "%s: Failed to get the cpufreq table\n",
+			__func__);
+		return sprintf(buf, "Failed to get the cpufreq table\n");
 	}
 
-	if (cpufreq_min_limit_val == -1) {
-		if (cpufreq_min_locked) {
-			omap_cpufreq_min_limit_free(DVFS_LOCK_ID_USER);
-			cpufreq_min_locked = 0;
-			ret = 0;
-		} else {
-			pr_warn("%s: there is no min limit!\n", __func__);
-			ret = -EINVAL;
+	policy = cpufreq_cpu_get(0);
+	if (policy) {
+	#if 0 /* /sys/devices/system/cpu/cpu0/cpufreq/scaling_min&max_freq */
+		min_freq = policy->min_freq;
+		max_freq = policy->max_freq;
+	#else /* /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min&max_freq */
+		min_freq = policy->cpuinfo.min_freq;
+		max_freq = policy->cpuinfo.max_freq;
+	#endif
+	}
+
+	for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++) {
+		if ((table[i].frequency == CPUFREQ_ENTRY_INVALID) ||
+		    (table[i].frequency > max_freq) ||
+		    (table[i].frequency < min_freq))
+			continue;
+		count += sprintf(&buf[count], "%d ", table[i].frequency);
+	}
+	count += sprintf(&buf[count], "\n");
+
+	return count;
+}
+
+static ssize_t cpufreq_table_store(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t n)
+{
+	printk(KERN_ERR "%s: cpufreq_table is read-only\n", __func__);
+	return -EINVAL;
+}
+
+#define VALID_LEVEL 1
+static int get_cpufreq_level(unsigned int freq, unsigned int *level)
+{
+	struct cpufreq_frequency_table *table;
+	unsigned int i = 0;
+
+	table = cpufreq_frequency_get_table(0);
+	if (!table) {
+		printk(KERN_ERR "%s: Failed to get the cpufreq table\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	for (i = 0; (table[i].frequency != CPUFREQ_TABLE_END); i++)
+		if (table[i].frequency == freq) {
+			*level = i;
+			return VALID_LEVEL;
 		}
-		goto out;
-	}
 
-	pr_debug("%s: current max freq=%d req max freq=%d\n",
-		__func__, cpufreq_max_limit_val, cpufreq_min_limit_val);
-
-	if (cpufreq_min_locked)
-		omap_cpufreq_min_limit_free(DVFS_LOCK_ID_USER);
-
-	omap_cpufreq_min_limit(DVFS_LOCK_ID_USER, cpufreq_min_limit_val);
-	cpufreq_min_locked = 1;
-
-out:
-	if (ret < 0)
-		cpufreq_min_limit_val = temp;
-
-	mutex_unlock(&cpufreq_min_mutex);
-	return;
-}
-
-static ssize_t cpufreq_min_limit_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d\n", cpufreq_min_limit_val);
-}
-
-static ssize_t cpufreq_min_limit_store(struct kobject *kobj,
-					struct kobj_attribute *attr,
-					const char *buf, size_t n)
-{
-	cpufreq_min_limit(buf, 0);
-	return n;
-}
-
-
-static void cpufreq_max_limit(const char *buf)
-{
-	int ret, temp;
-
-	mutex_lock(&cpufreq_max_mutex);
-
-	temp = cpufreq_max_limit_val;
-	ret = sscanf(buf, "%d", &cpufreq_max_limit_val);
-	if (ret != 1) {
-		pr_warn("%s: invalid format(%d)\n", __func__, ret);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	if (cpufreq_max_limit_val == -1) {
-		if (cpufreq_max_locked) {
-			omap_cpufreq_max_limit_free(DVFS_LOCK_ID_USER);
-			cpufreq_max_locked = 0;
-			ret = 0;
-		} else {
-			pr_warn("%s: there is no max limit!\n", __func__);
-			ret = -EINVAL;
-		}
-		goto out;
-	}
-
-	pr_debug("%s: current min freq=%d req max freq=%d\n",
-		__func__, cpufreq_min_limit_val, cpufreq_max_limit_val);
-
-	if (cpufreq_max_locked)
-		omap_cpufreq_max_limit_free(DVFS_LOCK_ID_USER);
-
-	omap_cpufreq_max_limit(DVFS_LOCK_ID_USER, cpufreq_max_limit_val);
-	cpufreq_max_locked = 1;
-
-out:
-	if (ret < 0)
-		cpufreq_max_limit_val = temp;
-
-	mutex_unlock(&cpufreq_max_mutex);
-	return;
+	printk(KERN_ERR "%s: %u KHz is an unsupported cpufreq\n",
+		__func__, freq);
+	return -EINVAL;
 }
 
 static ssize_t cpufreq_max_limit_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
+					struct kobj_attribute *attr,
+					char *buf)
 {
 	return sprintf(buf, "%d\n", cpufreq_max_limit_val);
 }
@@ -440,49 +411,111 @@ static ssize_t cpufreq_max_limit_store(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					const char *buf, size_t n)
 {
-	cpufreq_max_limit(buf);
-	return n;
-}
+	int val;
+	unsigned int cpufreq_level;
+	int lock_ret;
+	ssize_t ret = -EINVAL;
 
-static ssize_t cpufreq_table_show(struct kobject *kobj,
-			struct kobj_attribute *attr, char *buf)
-{
-	ssize_t len = 0;
-	int i;
-	struct cpufreq_frequency_table *table;
+	mutex_lock(&cpufreq_limit_mutex);
 
-	table = cpufreq_frequency_get_table(0);
-
-	for (i = 0; table[i].frequency != CPUFREQ_TABLE_END; i++)
-			;
-
-	i--;
-	for (; i >= 0; i--) {
-		unsigned int freq = table[i].frequency;
-		len += sprintf(buf + len, "%u ", freq);
+	if (sscanf(buf, "%d", &val) != 1) {
+		printk(KERN_ERR "%s: Invalid cpufreq format\n", __func__);
+		goto out;
 	}
 
-	if (len)
-		len--;
+	if (val == -1) { /* Unlock request */
+		if (cpufreq_max_limit_val != -1) {
+			exynos_cpufreq_upper_limit_free(DVFS_LOCK_ID_USER);
+			cpufreq_max_limit_val = -1;
+		} else /* Already unlocked */
+			printk(KERN_ERR "%s: Unlock request is ignored\n",
+				__func__);
+	} else { /* Lock request */
+		if (get_cpufreq_level((unsigned int)val, &cpufreq_level)
+		    == VALID_LEVEL) {
+			if (cpufreq_max_limit_val != -1)
+				/* Unlock the previous lock */
+				exynos_cpufreq_upper_limit_free(
+					DVFS_LOCK_ID_USER);
+			lock_ret = exynos_cpufreq_upper_limit(
+					DVFS_LOCK_ID_USER, cpufreq_level);
+			/* ret of exynos_cpufreq_upper_limit is meaningless.
+			   0 is fail? success? */
+			cpufreq_max_limit_val = val;
+		} else /* Invalid lock request --> No action */
+			printk(KERN_ERR "%s: Lock request is invalid\n",
+				__func__);
+	}
 
-	len += sprintf(buf + len, "\n");
-
-	return len;
+	ret = n;
+out:
+	mutex_unlock(&cpufreq_limit_mutex);
+	return ret;
 }
 
-static ssize_t cpufreq_table_store(struct kobject *kobj,
+static ssize_t cpufreq_min_limit_show(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					char *buf)
+{
+	return sprintf(buf, "%d\n", cpufreq_min_limit_val);
+}
+
+static ssize_t cpufreq_min_limit_store(struct kobject *kobj,
 					struct kobj_attribute *attr,
 					const char *buf, size_t n)
 {
-	pr_warn("%s: Not supported\n", __func__);
-	return n;
+	int val;
+	unsigned int cpufreq_level;
+	int lock_ret;
+	ssize_t ret = -EINVAL;
+
+	mutex_lock(&cpufreq_limit_mutex);
+
+	if (sscanf(buf, "%d", &val) != 1) {
+		printk(KERN_ERR "%s: Invalid cpufreq format\n", __func__);
+		goto out;
+	}
+
+	if (val == -1) { /* Unlock request */
+		if (cpufreq_min_limit_val != -1) {
+			exynos_cpufreq_lock_free(DVFS_LOCK_ID_USER);
+			cpufreq_min_limit_val = -1;
+		} else /* Already unlocked */
+			printk(KERN_ERR "%s: Unlock request is ignored\n",
+				__func__);
+	} else { /* Lock request */
+		if (get_cpufreq_level((unsigned int)val, &cpufreq_level)
+			== VALID_LEVEL) {
+			if (cpufreq_min_limit_val != -1)
+				/* Unlock the previous lock */
+				exynos_cpufreq_lock_free(DVFS_LOCK_ID_USER);
+			lock_ret = exynos_cpufreq_lock(
+					DVFS_LOCK_ID_USER, cpufreq_level);
+			/* ret of exynos_cpufreq_lock is meaningless.
+			   0 is fail? success? */
+			cpufreq_min_limit_val = val;
+		if ((cpufreq_max_limit_val != -1) &&
+			    (cpufreq_min_limit_val > cpufreq_max_limit_val)){
+                #ifndef PRODUCT_SHIP                				
+				printk(KERN_ERR "%s: Min lock may not work well"
+					" because of Max lock\n", __func__);
+                #endif			 		
+           }		
+		} else /* Invalid lock request --> No action */
+			printk(KERN_ERR "%s: Lock request is invalid\n",
+				__func__);
+	}
+
+	ret = n;
+out:
+	mutex_unlock(&cpufreq_limit_mutex);
+	return ret;
 }
 
+power_attr(cpufreq_table);
 power_attr(cpufreq_max_limit);
 power_attr(cpufreq_min_limit);
-power_attr(cpufreq_table);
-#endif
-
+#endif /* CONFIG_DVFS_LIMIT */
 
 static struct attribute * g[] = {
 	&state_attr.attr,
@@ -499,16 +532,13 @@ static struct attribute * g[] = {
 #ifdef CONFIG_USER_WAKELOCK
 	&wake_lock_attr.attr,
 	&wake_unlock_attr.attr,
-	&wake_lock_dbg_attr.attr,
 #endif
 #endif
-
 #ifdef CONFIG_DVFS_LIMIT
-	&cpufreq_min_limit_attr.attr,
-	&cpufreq_max_limit_attr.attr,
 	&cpufreq_table_attr.attr,
+	&cpufreq_max_limit_attr.attr,
+	&cpufreq_min_limit_attr.attr,
 #endif
-
 	NULL,
 };
 

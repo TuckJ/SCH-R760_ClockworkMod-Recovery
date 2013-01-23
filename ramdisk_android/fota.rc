@@ -56,11 +56,6 @@ on early-fs
     mkdir /sdcard 0000 system system
     chown system system /sdcard
     chmod 0000 /sdcard
-    
-    mkdir /sdcard1 0000 system system
-    chown system system /sdcard1
-    chmod 0000 /sdcard1
-    
     mkdir /system
     mkdir /data 0771 system system
     chown system system /data
@@ -72,10 +67,6 @@ on early-fs
     chmod 0770 /cache
 
 on fs
-
-# Device Encryption by Security R&D Group. 
-    exec set_crypt_meta_info /dev/block/mmcblk0p1 efs
-	
     mount tmpfs tmpfs /tmp
 				
     mount ext4 /dev/block/mmcblk0p9 /system wait

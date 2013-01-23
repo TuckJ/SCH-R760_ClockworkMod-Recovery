@@ -262,8 +262,9 @@ static struct ir_raw_handler rc6_handler = {
 static int __init ir_rc6_decode_init(void)
 {
 	ir_raw_handler_register(&rc6_handler);
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "IR RC6 protocol handler initialized\n");
+#endif	
 	return 0;
 }
 

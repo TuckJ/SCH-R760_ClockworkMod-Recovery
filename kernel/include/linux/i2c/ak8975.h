@@ -63,6 +63,10 @@
 /* Get raw magnetic vector flag */
 #define ECS_IOCTL_APP_GET_MVFLAG	_IOR(AKMIO, 0x1A, short)
 
-extern struct class *sec_class;
+#ifdef __KERNEL__
+struct akm8975_platform_data {
+	int gpio_data_ready_int;
+};
+#endif
 
 #endif

@@ -34,32 +34,24 @@ static int currentlimit_thread(void *data)
 	struct host_notifier_info *ninfo = data;
 	struct host_notify_dev *ndev = &ninfo->pdata->ndev;
 	int gpio = ninfo->pdata->gpio;
-	int count = 0;
+	int prev = ndev->booster;
 	int ret = 0;
 
-	pr_info("host_notifier usbhostd: start mode %d\n",
-			ndev->mode);
-
-	ndev->booster = NOTIFY_POWER_ON;
+	pr_info("host_notifier usbhostd: start %d\n", prev);
 
 	while (!kthread_should_stop()) {
 		wait_event_interruptible_timeout(ninfo->delay_wait,
 				ninfo->thread_remove, 1 * HZ);
 
 		ret = gpio_get_value(gpio);
+		if (prev != ret) {
+			pr_info("host_notifier usbhostd: gpio %d = %s\n",
+					gpio, ret ? "HIGH" : "LOW");
+			ndev->booster = ret ?
+				NOTIFY_POWER_ON : NOTIFY_POWER_OFF;
+			prev = ret;
 
-		if ((count++ % 10) == 0) {
-			pr_info("host_notifier usbhostd: mode %d, count %d, %s\n",
-				ndev->mode, count, ret ? "HIGH" : "LOW");
-		}
-
-		if (!ret) {
-			pr_info("host_notifier usbhostd: mode %d, count %d, (%d, %d)\n",
-				ndev->mode, count, ndev->booster, ret);
-
-			ndev->booster = NOTIFY_POWER_OFF;
-
-			if (ndev->mode == NOTIFY_HOST_MODE) {
+			if (!ret && ndev->mode == NOTIFY_HOST_MODE) {
 				host_state_notify(ndev,
 						NOTIFY_HOST_OVERCURRENT);
 				pr_err("host_notifier usbhostd: overcurrent\n");
@@ -154,11 +146,14 @@ static int host_notifier_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 
-	dev_info(&pdev->dev, "notifier_prove\n");
-
-	ninfo.pdata = pdev->dev.platform_data;
-	if (!ninfo.pdata)
+	if (pdev && pdev->dev.platform_data)
+		ninfo.pdata = pdev->dev.platform_data;
+	else {
+		pr_err("host_notifier: platform_data is null.\n");
 		return -ENODEV;
+	}
+
+	dev_info(&pdev->dev, "notifier_prove\n");
 
 	if (ninfo.pdata->thread_enable) {
 		ret = gpio_request(ninfo.pdata->gpio, "host_notifier");

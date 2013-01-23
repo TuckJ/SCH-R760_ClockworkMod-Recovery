@@ -1591,7 +1591,7 @@ static inline void hci_auth_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 		goto unlock;
 
 	/* SS_BLUETOOTH(gudam.ryu) 2012. 03. 02 - Fixed for opp sending fail,
- if the devices were unpaired on the remote end */
+	if the devices were unpaired on the remote end */
 	if (ev->status == 0x06 && hdev->ssp_mode > 0 &&
 			conn->ssp_mode > 0) {
 		struct hci_cp_auth_requested cp;
@@ -2758,9 +2758,8 @@ static inline void hci_simple_pair_complete_evt(struct hci_dev *hdev, struct sk_
 	if (!test_bit(HCI_CONN_AUTH_PEND, &conn->pend) && ev->status != 0) {
 		mgmt_auth_failed(hdev->id, &conn->dst, ev->status);
 		conn->out = 1;
-		conn->disc_timeout = HCI_DISCONN_TIMEOUT/200; /* 0.01 sec  */
+		conn->disc_timeout = HCI_DISCONN_TIMEOUT/200; /* 0.01 sec */
 	}
-
 	hci_conn_put(conn);
 
 unlock:

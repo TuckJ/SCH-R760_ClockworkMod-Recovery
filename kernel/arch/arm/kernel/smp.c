@@ -40,7 +40,7 @@
 #include <asm/ptrace.h>
 #include <asm/localtimer.h>
 
-#include <mach/sec_addon.h>
+#include <mach/sec_debug.h>
 
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
@@ -217,7 +217,9 @@ void __cpu_die(unsigned int cpu)
 		pr_err("CPU%u: cpu didn't die\n", cpu);
 		return;
 	}
+	#ifndef PRODUCT_SHIP 
 	printk(KERN_NOTICE "CPU%u: shutdown\n", cpu);
+	#endif
 
 	if (!platform_cpu_kill(cpu))
 		printk("CPU%u: unable to kill\n", cpu);
@@ -295,10 +297,9 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 {
 	struct mm_struct *mm = &init_mm;
 	unsigned int cpu = smp_processor_id();
-	static bool booted;
-
+#ifndef PRODUCT_SHIP
 	printk("CPU%u: Booted secondary processor\n", cpu);
-
+#endif
 	/*
 	 * All kernel threads share the same mm context; grab a
 	 * reference and switch to it.
@@ -319,11 +320,20 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	 */
 	platform_secondary_init(cpu);
 
+	/*
+	 * Enable local interrupts.
+	 */
 	notify_cpu_starting(cpu);
+	local_irq_enable();
+	local_fiq_enable();
 
-	if (!booted && skip_secondary_calibrate())
+	/*
+	 * Setup the percpu timer for this CPU.
+	 */
+	percpu_timer_setup();
+
+	if (skip_secondary_calibrate())
 		calibrate_delay();
-	booted = true;
 
 	smp_store_cpu_info(cpu);
 
@@ -333,23 +343,9 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	 * before we continue.
 	 */
 	set_cpu_online(cpu, true);
-
-	/*
-	 * Setup the percpu timer for this CPU.
-	 */
-	percpu_timer_setup();
-
 	while (!cpu_active(cpu))
 		cpu_relax();
 
-	/*
-	 * cpu_active bit is set, so it's safe to enable interrupts
-	 * now.
-	 */
-	local_irq_enable();
-	local_fiq_enable();
-
-	printk(KERN_INFO"CPU%u: Booting Complete Secondary processor\n", cpu);
 	/*
 	 * OK, it's off to the idle thread for us
 	 */
@@ -481,13 +477,13 @@ asmlinkage void __exception_irq_entry do_local_timer(struct pt_regs *regs)
 
 	if (local_timer_ack()) {
 		__inc_irq_stat(cpu, local_timer_irqs);
-		sec_debug_irq_log(0, do_local_timer, 1);
+		sec_debug_irq_sched_log(0, do_local_timer, 1);
 		irq_enter();
 		ipi_timer();
 		irq_exit();
-		sec_debug_irq_log(0, do_local_timer, 2);
+		sec_debug_irq_sched_log(0, do_local_timer, 2);
 	} else
-		sec_debug_irq_log(0, do_local_timer, 3);
+		sec_debug_irq_sched_log(0, do_local_timer, 3);
 
 	set_irq_regs(old_regs);
 }
@@ -643,18 +639,13 @@ static void ipi_cpu_backtrace(unsigned int cpu, struct pt_regs *regs)
  */
 asmlinkage void __exception_irq_entry do_IPI(int ipinr, struct pt_regs *regs)
 {
-	handle_IPI(ipinr, regs);
-}
-
-void handle_IPI(int ipinr, struct pt_regs *regs)
-{
 	unsigned int cpu = smp_processor_id();
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
 	if (ipinr >= IPI_TIMER && ipinr < IPI_TIMER + NR_IPI)
 		__inc_irq_stat(cpu, ipi_irqs[ipinr - IPI_TIMER]);
 
-	sec_debug_irq_log(ipinr, do_IPI, 1);
+	sec_debug_irq_sched_log(ipinr, do_IPI, 1);
 
 	switch (ipinr) {
 	case IPI_TIMER:
@@ -695,7 +686,7 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		break;
 	}
 
-	sec_debug_irq_log(ipinr, do_IPI, 2);
+	sec_debug_irq_sched_log(ipinr, do_IPI, 2);
 
 	set_irq_regs(old_regs);
 }

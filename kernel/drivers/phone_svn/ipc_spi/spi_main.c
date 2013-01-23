@@ -1,17 +1,3 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 /**************************************************************
 	spi_main.c
 
@@ -29,6 +15,7 @@
 #include "spi_dev.h"
 #include "spi_app.h"
 #include "spi_data.h"
+#include "spi_test.h"
 
 /**************************************************************
 	Preprocessor by platform
@@ -63,7 +50,7 @@ static void _start_packet_receive(void);
 
 #define MRDY_GUARANTEE_MRDY_TIME_GAP 0 /* under 1ms */
 
-#define MRDY_GUARANTEE_MRDY_TIME_SLEEP 2 /* under 2ms */
+#define MRDY_GUARANTEE_MRDY_TIME_SLEEP 2
 
 #define MRDY_GUARANTEE_MRDY_LOOP_COUNT 10000 /* 120us */
 
@@ -73,13 +60,14 @@ static void spi_main_process(struct work_struct *pspi_wq);
 
 
 #ifdef SPI_GUARANTEE_MRDY_GAP
+
 unsigned long mrdy_low_time_save, mrdy_high_time_save;
 
 int check_mrdy_time_gap(unsigned long x, unsigned long y)
 {
 	if (x == y)
 		return 1;
-	else if ((x < y) && ((y - x) <= MRDY_GUARANTEE_MRDY_TIME_GAP))
+	else if ((x < y) && ((y-x) <= MRDY_GUARANTEE_MRDY_TIME_GAP))
 		return 1;
 	else if ((x > y))
 		return 1;
@@ -96,8 +84,8 @@ int check_mrdy_time_gap(unsigned long x, unsigned long y)
 void spi_main_set_state(enum SPI_MAIN_STATE_T state)
 {
 	spi_main_state = state;
-	pr_debug("[SPI] spi_main_set_state %d=>%d\n",
-		(int)spi_main_state, (int)state);
+	SPI_OS_TRACE_MID(("[SPI] spi_main_set_state %d=>%d\n",
+		(int)spi_main_state, (int)state));
 }
 
 
@@ -124,8 +112,8 @@ SPI_DEV_IRQ_HANDLER(spi_main_srdy_rising_handler)
 
 	if (!wake_lock_active(&spi_wakelock)) {
 		wake_lock(&spi_wakelock);
-		pr_debug("[SPI] [%s](%d) spi_wakelock locked .\n",
-			__func__, __LINE__);
+		SPI_OS_TRACE_MID(("[SPI] [%s](%d) spi_wakelock locked .\n",
+			__func__, __LINE__));
 	}
 
 	if (send_modem_spi == 1)
@@ -165,9 +153,9 @@ SPI_DEV_IRQ_HANDLER(spi_main_subsrdy_rising_handler)
 	if (spi_main_state == SPI_MAIN_STATE_TX_WAIT)
 		return result;
 
-	pr_debug("%s spi_main_state[%d]\n",
+	SPI_OS_TRACE_MID(("%s spi_main_state[%d]\n",
 		"[SPI] spi_main_subsrdy_rising_handler :",
-		(int)spi_main_state);
+		(int)spi_main_state));
 
 	return result;
 }
@@ -218,21 +206,21 @@ static int _start_data_send(void)
 =====================================*/
 static void _start_packet_tx(void)
 {
-	int guaran_cnt = 0;
+	int i = 0;
 
 	if (spi_data_check_tx_queue() == 0)
 		return;
 
 
 	/* check SUB SRDY state */
-	if (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SUBSRDY) ==
+	if (spi_dev_get_gpio(spi_dev_gpio_subsrdy) ==
 		SPI_DEV_GPIOLEVEL_HIGH) {
 		spi_main_send_signal(SPI_MAIN_MSG_SEND);
 		return;
 	}
 
 	/* check SRDY state */
-	if (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SRDY) ==
+	if (spi_dev_get_gpio(spi_dev_gpio_srdy) ==
 		SPI_DEV_GPIOLEVEL_HIGH) {
 		spi_main_send_signal(SPI_MAIN_MSG_SEND);
 		return;
@@ -247,25 +235,25 @@ static void _start_packet_tx(void)
 		spi_os_loop_delay(MRDY_GUARANTEE_MRDY_LOOP_COUNT);
 #endif
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_MRDY, SPI_DEV_GPIOLEVEL_HIGH);
+	spi_dev_set_gpio(spi_dev_gpio_mrdy, SPI_DEV_GPIOLEVEL_HIGH);
 
 	/* check SUBSRDY state */
-	while (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SUBSRDY) ==
+	while (spi_dev_get_gpio(spi_dev_gpio_subsrdy) ==
 		SPI_DEV_GPIOLEVEL_LOW) {
-		if (guaran_cnt == 0) {
+		if (i == 0) {
 			spi_os_sleep(1);
-			guaran_cnt++;
+			i++;
 			continue;
 		} else
 			spi_os_sleep(MRDY_GUARANTEE_MRDY_TIME_SLEEP);
 
-		guaran_cnt++;
-		if (guaran_cnt > MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20) {
-			pr_debug("%s spi_main_state=[%d]\n",
+		i++;
+		if (i > MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20) {
+			SPI_OS_TRACE(("%s spi_main_state=[%d]\n",
 				"[SPI] === spi Fail to receiving SUBSRDY CONF :",
-				(int)spi_main_state);
+				(int)spi_main_state));
 
-			spi_dev_set_gpio(SPI_DEV_GPIOPIN_MRDY,
+			spi_dev_set_gpio(spi_dev_gpio_mrdy,
 				SPI_DEV_GPIOLEVEL_LOW);
 #ifdef SPI_GUARANTEE_MRDY_GAP
 			mrdy_low_time_save = spi_os_get_tick();
@@ -281,14 +269,13 @@ static void _start_packet_tx(void)
 			return;
 		}
 	}
-
 	if (spi_main_state != SPI_MAIN_STATE_START
 		&& spi_main_state != SPI_MAIN_STATE_END
 		&& spi_main_state != SPI_MAIN_STATE_INIT) {
 		_start_packet_tx_send();
 	} else
-		pr_err("[SPI] ERR : _start_packet_tx:spi_main_state[%d]",
-			(int)spi_main_state);
+		SPI_OS_ERROR(("[SPI] ERR : _start_packet_tx:spi_main_state[%d]",
+			(int)spi_main_state));
 
 	return;
 }
@@ -299,12 +286,13 @@ static void _start_packet_tx(void)
 =====================================*/
 static void _start_packet_tx_send(void)
 {
-	char *spi_packet_buf;
+	char *spi_packet_buf = NULL;
 
 	/* change state SPI_MAIN_STATE_TX_WAIT to SPI_MAIN_STATE_TX_SENDING */
 	spi_main_state = SPI_MAIN_STATE_TX_SENDING;
 
-	spi_packet_buf = spi_get_data_packet_buf();
+
+	spi_packet_buf = gspi_data_packet_buf;
 	spi_os_memset(spi_packet_buf, 0, SPI_DEV_MAX_PACKET_SIZE);
 
 	spi_data_prepare_tx_packet(spi_packet_buf);
@@ -316,7 +304,7 @@ static void _start_packet_tx_send(void)
 
 	spi_main_state = SPI_MAIN_STATE_TX_TERMINATE;
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_MRDY, SPI_DEV_GPIOLEVEL_LOW);
+	spi_dev_set_gpio(spi_dev_gpio_mrdy, SPI_DEV_GPIOLEVEL_LOW);
 #ifdef SPI_GUARANTEE_MRDY_GAP
 	mrdy_low_time_save = spi_os_get_tick();
 #endif
@@ -332,40 +320,40 @@ static void _start_packet_tx_send(void)
 =====================================*/
 static void _start_packet_receive(void)
 {
-	char *spi_packet_buf;
+	char *spi_packet_buf = NULL;
 	struct spi_data_packet_header	spi_receive_packet_header = {0, };
-	int guaran_cnt = 0;
+	int i = 0;
 
 	if (!wake_lock_active(&spi_wakelock))
 		return;
 
-	if (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SRDY) == SPI_DEV_GPIOLEVEL_LOW)
+	if (spi_dev_get_gpio(spi_dev_gpio_srdy) == SPI_DEV_GPIOLEVEL_LOW)
 		return;
 
 	spi_main_state = SPI_MAIN_STATE_RX_WAIT;
 
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY, SPI_DEV_GPIOLEVEL_HIGH);
+	spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_HIGH);
 
 
 	/* check SUBSRDY state */
-	while (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SUBSRDY) ==
+	while (spi_dev_get_gpio(spi_dev_gpio_subsrdy) ==
 		SPI_DEV_GPIOLEVEL_LOW) {
-		if (guaran_cnt == 0) {
+		if (i == 0) {
 			spi_os_sleep(1);
-			guaran_cnt++;
+			i++;
 			continue;
 		} else
 		 spi_os_sleep(MRDY_GUARANTEE_MRDY_TIME_SLEEP);
 
-		guaran_cnt++;
-		if (guaran_cnt > MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20) {
-			pr_err("[SPI] ERROR(Failed MASTER RX:%d/%d)",
-			 guaran_cnt, MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20);
+		i++;
+		if (i > MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20) {
+			SPI_OS_ERROR(("[SPI] ERROR(Failed MASTER RX:%d/%d)",
+				i, MRDY_GUARANTEE_MRDY_TIME_SLEEP * 20));
 			if (spi_main_state != SPI_MAIN_STATE_START
 				&& spi_main_state != SPI_MAIN_STATE_END
 				&& spi_main_state != SPI_MAIN_STATE_INIT) {
-				spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY,
+				spi_dev_set_gpio(spi_dev_gpio_submrdy,
 					SPI_DEV_GPIOLEVEL_LOW);
 
 				/* change state SPI_MAIN_STATE_RX_WAIT */
@@ -381,7 +369,7 @@ static void _start_packet_receive(void)
 		|| spi_main_state == SPI_MAIN_STATE_INIT)
 		return;
 
-	spi_packet_buf = spi_get_data_packet_buf();
+	spi_packet_buf = gspi_data_packet_buf;
 	spi_os_memset(spi_packet_buf, 0, SPI_DEV_MAX_PACKET_SIZE);
 
 	if (spi_dev_receive((void *)spi_packet_buf,
@@ -399,7 +387,7 @@ static void _start_packet_receive(void)
 
 	spi_main_state = SPI_MAIN_STATE_RX_TERMINATE;
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY, SPI_DEV_GPIOLEVEL_LOW);
+	spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_LOW);
 
 	/* change state SPI_MAIN_STATE_RX_WAIT to SPI_MAIN_STATE_IDLE */
 	spi_main_state = SPI_MAIN_STATE_IDLE;
@@ -416,9 +404,10 @@ void spi_main_init(void *data)
 {
 	struct ipc_spi_platform_data *pdata;
 
-	pr_info("[SPI] spi_main_init\n");
+	SPI_OS_TRACE(("[SPI] spi_main_init\n"));
 
 	spi_main_state = SPI_MAIN_STATE_START;
+
 
 	pdata = (struct ipc_spi_platform_data *)data;
 
@@ -427,11 +416,11 @@ void spi_main_init(void *data)
 
 	spi_dev_init(pdata);
 
-	spi_dev_reigster_irq_handler (SPI_DEV_GPIOPIN_SRDY,
+	spi_dev_reigster_irq_handler (spi_dev_gpio_srdy,
 		SPI_DEV_IRQ_TRIGGER_RISING,
 		spi_main_srdy_rising_handler,
 		"spi_srdy_rising", 0);
-	spi_dev_reigster_irq_handler (SPI_DEV_GPIOPIN_SUBSRDY,
+	spi_dev_reigster_irq_handler (spi_dev_gpio_subsrdy,
 		SPI_DEV_IRQ_TRIGGER_RISING,
 		spi_main_subsrdy_rising_handler,
 		"spi_subsrdy_rising", 0);
@@ -444,7 +433,7 @@ void spi_main_init(void *data)
 
 static void spi_main_process(struct work_struct *work)
 {
-	int signal_code;
+	int				signal_code;
 
 	struct spi_work *spi_wq = container_of(work, struct spi_work, work);
 	signal_code = spi_wq->signal_code;
@@ -485,16 +474,16 @@ static void spi_main_process(struct work_struct *work)
 		break;
 
 	default:
-		pr_err("[SPI] ERROR(No signal_code in spi_main[%d])\n",
-			signal_code);
+		SPI_OS_ERROR(("[SPI] ERROR(No signal_code in spi_main[%d])\n",
+			signal_code));
 		break;
 	}
 
 	spi_os_free(spi_wq);
 	if (wake_lock_active(&spi_wakelock)) {
 		wake_unlock(&spi_wakelock);
-		pr_debug("[SPI] [%s](%d) spi_wakelock unlocked .\n",
-			__func__, __LINE__);
+		SPI_OS_TRACE_MID(("[SPI] [%s](%d) spi_wakelock unlocked .\n",
+			__func__, __LINE__));
 	}
 }
 
@@ -507,20 +496,20 @@ void spi_main(unsigned long argc, void *argv)
 	/* queue init */
 	spi_data_queue_init();
 
-	pr_info("[SPI] spi_main %x\n", (unsigned int)argv);
+	SPI_OS_TRACE(("[SPI] spi_main %x\n", (unsigned int)argv));
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY, SPI_DEV_GPIOLEVEL_HIGH);
+	spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_HIGH);
 
 	do {
-		spi_os_sleep(30);
-	} while (spi_dev_get_gpio(SPI_DEV_GPIOPIN_SUBSRDY) ==
+		spi_os_sleep(20);
+	} while (spi_dev_get_gpio(spi_dev_gpio_subsrdy) ==
 		SPI_DEV_GPIOLEVEL_LOW);
 
-	if (spi_get_is_restart())
+	if (spi_is_restart)
 		spi_os_sleep(100);
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY, SPI_DEV_GPIOLEVEL_LOW);
+	spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_LOW);
 	spi_main_state = SPI_MAIN_STATE_IDLE;
-	spi_set_is_restart(0);
+	spi_is_restart = 0;
 }
 
 
@@ -530,14 +519,14 @@ void spi_main(unsigned long argc, void *argv)
 
 void spi_set_restart(void)
 {
-	pr_err("[SPI] spi_set_restart(spi_main_state=[%d])\n",
-		(int)spi_main_state);
+	SPI_OS_ERROR(("[SPI] spi_set_restart(spi_main_state=[%d])\n",
+		(int)spi_main_state));
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY, SPI_DEV_GPIOLEVEL_LOW);
+	spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_LOW);
 
 	spi_main_state = SPI_MAIN_STATE_END;
 
-	spi_set_is_restart(1);
+	spi_is_restart = 1;
 
 	flush_workqueue(suspend_work_queue);
 
@@ -547,8 +536,8 @@ void spi_set_restart(void)
 
 	if (wake_lock_active(&spi_wakelock)) {
 		wake_unlock(&spi_wakelock);
-		pr_debug("[SPI] [%s](%d) spi_wakelock unlocked.\n",
-			__func__, __LINE__);
+		SPI_OS_TRACE_MID(("[SPI] [%s](%d) spi_wakelock unlocked.\n",
+			__func__, __LINE__));
 	}
 	wake_lock_destroy(&spi_wakelock);
 }

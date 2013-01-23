@@ -60,6 +60,8 @@ source "drivers/gpio/Kconfig"
 
 source "drivers/w1/Kconfig"
 
+source "drivers/battery/Kconfig"
+
 source "drivers/power/Kconfig"
 
 source "drivers/hwmon/Kconfig"
@@ -128,19 +130,27 @@ source "drivers/hwspinlock/Kconfig"
 
 source "drivers/clocksource/Kconfig"
 
-source "drivers/remoteproc/Kconfig"
+source "drivers/motor/Kconfig"
 
-source "drivers/virtio/Kconfig"
+source "drivers/samsung/Kconfig"
 
-source "drivers/rpmsg/Kconfig"
+source "drivers/sensor/Kconfig"
 
-source "drivers/omap_hsi/Kconfig"
+source "drivers/devfreq/Kconfig"
 
-source "drivers/sensors/Kconfig"
+source "drivers/dpram/Kconfig"
 
 source "drivers/phone_svn/Kconfig"
 
-source "drivers/modemctl/Kconfig"
+source "drivers/svnet/Kconfig"
 
-source "drivers/samsung/Kconfig"
+source "drivers/accessory/Kconfig"
+
+source "drivers/irda/Kconfig"
+
+source "drivers/extcon/Kconfig"
+
+# Secure OS Mobicore
+source "drivers/gud/Kconfig"
+
 endmenu

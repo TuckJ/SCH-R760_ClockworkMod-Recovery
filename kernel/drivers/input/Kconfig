@@ -170,6 +170,13 @@ config INPUT_KEYRESET
 	  To compile this driver as a module, choose M here: the
 	  module will be called keyreset.
 
+config INPUT_FBSUSPEND
+	bool "FB notification suspend"
+	default n
+	---help---
+	  Call fb notification handlers when the user requested sleep state
+	  changes.
+
 comment "Input Device Drivers"
 
 source "drivers/input/keyboard/Kconfig"

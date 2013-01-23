@@ -143,7 +143,7 @@ enum {
 };
 
 const bcm_iovar_t dhd_iovars[] = {
-	{"version",	IOV_VERSION,	0,	IOVT_BUFFER,	sizeof(dhd_version) },
+	{"version", 	IOV_VERSION,	0,	IOVT_BUFFER,	sizeof(dhd_version) },
 #ifdef DHD_DEBUG
 	{"msglevel",	IOV_MSGLEVEL,	0,	IOVT_UINT32,	0 },
 #endif /* DHD_DEBUG */
@@ -267,33 +267,13 @@ int
 dhd_wl_ioctl_cmd(dhd_pub_t *dhd_pub, int cmd, void *arg, int len, uint8 set, int ifindex)
 {
 	wl_ioctl_t ioc;
-	int ret;
 
 	ioc.cmd = cmd;
 	ioc.buf = arg;
 	ioc.len = len;
 	ioc.set = set;
 
-	ret = dhd_wl_ioctl(dhd_pub, ifindex, &ioc, arg, len);
-
-	if (ret < 0) {
-		if (ioc.cmd == WLC_GET_VAR) {
-			DHD_ERROR(("%s: WLC_GET_VAR: %s, error = %d\n",
-					__FUNCTION__, (char *)ioc.buf, ret));
-		} else if (ioc.cmd == WLC_SET_VAR) {
-			char pkt_filter[] = "pkt_filter_add";
-
-			if (strncmp(pkt_filter, ioc.buf, sizeof(pkt_filter)) != 0) {
-				DHD_ERROR(("%s: WLC_SET_VAR: %s, error = %d\n",
-						__FUNCTION__, (char *)ioc.buf, ret));
-			}
-		} else {
-			DHD_ERROR(("%s: WLC_IOCTL: cmd:%d, error = %d\n",
-					__FUNCTION__, ioc.cmd, ret));
-		}
-	}
-
-	return ret;
+	return dhd_wl_ioctl(dhd_pub, ifindex, &ioc, arg, len);
 }
 
 
@@ -305,10 +285,28 @@ dhd_wl_ioctl(dhd_pub_t *dhd_pub, int ifindex, wl_ioctl_t *ioc, void *buf, int le
 	dhd_os_proto_block(dhd_pub);
 
 	ret = dhd_prot_ioctl(dhd_pub, ifindex, ioc, buf, len);
-	if (!ret)
-		dhd_os_check_hang(dhd_pub, ifindex, ret);
+	if (!ret || ret == -ETIMEDOUT) {
+		/* Send hang event only if dhd_open() was success */
+		if (dhd_pub->up)
+			dhd_os_check_hang(dhd_pub, ifindex, ret);
+	}
 
 	dhd_os_proto_unblock(dhd_pub);
+
+#ifdef CUSTOMER_HW_SAMSUNG
+	if (ret < 0) {
+		if (ioc->cmd == WLC_GET_VAR)
+			DHD_ERROR(("%s: WLC_GET_VAR: %s, ret = %d\n",
+						__FUNCTION__, (char *)ioc->buf, ret));
+		else if (ioc->cmd == WLC_SET_VAR)
+			DHD_ERROR(("%s: WLC_SET_VAR: %s, ret = %d\n",
+						__FUNCTION__, (char *)ioc->buf, ret));
+		else
+			DHD_ERROR(("%s: WLC_IOCTL: cmd: %d, ret = %d\n",
+						__FUNCTION__, ioc->cmd, ret));
+	}
+#endif /* CUSTOMER_HW_SAMSUNG */
+
 	return ret;
 }
 
@@ -579,10 +577,8 @@ dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, void *pkt, int prec)
 	if (pktq_pfull(q, prec))
 		eprec = prec;
 	else if (pktq_full(q)) {
-#if defined(BCMASSERT_LOG)
 		p = pktq_peek_tail(q, &eprec);
 		ASSERT(p);
-#endif
 		if (eprec > prec || eprec < 0)
 			return FALSE;
 	}
@@ -601,11 +597,9 @@ dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, void *pkt, int prec)
 		PKTFREE(dhdp->osh, p, TRUE);
 	}
 
-#if defined(BCMASSERT_LOG)
 	/* Enqueue */
 	p = pktq_penq(q, prec, pkt);
 	ASSERT(p);
-#endif
 
 	return TRUE;
 }
@@ -1075,20 +1069,20 @@ wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata,
 			}
 #endif /* WL_CFG80211 */
 		if (ifevent->ifidx > 0 && ifevent->ifidx < DHD_MAX_IFS) {
-					if (ifevent->action == WLC_E_IF_ADD) {
-						if (dhd_add_if(dhd_pub->info, ifevent->ifidx,
-							NULL, event->ifname,
-							event->addr.octet,
-							ifevent->flags, ifevent->bssidx)) {
-							DHD_ERROR(("%s: dhd_add_if failed!!"
-									" ifidx: %d for %s\n",
-									__FUNCTION__,
-									ifevent->ifidx,
-									event->ifname));
-							return (BCME_ERROR);
-						}
-					}
-					else if (ifevent->action == WLC_E_IF_DEL)
+			if (ifevent->action == WLC_E_IF_ADD) {
+				if (dhd_add_if(dhd_pub->info, ifevent->ifidx,
+					NULL, event->ifname,
+					event->addr.octet,
+					ifevent->flags, ifevent->bssidx)) {
+					DHD_ERROR(("%s: dhd_add_if failed!!"
+							" ifidx: %d for %s\n",
+							__FUNCTION__,
+							ifevent->ifidx,
+							event->ifname));
+					return (BCME_ERROR);
+				}
+			}
+			else if (ifevent->action == WLC_E_IF_DEL)
 				dhd_del_if(dhd_pub->info, ifevent->ifidx);
 		} else {
 #ifndef PROP_TXSTATUS
@@ -1230,7 +1224,7 @@ dhd_pktfilter_offload_enable(dhd_pub_t * dhd, char *arg, int enable, int master_
 {
 	char				*argv[8];
 	int					i = 0;
-	const char			*str;
+	const char 			*str;
 	int					buf_len;
 	int					str_len;
 	char				*arg_save = 0, *arg_org = 0;
@@ -1302,12 +1296,12 @@ fail:
 void
 dhd_pktfilter_offload_set(dhd_pub_t * dhd, char *arg)
 {
-	const char			*str;
+	const char 			*str;
 	wl_pkt_filter_t		pkt_filter;
 	wl_pkt_filter_t		*pkt_filterp;
 	int					buf_len;
 	int					str_len;
-	int				rc;
+	int 				rc;
 	uint32				mask_size;
 	uint32				pattern_size;
 	char				*argv[8], * buf = 0;
@@ -1855,7 +1849,7 @@ exit:
 bool dhd_check_ap_wfd_mode_set(dhd_pub_t *dhd)
 {
 #ifdef  WL_CFG80211
-	if (dhd_concurrent_fw(dhd))
+	if ((dhd->op_mode & CONCURRENT_MASK) == CONCURRENT_MASK)
 		return FALSE;
 	if (((dhd->op_mode & HOSTAPD_MASK) == HOSTAPD_MASK) ||
 		((dhd->op_mode & WFD_MASK) == WFD_MASK))
@@ -2065,13 +2059,13 @@ dhd_pno_get_status(dhd_pub_t *dhd)
 #if defined(KEEP_ALIVE)
 int dhd_keep_alive_onoff(dhd_pub_t *dhd)
 {
-	char				buf[256];
-	const char			*str;
+	char 				buf[256];
+	const char 			*str;
 	wl_mkeep_alive_pkt_t	mkeep_alive_pkt;
 	wl_mkeep_alive_pkt_t	*mkeep_alive_pktp;
 	int					buf_len;
 	int					str_len;
-	int res					= -1;
+	int res 				= -1;
 
 	if (dhd_check_ap_wfd_mode_set(dhd) == TRUE)
 		return (res);

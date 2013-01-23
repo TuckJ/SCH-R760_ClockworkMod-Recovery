@@ -278,7 +278,12 @@ cy_as_mail_box_process_data(cy_as_device *dev_p, uint16_t *data)
 	ctxt_p = dev_p->context[context];
 
 	if (cy_as_mbox_is_request(data[0])) {
-		cy_as_hal_assert(ctxt_p->req_p != 0);
+		//cy_as_hal_assert(ctxt_p->req_p != 0) ;
+		if( ctxt_p->req_p == 0)
+		{
+			cy_as_hal_print_message(KERN_ERR"mailbox process : request pointer NULL \n");
+			return;
+		}
 		rec_p = ctxt_p->req_p;
 		len_p = &ctxt_p->request_length;
 
@@ -381,6 +386,11 @@ cy_as_mail_box_process_data(cy_as_device *dev_p, uint16_t *data)
 			 * module to handle */
 			cy_as_ll_request_response *request_p = ctxt_p->req_p;
 			ctxt_p->req_p = 0;
+		if (request_p == NULL) {
+			cy_as_hal_print_message(KERN_ERR
+				"mailbox process : request_p == NULL\n");
+			return;
+		}
 			if (ctxt_p->request_callback) {
 				cy_as_device_set_in_callback(dev_p);
 				ctxt_p->request_callback(dev_p, context,
@@ -927,7 +937,10 @@ cy_as_ll_send_request(
 
 	context = cy_as_mbox_get_context(box0);
 	cy_as_hal_assert(context < CY_RQT_CONTEXT_COUNT);
-	ctxt_p = dev_p->context[context];
+	if(context < CY_RQT_CONTEXT_COUNT)
+		ctxt_p = dev_p->context[context] ;
+	else
+		return CY_AS_ERROR_INVALID_PARAMETER;
 
 	/* Allocate the list node */
 	state = cy_as_hal_disable_interrupts();
@@ -1009,13 +1022,16 @@ cy_as_ll_send_request_wait_reply(
 	uint8_t context;
 	/* Larger 8 sec time-out to handle the init
 	 * delay for slower storage devices in USB FS. */
-	uint32_t loopcount = 800;
+	uint32_t loopcount = 400 ;
 	cy_as_context *ctxt_p;
 
 	/* Get the context for the request */
 	context = cy_as_ll_request_response__get_context(req);
 	cy_as_hal_assert(context < CY_RQT_CONTEXT_COUNT);
-	ctxt_p = dev_p->context[context];
+	if(context < CY_RQT_CONTEXT_COUNT)
+		ctxt_p = dev_p->context[context] ;
+	else
+		return CY_AS_ERROR_INVALID_PARAMETER;
 
 	ret = cy_as_ll_send_request(dev_p, req, resp,
 		cy_true, cy_as_ll_send_callback);
@@ -1054,7 +1070,10 @@ cy_as_ll_register_request_callback(
 {
 	cy_as_context *ctxt_p;
 	cy_as_hal_assert(context < CY_RQT_CONTEXT_COUNT);
-	ctxt_p = dev_p->context[context];
+	if(context < CY_RQT_CONTEXT_COUNT)
+		ctxt_p = dev_p->context[context] ;
+	else
+		return CY_AS_ERROR_INVALID_PARAMETER;
 
 	ctxt_p->request_callback = cb;
 	return CY_AS_ERROR_SUCCESS;

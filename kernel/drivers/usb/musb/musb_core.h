@@ -47,7 +47,6 @@
 #include <linux/usb.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/musb.h>
-#include <linux/wakelock.h>
 
 struct musb;
 struct musb_hw_ep;
@@ -371,7 +370,6 @@ struct musb_context_registers {
 	u8 index, testmode;
 
 	u8 devctl, busctl, misc;
-	u32 otg_interfsel;
 
 	struct musb_csr_regs index_regs[MUSB_C_NUM_EPS];
 };
@@ -383,16 +381,11 @@ struct musb {
 	/* device lock */
 	spinlock_t		lock;
 
-	/* mutex for synchronization */
-	struct mutex		musb_lock;
-
 	const struct musb_platform_ops *ops;
 	struct musb_context_registers context;
 
 	irqreturn_t		(*isr)(int, void *);
-	struct wake_lock	musb_wakelock;
 	struct work_struct	irq_work;
-	struct workqueue_struct	*otg_notifier_wq;
 	u16			hwvers;
 
 /* this hub status bit is reserved by USB 2.0 and not seen by usbcore */
@@ -504,7 +497,6 @@ struct musb {
 	struct usb_gadget	g;			/* the gadget */
 	struct usb_gadget_driver *gadget_driver;	/* its driver */
 #endif
-	bool			is_ac_charger:1;
 
 	/*
 	 * FIXME: Remove this flag.
@@ -524,12 +516,6 @@ struct musb {
 #ifdef MUSB_CONFIG_PROC_FS
 	struct proc_dir_entry *proc_entry;
 #endif
-};
-
-struct musb_otg_work {
-	struct work_struct	work;
-	enum usb_xceiv_events	xceiv_event;
-	struct musb		*musb;
 };
 
 #ifdef CONFIG_USB_GADGET_MUSB_HDRC

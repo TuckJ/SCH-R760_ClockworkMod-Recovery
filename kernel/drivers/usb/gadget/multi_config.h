@@ -83,8 +83,7 @@ int get_config_number(void);
  */
 int check_config(unsigned num);
 
-/* Description  : Search number of configuration including virtual
- *		  configuration
+/* Description  : Search number of configuration including virtual configuration
  * Parameter    : usb_configuration *c (referenced configuration)
 		  unsigned count (real number of configuration)
  * Return value : virtual or real number of configuration

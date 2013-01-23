@@ -1,17 +1,3 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 /**************************************************************
 
 	spi_dev.c
@@ -21,6 +7,7 @@
 	This is MASTER side.
 
 ***************************************************************/
+
 
 
 /**************************************************************
@@ -47,52 +34,30 @@
 #include <linux/gpio.h>
 #include <linux/phone_svn/ipc_spi.h>
 
+
+
 /**************************************************************
 
 	Definition of Variables and Functions by common
 
 ***************************************************************/
 
-static int spi_dev_gpio_mrdy;
-static int spi_dev_gpio_srdy;
-static int spi_dev_gpio_submrdy;
-static int spi_dev_gpio_subsrdy;
-
-static int spi_is_restart;
+int spi_dev_gpio_mrdy;
+int spi_dev_gpio_srdy;
+int spi_dev_gpio_submrdy;
+int spi_dev_gpio_subsrdy;
 
 
-/**********************************************************
 
-Prototype		void  spi_set_is_restart(int spi_set_restart)
+/**************************************************************
 
-Type		function
+	Preprocessor by platform
+	(OMAP4430 && MSM7X30)
 
-Description	set static spi_is_restart value
+***************************************************************/
 
-Param input	set value
+int spi_is_restart;
 
-***********************************************************/
-void  spi_set_is_restart(int spi_set_restart)
-{
-	spi_is_restart = spi_set_restart;
-}
-
-
-/**********************************************************
-
-Prototype		int spi_get_is_restart(void)
-
-Type		function
-
-Description	return static spi_is_restart value
-
-Return value   spi_is_restart variable value
-
-***********************************************************/
-int spi_get_is_restart(void)
-{
-	return spi_is_restart;
-}
 
 
 /**********************************************************
@@ -103,15 +68,17 @@ Type		function
 
 Description	init spi gpio info
 
-Param input	pdata
+Param input	(none)
+
+Return value	(none)
 
 ***********************************************************/
 void spi_dev_init(void *data)
 {
-	struct ipc_spi_platform_data *pdata;
+	struct ipc_spi_platform_data *pdata = NULL;
 
 
-	pr_info("[SPI] spi_dev_init\n");
+	SPI_OS_TRACE(("[SPI] spi_dev_init\n"));
 
 
 	pdata = (struct ipc_spi_platform_data *)data;
@@ -121,10 +88,9 @@ void spi_dev_init(void *data)
 	spi_dev_gpio_submrdy = (int) pdata->gpio_ipc_sub_mrdy;
 	spi_dev_gpio_subsrdy = (int) pdata->gpio_ipc_sub_srdy;
 
-	spi_dev_set_gpio(SPI_DEV_GPIOPIN_MRDY, SPI_DEV_GPIOLEVEL_LOW);
+	spi_dev_set_gpio(spi_dev_gpio_mrdy, SPI_DEV_GPIOLEVEL_LOW);
 	if (spi_is_restart == 0)
-		spi_dev_set_gpio(SPI_DEV_GPIOPIN_SUBMRDY,
-			SPI_DEV_GPIOLEVEL_LOW);
+		spi_dev_set_gpio(spi_dev_gpio_submrdy, SPI_DEV_GPIOLEVEL_LOW);
 }
 
 
@@ -135,6 +101,10 @@ Prototype		void spi_dev_destroy( void )
 Type		function
 
 Description	unregister irq handler
+
+Param input	(none)
+
+Return value	(none)
 
 ***********************************************************/
 
@@ -165,7 +135,10 @@ Return value	0 : success
 
 int spi_dev_send(void *buf, unsigned int length)
 {
-	return ipc_spi_tx_rx_sync(buf, 0, length);
+	int result = 0;
+
+	result = ipc_spi_tx_rx_sync(buf, 0, length);
+	return result;
 }
 
 
@@ -188,7 +161,11 @@ Return value	0 : success
 
 int spi_dev_receive(void *buf, unsigned int length)
 {
-	return ipc_spi_tx_rx_sync(0, buf, length);
+	int value = 0;
+
+	value = ipc_spi_tx_rx_sync(0, buf, length);
+
+	return value;
 }
 
 
@@ -200,90 +177,62 @@ Type		function
 
 Description	set gpio pin state
 
-Param input	gpio_pin : gpio pin index
+Param input	gpio_id : number of gpio id
 			value : SPI_DEV_GPIOLEVEL_HIGH for raising pin state up
 			: SPI_DEV_GPIOLEVEL_LOW for getting pin state down
 
 Return value	(none)
 
 ***********************************************************/
-void spi_dev_set_gpio(enum SPI_DEV_GPIOPIN_T gpio_pin,
-		enum SPI_DEV_GPIOLEVEL_T value)
+void spi_dev_set_gpio(int gpio_id, enum SPI_DEV_GPIOLEVEL_T value)
 {
-	int gpio_id;
+	int level = 0;
 
-	switch (gpio_pin) {
-	case SPI_DEV_GPIOPIN_MRDY:
-		gpio_id = spi_dev_gpio_mrdy;
+	SPI_OS_TRACE_MID(("%s gpio_id =[%d], value =[%d]\n",
+		"[SPI] spi_dev_set_gpio :", gpio_id, (int) value));
+
+	switch (value) {
+	case SPI_DEV_GPIOLEVEL_LOW:
+		level = 0;
 		break;
-	case SPI_DEV_GPIOPIN_SUBMRDY:
-		gpio_id = spi_dev_gpio_submrdy;
-		break;
-	case SPI_DEV_GPIOPIN_SRDY:
-		gpio_id = spi_dev_gpio_srdy;
-		break;
-	case SPI_DEV_GPIOPIN_SUBSRDY:
-		gpio_id = spi_dev_gpio_subsrdy;
-		break;
-	default:
-		pr_info("unmatched gpio_pin. forced set mrdy\n");
-		gpio_id = spi_dev_gpio_mrdy;
+	case SPI_DEV_GPIOLEVEL_HIGH:
+		level = 1;
 		break;
 	}
 
-	pr_debug("%s gpio_id =[%d], value =[%d]\n",
-		"[SPI] spi_dev_set_gpio :", gpio_id, (int) value);
-
-	gpio_set_value((unsigned int) gpio_id,
-		(value == SPI_DEV_GPIOLEVEL_HIGH ? 1 : 0));
+	gpio_set_value((unsigned int) gpio_id, level);
 }
 
 
 
 /**********************************************************
 
-Prototype		int spi_dev_get_gpio(enum SPI_DEV_GPIOPIN_T gpio_pin)
+Prototype		SPI_DEV_GPIOLEVEL_T spi_dev_get_gpio(int gpio_id)
 
 Type		function
 
 Description	get gpio pin state
 
-Param input	gpio_pin : gpio pin index
+Param input	gpio_id : number of gpio id
 
 Return value	SPI_DEV_GPIOLEVEL
 
 ***********************************************************/
-int spi_dev_get_gpio(enum SPI_DEV_GPIOPIN_T gpio_pin)
+enum SPI_DEV_GPIOLEVEL_T spi_dev_get_gpio(int gpio_id)
 {
-	int value = SPI_DEV_GPIOLEVEL_LOW;
-	int level;
-	int gpio_id;
-
-	switch (gpio_pin) {
-	case SPI_DEV_GPIOPIN_MRDY:
-		gpio_id = spi_dev_gpio_mrdy;
-		break;
-	case SPI_DEV_GPIOPIN_SUBMRDY:
-		gpio_id = spi_dev_gpio_submrdy;
-		break;
-	case SPI_DEV_GPIOPIN_SRDY:
-		gpio_id = spi_dev_gpio_srdy;
-		break;
-	case SPI_DEV_GPIOPIN_SUBSRDY:
-		gpio_id = spi_dev_gpio_subsrdy;
-		break;
-	default:
-		pr_info("unmatched gpio_pin. forced set mrdy\n");
-		gpio_id = spi_dev_gpio_mrdy;
-		break;
-	}
+	enum SPI_DEV_GPIOLEVEL_T value = SPI_DEV_GPIOLEVEL_LOW;
+	int level = 0;
 
 	level = gpio_get_value((unsigned int) gpio_id);
 
-	if (level == 0)
+	switch (level) {
+	case 0:
 		value = SPI_DEV_GPIOLEVEL_LOW;
-	else if (level == 1)
+		break;
+	case 1:
 		value = SPI_DEV_GPIOLEVEL_HIGH;
+		break;
+	}
 
 	return value;
 }
@@ -297,7 +246,7 @@ Type		function
 
 Description	regist irq callback function to each gpio interrupt
 
-Param input	gpio_pin	: gpio pin index
+Param input	gpio_id	: gpio pin id
 			tigger	: interrupt detection mode
 			handler	: interrupt handler function
 			name : register name
@@ -306,34 +255,43 @@ Return value	0	: fail
 			1	: success
 
 ***********************************************************/
-int spi_dev_reigster_irq_handler(enum SPI_DEV_GPIOPIN_T gpio_pin,
+int spi_dev_reigster_irq_handler(int gpio_id,
 	enum SPI_DEV_IRQ_TRIGGER_T trigger,
 	SPI_DEV_IRQ_HANDLER_T handler,
 	char *name, void *data)
 {
-	int value;
-	int irq;
+#if defined(SPI_FEATURE_OMAP4430)
+	int value = 0;
 	int _trigger = IRQF_TRIGGER_NONE;
-	int gpio_id;
 
-	switch (gpio_pin) {
-	case SPI_DEV_GPIOPIN_MRDY:
-		gpio_id = spi_dev_gpio_mrdy;
+	switch (trigger) {
+	case SPI_DEV_IRQ_TRIGGER_RISING:
+		_trigger = IRQF_TRIGGER_RISING;
 		break;
-	case SPI_DEV_GPIOPIN_SUBMRDY:
-		gpio_id = spi_dev_gpio_submrdy;
-		break;
-	case SPI_DEV_GPIOPIN_SRDY:
-		gpio_id = spi_dev_gpio_srdy;
-		break;
-	case SPI_DEV_GPIOPIN_SUBSRDY:
-		gpio_id = spi_dev_gpio_subsrdy;
+	case SPI_DEV_IRQ_TRIGGER_FALLING:
+		_trigger = IRQF_TRIGGER_FALLING;
 		break;
 	default:
-		pr_info("unmatched gpio_pin. forced set mrdy\n");
-		gpio_id = spi_dev_gpio_mrdy;
+		_trigger = IRQF_TRIGGER_NONE;
 		break;
 	}
+
+	value = request_irq(OMAP_GPIO_IRQ(gpio_id), handler,
+		_trigger, name, data);
+
+	if (value != 0) {
+		SPI_OS_ERROR(("%s regist fail(%d)",
+			"[SPI] ERROR : spi_dev_reigster_irq_handler :",
+			value));
+		return 0;
+	}
+
+#elif defined(SPI_FEATURE_S5PC210)
+	int value = 0;
+
+	int _trigger = IRQF_TRIGGER_NONE;
+	int irq = 0;
+
 
 	switch (trigger) {
 	case SPI_DEV_IRQ_TRIGGER_RISING:
@@ -350,11 +308,12 @@ int spi_dev_reigster_irq_handler(enum SPI_DEV_GPIOPIN_T gpio_pin,
 	irq = gpio_to_irq(gpio_id);
 	value = request_irq(irq, handler, _trigger, name, data);
 	if (value != 0) {
-		pr_err("spi_dev_reigster_irq_handler: regist fail(%d)",
-			value);
+		SPI_OS_ERROR(("spi_dev_reigster_irq_handler: regist fail(%d)",
+			value));
 		return 0;
 	}
 	enable_irq_wake(irq);
+#endif
 
 	return 1;
 }
@@ -377,5 +336,9 @@ Return value	(none)
 
 void spi_dev_unreigster_irq_handler(int gpio_id, void *data)
 {
+#if defined(SPI_FEATURE_OMAP4430)
+	free_irq(OMAP_GPIO_IRQ(gpio_id), data);
+#elif defined(SPI_FEATURE_S5PC210)
 	free_irq(gpio_to_irq(gpio_id), data);
+#endif
 }

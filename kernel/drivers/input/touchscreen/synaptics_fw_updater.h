@@ -13,17 +13,10 @@
  *
  */
 
-#ifndef _LINUX_SYNAPTICS_FW_UPDATER_H
-#define _LINUX_SYNAPTICS_FW_UPDATER_H
-
+#include <linux/delay.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
+#include <linux/slab.h>
+#include <linux/synaptics_s7301.h>
 
-void set_fw_version(char *, char *);
-bool fw_update_file(struct i2c_client *);
-bool fw_update_internal(struct i2c_client *);
-bool F54_SetRawCapData(struct i2c_client *, s16 *);
-bool F54_SetRxToRxData(struct i2c_client *, s16 *);
-bool F54_TxToTest(struct i2c_client *, s16 *, int);
-void F01_SetTABit(struct i2c_client *, int);
-
-#endif
+extern void synaptics_fw_updater(struct synaptics_ts_data *);

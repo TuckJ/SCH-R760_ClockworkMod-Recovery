@@ -6,7 +6,7 @@
  *  GK 2/5/95  -  Changed to support mounting root fs via NFS
  *  Added initrd & change_root: Werner Almesberger & Hans Lermen, Feb '96
  *  Moan early if gcc is old, avoiding bogus kernels - Paul Gortmaker, May '96
- *  Simplified starting of init:  Michael A. Griffith <grif@acm.org> 
+ *  Simplified starting of init:  Michael A. Griffith <grif@acm.org>
  */
 
 #include <linux/types.h>
@@ -79,6 +79,11 @@
 #include <asm/smp.h>
 #endif
 
+#if defined (CONFIG_MACH_U1_NA_SPR) || defined (CONFIG_MACH_U1_NA_USCC)
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/kernel_sec_common.h>
+#endif
+#endif
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -149,8 +154,8 @@ static int __init set_reset_devices(char *str)
 
 __setup("reset_devices", set_reset_devices);
 
-static const char * argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
-const char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
+static const char *argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
+const char *envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
 static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
@@ -272,7 +277,7 @@ static int __init unknown_bootoption(char *param, char *val)
 }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
-int __read_mostly debug_pagealloc_enabled = 0;
+int __read_mostly debug_pagealloc_enabled;
 #endif
 
 static int __init init_setup(char *str)
@@ -402,7 +407,7 @@ void __init parse_early_options(char *cmdline)
 /* Arch code calls this early on, or if not, just before other parsing. */
 void __init parse_early_param(void)
 {
-	static __initdata int done = 0;
+	static __initdata int done;
 	static __initdata char tmp_cmdline[COMMAND_LINE_SIZE];
 
 	if (done)
@@ -455,7 +460,7 @@ static void __init mm_init(void)
 
 asmlinkage void __init start_kernel(void)
 {
-	char * command_line;
+	char *command_line;
 	extern const struct kernel_param __start___param[], __stop___param[];
 
 	smp_setup_processor_id();
@@ -624,7 +629,11 @@ asmlinkage void __init start_kernel(void)
 	sfi_init_late();
 
 	ftrace_init();
-
+#if defined(CONFIG_MACH_U1_NA_SPR) || defined(CONFIG_MACH_U1_NA_USCC)
+#ifdef CONFIG_SEC_DEBUG
+	kernel_sec_init();
+#endif
+#endif
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 }
@@ -736,34 +745,6 @@ static void run_init_process(const char *init_filename)
 	kernel_execve(init_filename, argv_init, envp_init);
 }
 
-#if defined(CONFIG_DEFERRED_INITCALLS)
-extern initcall_t __deferred_initcall_start[], __deferred_initcall_end[];
-
-/* call deferred init routines */
-void do_deferred_initcalls(void)
-{
-	initcall_t *call;
-	static int already_run;
-
-	if (already_run) {
-		pr_warn("%s() has already run\n", __func__);
-		return;
-	}
-
-	already_run = 1;
-
-	pr_info("%s()is running\n", __func__);
-
-	for (call = __deferred_initcall_start;
-			call < __deferred_initcall_end; call++)
-		do_one_initcall(*call);
-
-	flush_scheduled_work();
-
-	free_initmem();
-}
-#endif /* CONFIG_DEFERRED_INITCALLS */
-
 /* This is a non __init function. Force it to be noinline otherwise gcc
  * makes it inline to init() and it becomes part of init.text section
  */
@@ -771,9 +752,7 @@ static noinline int init_post(void)
 {
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
-#if !defined(CONFIG_DEFERRED_INITCALLS)
 	free_initmem();
-#endif
 	mark_rodata_ro();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();

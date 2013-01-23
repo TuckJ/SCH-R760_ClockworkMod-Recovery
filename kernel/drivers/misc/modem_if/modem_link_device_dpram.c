@@ -23,7 +23,9 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/if_arp.h>
+#include <linux/platform_device.h>
 #include <linux/platform_data/modem.h>
+#include <linux/io.h>
 #include "modem_prj.h"
 #include "modem_link_device_dpram.h"
 
@@ -91,17 +93,486 @@
 #define DP_DPRAM_SIZE			0x4000
 #define DP_DEFAULT_WRITE_LEN		8168
 #define DP_DEFAULT_DUMP_LEN		16366
-#define DP_DUMP_HEADER_SIZE		7
-
+#ifdef CONFIG_INTERNAL_MODEM_IF
+#define DP_DUMP_HEADER_SIZE		8
+#else
+#define DP_DUMP_HEADER_SIZE             7
+#endif
 #define GOTA_TIMEOUT			(50 * HZ)
 #define GOTA_SEND_TIMEOUT		(200 * HZ)
 #define DUMP_TIMEOUT			(30 * HZ)
 #define DUMP_START_TIMEOUT		(100 * HZ)
+#define IDPRAM_PHY_START    0x13A00000
+#define IDPRAM_SIZE 0x4000
+
+
 
 static int
 dpram_download(struct dpram_link_device *dpld, const char *buf, int len);
 static int
 dpram_upload(struct dpram_link_device *dpld, struct dpram_firmware *uploaddata);
+static inline void
+dpram_writeh(u16 value,  void __iomem *p_dest);
+static void
+dpram_clear(struct dpram_link_device *dpld);
+static struct io_device *
+dpram_find_iod(struct dpram_link_device *dpld, int id);
+static void
+dpram_write_command(struct dpram_link_device *dpld, u16 cmd);
+static inline int
+dpram_readh(void __iomem *p_dest);
+
+#ifdef CONFIG_INTERNAL_MODEM_IF
+
+#ifdef CONFIG_CDMA_MODEM_QSC6085
+#define INT_MASK_CMD_PDA_SLEEP           0x000D
+#define INT_MASK_CMD_DPRAM_DOWN          0x000B
+#define INT_MASK_CMD_PDA_WAKEUP          0x000C
+#define INT_MASK_CMD_CP_WAKEUP_START     0x000E
+#else
+#define INT_MASK_CMD_PDA_SLEEP	0x0C
+#define INT_MASK_CMD_DPRAM_DOWN 0x0C
+#define INT_MASK_CMD_PDA_WAKEUP 0x0A
+#define INT_MASK_CMD_CP_WAKEUP_START 0x0A
+#define INT_MASK_CMD_DPRAM_DOWN_NACK	0x07
+#endif
+
+#include <plat/gpio-cfg.h>
+#include <linux/suspend.h>
+
+struct idpram_link_pm_data *pm;
+
+void idpram_magickey_init(struct idpram_link_pm_data *pm_data)
+{
+	u16 acc_code = 0x01;
+
+	dpram_writeh(DP_MAGIC_CODE, &pm_data->dpld->dpram->magic);
+	dpram_writeh(acc_code, &pm_data->dpld->dpram->enable);
+}
+
+int idpram_get_write_lock(struct idpram_link_pm_data *pm_data)
+{
+	return atomic_read(&pm_data->write_lock);
+}
+
+static int idpram_write_lock(struct idpram_link_pm_data *pm_data, int lock)
+{
+	int lock_value = 0;
+
+	pr_info("MIF: idpram write_lock(%d)\n", lock);
+
+	switch (lock) {
+	case 0:		/* unlock */
+		if (atomic_read(&pm_data->write_lock))
+			lock_value = atomic_dec_return(&pm_data->write_lock);
+		if (lock_value)
+			pr_err("MIF: ipdram write unlock but lock value=%d\n",
+			lock_value);
+		break;
+	case 1:		/* lock */
+		if (!atomic_read(&pm_data->write_lock))
+			lock_value = atomic_inc_return(&pm_data->write_lock);
+		if (lock_value != 1)
+			pr_err("MIF: ipdram write lock but lock value=%d\n",
+				lock_value);
+		break;
+	}
+	return 0;
+}
+
+static int idpram_resume_init(struct idpram_link_pm_data *pm_data)
+{
+
+	pm_data->pm_states = IDPRAM_PM_RESUME_START;
+	pm_data->last_pm_mailbox = 0;
+
+	dpram_clear(pm_data->dpld);
+	idpram_magickey_init(pm_data);
+
+	/* Initialize the dpram controller */
+	pm_data->mdata->sfr_init();
+
+	/*re-initialize internal dpram gpios */
+	s3c_gpio_cfgpin(pm_data->mdata->gpio_mbx_intr, S3C_GPIO_SFN(0x2));
+
+	idpram_write_lock(pm_data, 0);
+	return 0;
+}
+
+
+void idpram_timeout_handler(struct idpram_link_pm_data *pm_data)
+{
+	struct io_device *iod = dpram_find_iod(pm_data->dpld, FMT_IDX);
+
+	pr_info("MIF: <%s>", __func__);
+
+	if (!gpio_get_value(pm_data->mdata->gpio_phone_active)) {
+		pr_err("MIF: <%s:%s> (Crash silent Reset)\n",
+			__func__, pm_data->dpld->ld.name);
+
+		if (iod && iod->modem_state_changed)
+			iod->modem_state_changed(iod, STATE_CRASH_EXIT);
+	}
+}
+
+static int idpram_resume_check(struct idpram_link_pm_data *pm_data)
+{
+	/* check last pm mailbox */
+	pr_info("MIF: idpram %s, last_pm_mailbox=%x\n", __func__,
+		pm_data->last_pm_mailbox);
+
+	if (pm_data->last_pm_mailbox == INT_CMD(INT_MASK_CMD_PDA_WAKEUP)) {
+		pm_data->last_pm_mailbox = 0;
+		return 0;
+	}
+
+	dpram_write_command(pm_data->dpld, INT_CMD(INT_MASK_CMD_PDA_WAKEUP));
+	pr_info("MIF: idpram sent PDA_WAKEUP Mailbox(0x%x)\n",
+		INT_CMD(INT_MASK_CMD_PDA_WAKEUP));
+
+	return -1;
+}
+
+static void idpram_resume_retry(struct work_struct *work)
+{
+	struct idpram_link_pm_data *pm_data =
+		container_of(work, struct idpram_link_pm_data, \
+		resume_work.work);
+
+	pr_debug("MIF: %s\n", __func__);
+
+	if (!idpram_resume_check(pm_data)) {
+		pr_info("MIF: idpram resume ok\n");
+		idpram_write_lock(pm_data, 0);
+		wake_lock_timeout(&pm_data->hold_wlock, msecs_to_jiffies(20));
+		return;
+	}
+	if (pm_data->resume_retry--) {
+		schedule_delayed_work(&pm_data->resume_work, \
+			msecs_to_jiffies(200));
+		wake_lock_timeout(&pm_data->hold_wlock, msecs_to_jiffies(260));
+	} else {
+		pr_info("MIF: idpram resume T-I-M-E-O-UT\n");
+		idpram_timeout_handler(pm_data);
+		/* hold wakelock until uevnet sent to rild */
+		wake_lock_timeout(&pm_data->hold_wlock, HZ*7);
+		idpram_write_lock(pm_data, 0);
+	}
+}
+
+
+static irqreturn_t link_ap_wakeup_handler(int irq, void *data)
+{
+	struct idpram_link_pm_data *pm_data = data;
+
+	pr_info("MIF: <%s> 5 seconds.\n", __func__);
+	wake_lock_timeout(&pm_data->host_wakeup_wlock, 5*HZ);
+
+	return IRQ_HANDLED;
+}
+
+static int idpram_pm_suspend(struct device *dev)
+{
+	struct idpram_link_pm_data *pm_data = pm;
+
+	pm_data->pm_states = IDPRAM_PM_SUSPEND_START;
+	gpio_set_value(pm_data->mdata->gpio_pda_active, 0);
+
+	pr_info("MIF: <%s>\n", __func__);
+
+	return 0;
+}
+static int idpram_pm_resume(struct device *dev)
+{
+	struct idpram_link_pm_data *pm_data = pm;
+
+	idpram_resume_init(pm_data);
+	gpio_set_value(pm_data->mdata->gpio_pda_active, 1);
+	pr_info("MIF: <%s>\n", __func__);
+	return 0;
+}
+
+static int __devinit idpram_pm_probe(struct platform_device *pdev)
+{
+	return 0;
+}
+static void idpram_pm_shutdown(struct platform_device *pdev)
+{
+}
+
+static const struct dev_pm_ops idpram_pm_ops = {
+	.suspend    = idpram_pm_suspend,
+	.resume     = idpram_pm_resume,
+};
+
+static struct platform_driver idpram_pm_driver = {
+	.probe = idpram_pm_probe,
+	.shutdown = idpram_pm_shutdown,
+	.driver = {
+		.name = "idparam_pm",
+		.pm   = &idpram_pm_ops,
+	},
+};
+
+static void idpram_powerup_start(struct idpram_link_pm_data *pm_data)
+{
+	pm_data->last_pm_mailbox = INT_CMD(INT_MASK_CMD_PDA_WAKEUP);
+	pm_data->pm_states = IDPRAM_PM_ACTIVE;
+	pr_debug("MIF: <%s>\n", __func__);
+}
+
+#ifndef CONFIG_CDMA_MODEM_QSC6085
+static void idpram_power_down_nack(struct idpram_link_pm_data *pm_data)
+{
+	pm_data->last_pm_mailbox = INT_CMD(INT_MASK_CMD_DPRAM_DOWN_NACK);
+	complete(&pm_data->idpram_down);
+	pr_debug("MIF: <%s>\n", __func__);
+}
+#endif
+
+static void idpram_power_down(struct idpram_link_pm_data *pm_data)
+{
+	pm_data->last_pm_mailbox = INT_CMD(INT_MASK_CMD_DPRAM_DOWN);
+	complete(&pm_data->idpram_down);
+	pr_debug("MIF: <%s>\n", __func__);
+}
+
+static int idpram_post_resume(struct idpram_link_pm_data *pm_data)
+{
+	int gpio_val = 0;
+
+	pr_info("MIF: %s (%d)\n", __func__, pm_data->pm_states);
+
+	switch (pm_data->pm_states) {
+	/* schedule_work */
+	case IDPRAM_PM_DPRAM_POWER_DOWN:
+		gpio_set_value(pm_data->mdata->gpio_pda_active, 0);
+		pr_info("MIF: idpram PDA_ACTIVE LOW\n");
+
+		msleep(50);
+
+		idpram_resume_init(pm_data);
+
+		msleep(50);
+
+		gpio_set_value(pm_data->mdata->gpio_pda_active, 1);
+
+		msleep(20);
+
+		gpio_val = gpio_get_value(pm_data->mdata->gpio_pda_active);
+		pr_info("MIF: idpram PDA_ACTIVE (%d)\n", gpio_val);
+
+		if (gpio_val == 0) {
+			gpio_set_value(pm_data->mdata->gpio_pda_active, 1);
+			pr_info("MIF: idpram PDA_ACTIVE set again.\n");
+		}
+		break;
+
+	case IDPRAM_PM_RESUME_START:
+		break;
+
+	case IDPRAM_PM_SUSPEND_PREPARE:
+		break;
+	}
+	return 0;
+}
+
+
+static int idpram_pre_suspend(struct idpram_link_pm_data *pm_data)
+{
+	int timeout_ret = 0;
+	int suspend_retry = 2;
+	u16 intr_out = INT_CMD(INT_MASK_CMD_PDA_SLEEP);
+
+	pm_data->pm_states = IDPRAM_PM_SUSPEND_PREPARE;
+	pm_data->last_pm_mailbox = 0;
+	idpram_write_lock(pm_data, 1);
+
+	gpio_set_value(pm_data->mdata->gpio_mbx_intr, 1);
+
+	/* prevent PDA_ACTIVE ststus is low */
+	gpio_set_value(pm_data->mdata->gpio_pda_active, 1);
+
+	if (!atomic_read(&pm_data->read_lock)) {
+		do {
+			init_completion(&pm_data->idpram_down);
+			dpram_write_command(pm_data->dpld, intr_out);
+			pr_err("MIF: idpram sent PDA_SLEEP Mailbox(0x%X)\n",
+				intr_out);
+			timeout_ret =
+			wait_for_completion_timeout(&pm_data->idpram_down,
+				(HZ/5));
+			pr_err("MIF: suspend_enter cnt = %d\n",
+				suspend_retry);
+		} while (!timeout_ret && suspend_retry--);
+
+		switch (pm_data->last_pm_mailbox) {
+		case INT_CMD(INT_MASK_CMD_DPRAM_DOWN):
+			break;
+
+		/* if nack or other interrup, hold wakelock for DPM resume*/
+#ifndef CONFIG_CDMA_MODEM_QSC6085		
+		case INT_CMD(INT_MASK_CMD_DPRAM_DOWN_NACK):
+			pr_err("MIF: idpram dpram down get NACK\n");
+#endif
+
+		default:
+			pr_err("MIF: CP dpram Down not ready! intr=0x%X\n",
+				dpram_readh(&pm_data->dpld->dpram->mbx_cp2ap));
+			wake_lock_timeout(&pm_data->hold_wlock,
+				msecs_to_jiffies(500));
+			idpram_write_lock(pm_data, 0);
+			return 0;
+		}
+		/*
+		* Because, if dpram was powered down, cp dpram random intr was
+		* ocurred. so, fixed by muxing cp dpram intr pin to GPIO output
+		* high,..
+		*/
+		gpio_set_value(pm_data->mdata->gpio_mbx_intr, 1);
+		s3c_gpio_cfgpin(pm_data->mdata->gpio_mbx_intr, S3C_GPIO_OUTPUT);
+		pm_data->pm_states = IDPRAM_PM_DPRAM_POWER_DOWN;
+
+		return 0;
+	} else {
+		pr_err("MIF: idpram hold read_lock\n");
+		return -EBUSY;
+	}
+}
+
+static int idpram_notifier_event(struct notifier_block *this,
+		unsigned long event, void *ptr)
+{
+	int err;
+
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		pr_debug("MIF: PM_SUSPEND_PREPARE+\n");
+		err = idpram_pre_suspend(pm);
+		if (err)
+			pr_err("MIF: pre-suspend err\n");
+		break;
+
+	case PM_POST_SUSPEND:
+		pr_debug("MIF: PM_POST_SUSPEND+\n");
+		err = idpram_post_resume(pm);
+		if (err)
+			pr_err("MIF: pre-suspend err\n");
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block idpram_link_pm_notifier = {
+	.notifier_call = idpram_notifier_event,
+};
+
+static int idpram_init_magic_num(struct dpram_link_device *dpld)
+{
+	const u16 magic_code = 0x4D4E;
+	u16 acc_code = 0;
+	u16 ret_value = 0;
+
+	/*write DPRAM disable code */
+	dpram_writeh(acc_code, &dpld->dpram->enable);
+
+	/* write DPRAM magic code :  Normal boot Magic - 0x4D4E*/
+	dpram_writeh(magic_code, &dpld->dpram->magic);
+
+	/*write enable code */
+	acc_code = 0x0001;
+	dpram_writeh(acc_code, &dpld->dpram->enable);
+
+	ret_value = dpram_readh(&dpld->dpram->magic);
+
+	pr_info("MIF : <%s> Read_MagicNum : 0x%04x\n", __func__, ret_value);
+
+	return 0;
+}
+
+static int idpram_link_pm_init
+(
+struct dpram_link_device *idpram_ld,
+struct platform_device *pdev
+)
+{
+	int r = 0;
+	unsigned irq = 0;
+	struct modem_data *pdata =
+			(struct modem_data *)pdev->dev.platform_data;
+
+	pr_info("MIF: <%s>\n", __func__);
+
+	pm = kzalloc(sizeof(struct idpram_link_pm_data), GFP_KERNEL);
+	if (!pm) {
+		pr_err("MIF: %s: link_pm_data is NULL\n", __func__);
+		return -ENOMEM;
+	}
+
+	pm->mdata = pdata;
+	pm->dpld = idpram_ld;
+	idpram_ld->link_pm_data = pm;
+
+	if (pdata->modem_type == QC_QSC6085)
+		idpram_ld->init_magic_num = idpram_init_magic_num;
+
+	/*for pm notifire*/
+	register_pm_notifier(&idpram_link_pm_notifier);
+
+
+	init_completion(&pm->idpram_down);
+	wake_lock_init(&pm->host_wakeup_wlock,
+		WAKE_LOCK_SUSPEND,
+		"HOST_WAKEUP_WLOCK");
+	wake_lock_init(&pm->rd_wlock, WAKE_LOCK_SUSPEND, "dpram_pwrdn");
+	wake_lock_init(&pm->hold_wlock, WAKE_LOCK_SUSPEND, "dpram_hold");
+	wake_lock_init(&pm->wakeup_wlock, WAKE_LOCK_SUSPEND, "dpram_wakeup");
+	atomic_set(&pm->read_lock, 0);
+	atomic_set(&pm->write_lock, 0);
+	INIT_DELAYED_WORK(&pm->resume_work, idpram_resume_retry);
+
+	r = platform_driver_register(&idpram_pm_driver);
+	if (r) {
+		pr_err("MIF: wakelocks_init: platform_driver_register failed\n");
+		goto err_platform_driver_register;
+	}
+
+	irq = gpio_to_irq(pdata->gpio_ap_wakeup);
+	r = request_irq(irq, link_ap_wakeup_handler,
+		IRQF_TRIGGER_RISING,
+		"idpram_host_wakeup", (void *)pm);
+
+	pr_info("MIF: <%s> DPRAM IRQ# = %d, %d\n", __func__,
+		irq,
+		pm->mdata->gpio_ap_wakeup);
+
+	if (r) {
+		pr_err("MIF: %s:fail to request irq(%d) host_wake_irq\n",
+			__func__, r);
+		goto err_request_irq;
+	}
+
+	r = enable_irq_wake(irq);
+	if (r) {
+		pr_err("MIF: %s: failed to enable_irq_wake:%d host_wake_irq\n",
+			__func__, r);
+		goto err_set_wake_irq;
+	}
+
+	pr_info("MIF: <%s> END\n", __func__);
+	return 0;
+
+err_set_wake_irq:
+	free_irq(irq, (void *)pm);
+err_request_irq:
+	platform_driver_unregister(&idpram_pm_driver);
+err_platform_driver_register:
+	kfree(pm);
+	return r;
+}
+#endif /*CONFIG_INTERNAL_MODEM_IF*/
+
+
 
 static inline int dpram_readh(void __iomem *p_dest)
 {
@@ -160,11 +631,11 @@ static void dpram_clear(struct dpram_link_device *dpld)
 static bool dpram_circ_valid(int size, u16 head, u16 tail)
 {
 	if (head >= size) {
-		pr_err("[DPRAM] head(%d) >= size(%d)\n", head, size);
+		pr_err("MIF: head(%d) >= size(%d)\n", head, size);
 		return false;
 	}
 	if (tail >= size) {
-		pr_err("[DPRAM] tail(%d) >= size(%d)\n", tail, size);
+		pr_err("MIF: tail(%d) >= size(%d)\n", tail, size);
 		return false;
 	}
 	return true;
@@ -186,13 +657,13 @@ static int dpram_init_and_report(struct dpram_link_device *dpld)
 
 	magic = dpram_readh(&dpld->dpram->magic);
 	if (magic != DP_MAGIC_CODE) {
-		pr_err("[DPRAM]: %s: Failed to check magic\n", __func__);
+		pr_err("MIF:: %s: Failed to check magic\n", __func__);
 		return -1;
 	}
 
 	enable = dpram_readh(&dpld->dpram->enable);
 	if (!enable) {
-		pr_err("[DPRAM]: %s: DPRAM enable failed\n", __func__);
+		pr_err("MIF:: %s: DPRAM enable failed\n", __func__);
 		return -1;
 	}
 
@@ -221,8 +692,8 @@ static void cmd_error_display_handler(struct dpram_link_device *dpld)
 {
 	struct io_device *iod = dpram_find_iod(dpld, FMT_IDX);
 
-	pr_info("[DPRAM] Received 0xc9 from modem (CP Crash)\n");
-	pr_info("[DPRAM] %s\n", dpld->dpram->fmt_in_buff);
+	pr_info("MIF: Received 0xc9 from modem (CP Crash)\n");
+	pr_info("MIF: %s\n", dpld->dpram->fmt_in_buff);
 
 	if (iod && iod->modem_state_changed)
 		iod->modem_state_changed(iod, STATE_CRASH_EXIT);
@@ -230,14 +701,33 @@ static void cmd_error_display_handler(struct dpram_link_device *dpld)
 
 static void cmd_phone_start_handler(struct dpram_link_device *dpld)
 {
-	pr_debug("[DPRAM] Received 0xc8 from modem (Boot OK)\n");
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	struct io_device *iod = NULL;
+	struct modem_data *mdata = dpld->link_pm_data->mdata;
+
+	if (mdata->modem_type == QC_QSC6085)
+		dpram_write_command(dpld, INT_CMD(INT_CMD_INIT_START));
+
+	iod = dpram_find_iod(dpld, FMT_IDX);
+#endif
+
+	pr_debug("MIF: Received 0xc8 from modem (Boot OK)\n");
+		
 	complete_all(&dpld->dpram_init_cmd);
 	dpram_init_and_report(dpld);
+
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	if (mdata->modem_type == QC_QSC6085)
+		if( iod->mc->phone_state != STATE_ONLINE)
+			iod->modem_state_changed(iod, STATE_ONLINE);
+
+#endif
+	
 }
 
 static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 {
-	pr_debug("[DPRAM] %s: %x\n", __func__, cmd);
+	pr_debug("MIF: %s: %x\n", __func__, cmd);
 
 	switch (INT_CMD_MASK(cmd)) {
 	case INT_CMD_REQ_ACTIVE:
@@ -252,6 +742,7 @@ static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 		cmd_phone_start_handler(dpld);
 		break;
 
+#ifndef CONFIG_CDMA_MODEM_QSC6085
 	case INT_CMD_NV_REBUILDING:
 		pr_err("[MODEM_IF] NV_REBUILDING\n");
 		break;
@@ -263,7 +754,23 @@ static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 	case INT_CMD_SILENT_NV_REBUILDING:
 		pr_err("[MODEM_IF] SILENT_NV_REBUILDING\n");
 		break;
+#endif
 
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	case INT_MASK_CMD_DPRAM_DOWN:
+		idpram_power_down(dpld->link_pm_data);
+		break;
+
+#ifndef CONFIG_CDMA_MODEM_QSC6085
+	case INT_MASK_CMD_DPRAM_DOWN_NACK:
+		idpram_power_down_nack(dpld->link_pm_data);
+		break;
+#endif
+
+	case INT_MASK_CMD_CP_WAKEUP_START:
+		idpram_powerup_start(dpld->link_pm_data);
+		break;
+#else
 	case INT_CMD_NORMAL_POWER_OFF:
 		/*ToDo:*/
 		/*kernel_sec_set_cp_ack()*/;
@@ -273,6 +780,7 @@ static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 	case INT_CMD_PHONE_DEEP_SLEEP:
 	case INT_CMD_EMER_DOWN:
 		break;
+#endif
 
 	default:
 		pr_err("Unknown command.. %x\n", cmd);
@@ -331,7 +839,7 @@ static int dpram_dump_update(struct link_device *ld, struct io_device *iod,
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
 	struct dpram_firmware *fw = (struct dpram_firmware *)_arg ;
 
-	pr_debug("[DPRAM] dpram_dump_update()\n");
+	pr_debug("MIF: dpram_dump_update()\n");
 
 	return dpram_upload(dpld, fw);
 }
@@ -350,19 +858,19 @@ static int dpram_read(struct dpram_link_device *dpld,
 	pr_debug("=====> %s,  head: %d, tail: %d\n", __func__, head, tail);
 
 	if (head == tail) {
-		pr_err("[DPRAM] %s: head == tail\n", __func__);
+		pr_err("MIF: %s: head == tail\n", __func__);
 		goto err_dpram_read;
 	}
 
 	if (!dpram_circ_valid(device->in_buff_size, head, tail)) {
-		pr_err("[DPRAM] %s: invalid circular buffer\n", __func__);
+		pr_err("MIF: %s: invalid circular buffer\n", __func__);
 		dpram_zero_circ(device->in);
 		goto err_dpram_read;
 	}
 
 	iod = dpram_find_iod(dpld, dev_idx);
 	if (!iod) {
-		pr_err("[DPRAM] iod == NULL\n");
+		pr_err("MIF: iod == NULL\n");
 		goto err_dpram_read;
 	}
 
@@ -374,7 +882,7 @@ static int dpram_read(struct dpram_link_device *dpld,
 	if (head > tail) {
 		buff = device->in_buff_addr + tail;
 		if (iod->recv(iod, buff, size) < 0) {
-			pr_err("[DPRAM] %s: recv error, dropping data\n",
+			pr_err("MIF: %s: recv error, dropping data\n",
 								__func__);
 			dpram_drop_data(device, head);
 			goto err_dpram_read;
@@ -384,7 +892,7 @@ static int dpram_read(struct dpram_link_device *dpld,
 		tmp_size = device->in_buff_size - tail;
 		buff = device->in_buff_addr + tail;
 		if (iod->recv(iod, buff, tmp_size) < 0) {
-			pr_err("[DPRAM] %s: recv error, dropping data\n",
+			pr_err("MIF: %s: recv error, dropping data\n",
 								__func__);
 			dpram_drop_data(device, head);
 			goto err_dpram_read;
@@ -394,7 +902,7 @@ static int dpram_read(struct dpram_link_device *dpld,
 		if (size > tmp_size) {
 			buff = (char *)device->in_buff_addr;
 			if (iod->recv(iod, buff, (size - tmp_size)) < 0) {
-				pr_err("[DPRAM] %s: recv error, dropping data\n",
+				pr_err("MIF: %s: recv error, dropping data\n",
 								__func__);
 				dpram_drop_data(device, head);
 				goto err_dpram_read;
@@ -420,7 +928,7 @@ static void non_command_handler(struct dpram_link_device *dpld,
 	u16 magic, access;
 	int ret = 0;
 
-	pr_debug("[DPRAM] Entering non_command_handler(0x%04X)\n", non_cmd);
+	pr_debug("MIF: Entering non_command_handler(0x%04X)\n", non_cmd);
 
 	magic = dpram_readh(&dpld->dpram->magic);
 	access = dpram_readh(&dpld->dpram->enable);
@@ -437,7 +945,7 @@ static void non_command_handler(struct dpram_link_device *dpld,
 	tail = dpram_readh(&device->in->tail);
 
 	if (!dpram_circ_valid(device->in_buff_size, head, tail)) {
-		pr_err("[DPRAM] %s: invalid circular buffer\n", __func__);
+		pr_err("MIF: %s: invalid circular buffer\n", __func__);
 		dpram_zero_circ(device->in);
 		return;
 	}
@@ -469,7 +977,7 @@ static void non_command_handler(struct dpram_link_device *dpld,
 	tail = dpram_readh(&device->in->tail);
 
 	if (!dpram_circ_valid(device->in_buff_size, head, tail)) {
-		pr_err("[DPRAM] %s: invalid circular buffer\n", __func__);
+		pr_err("MIF: %s: invalid circular buffer\n", __func__);
 		dpram_zero_circ(device->in);
 		return;
 	}
@@ -525,7 +1033,7 @@ static void gota_cmd_handler(struct dpram_link_device *dpld, u16 cmd)
 		break;
 
 	case GOTA_CMD_IMAGE_SEND_RESP:
-		pr_debug("[DPRAM] Send CP-->AP IMAGE_SEND_RESP\n");
+		pr_debug("MIF: Send CP-->AP IMAGE_SEND_RESP\n");
 		complete_all(&dpld->dump_receive_done);
 		break;
 
@@ -543,10 +1051,10 @@ static irqreturn_t dpram_irq_handler(int irq, void *p_ld)
 
 	cp2ap = dpram_readh(&dpld->dpram->mbx_cp2ap);
 
-	pr_debug("[DPRAM] received CP2AP = 0x%x\n", cp2ap);
+	pr_err("MIF: received CP2AP = 0x%x\n", cp2ap);
 
 	if (cp2ap == INT_POWERSAFE_FAIL) {
-		pr_err("[DPRAM] Received POWERSAFE_FAIL\n");
+		pr_err("MIF: Received POWERSAFE_FAIL\n");
 		goto exit_irq;
 	}
 
@@ -557,9 +1065,12 @@ static irqreturn_t dpram_irq_handler(int irq, void *p_ld)
 	else if (INT_VALID(cp2ap))
 		non_command_handler(dpld, cp2ap);
 	else
-		pr_err("[DPRAM] Invalid command %04x\n", cp2ap);
+		pr_err("MIF: Invalid command %04x\n", cp2ap);
 
 exit_irq:
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	dpld->clear_interrupt();
+#endif
 	return IRQ_HANDLED;
 }
 
@@ -585,11 +1096,19 @@ static int dpram_write(struct dpram_link_device *dpld,
 	int free_space;
 	int last_size;
 
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	/* Internal DPRAM, check dpram ready?*/
+	if (idpram_get_write_lock(dpld->link_pm_data)) {
+		printk(KERN_INFO "dpram_write_net - not ready return -EAGAIN\n");
+		return -EAGAIN;
+	}
+#endif
+
 	head = dpram_readh(&device->out->head);
 	tail = dpram_readh(&device->out->tail);
 
 	if (!dpram_circ_valid(device->out_buff_size, head, tail)) {
-		pr_err("[DPRAM] %s: invalid circular buffer\n", __func__);
+		pr_err("MIF: %s: invalid circular buffer\n", __func__);
 		dpram_zero_circ(device->out);
 		return -EINVAL;
 	}
@@ -771,6 +1290,10 @@ dpram_download(struct dpram_link_device *dpld, const char *buf, int len)
 	header.start_index = START_INDEX;
 	header.nframes = nframes;
 
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	if(dpld->board_ota_reset != NULL)
+		dpld->board_ota_reset();
+#endif
 	while (len > 0) {
 		plen = min(len, DP_DEFAULT_WRITE_LEN);
 		dest = (u8 *)&dpram->fmt_out;
@@ -793,6 +1316,10 @@ dpram_download(struct dpram_link_device *dpld, const char *buf, int len)
 		init_completion(&dpld->gota_send_done);
 
 		if (curframe == 1) {
+#ifdef CONFIG_INTERNAL_MODEM_IF
+			init_completion(&dpld->gota_download_start_complete);
+			dpram_write_command(dpld, 0);
+#endif
 			ret = wait_for_completion_interruptible_timeout(
 				&dpld->gota_download_start_complete,
 				GOTA_TIMEOUT);
@@ -836,7 +1363,7 @@ dpram_upload(struct dpram_link_device *dpld, struct dpram_firmware *uploaddata)
 	int ret;
 	int region = 0;
 
-	pr_debug("[DPRAM] dpram_upload()\n");
+	pr_debug("MIF: dpram_upload()\n");
 
 	ret = wait_for_completion_interruptible_timeout(
 			&dpld->gota_download_start_complete,
@@ -851,25 +1378,32 @@ dpram_upload(struct dpram_link_device *dpld, struct dpram_firmware *uploaddata)
 	memset(buff, 0, DP_DEFAULT_DUMP_LEN);
 
 	dpram_write_command(dpld, CMD_IMG_SEND_REQ);
-	pr_debug("[DPRAM] write CMD_IMG_SEND_REQ(0x9400)\n");
+	pr_debug("MIF: write CMD_IMG_SEND_REQ(0x9400)\n");
 
 	while (1) {
 		init_completion(&dpld->dump_receive_done);
 		ret = wait_for_completion_interruptible_timeout(
 				&dpld->dump_receive_done, DUMP_TIMEOUT);
 		if (!ret) {
-			pr_err("[DPRAM] CP didn't send DATA_SEND_DONE_RESP\n");
+			pr_err("MIF: CP didn't send DATA_SEND_DONE_RESP\n");
 			goto err_out;
 		}
 
 		dest = (u8 *)(&dpram->fmt_out);
 
+#ifdef CONFIG_INTERNAL_MODEM_IF
+		header.bop = *(u16 *)(dest);
+		header.total_frame = *(u16 *)(dest + 2);
+		header.curr_frame = *(u16 *)(dest + 4);
+		header.len = *(u16 *)(dest + 6);
+#else
 		header.bop = *(u8 *)(dest);
 		header.total_frame = *(u16 *)(dest + 1);
 		header.curr_frame = *(u16 *)(dest + 3);
 		header.len = *(u16 *)(dest + 5);
+#endif
 
-		pr_debug("total frame:%d, current frame:%d, data len:%d\n",
+		pr_err("total frame:%d, current frame:%d, data len:%d\n",
 			header.total_frame, header.curr_frame,
 			header.len);
 
@@ -881,7 +1415,7 @@ dpram_upload(struct dpram_link_device *dpld, struct dpram_firmware *uploaddata)
 
 		ret = copy_to_user(uploaddata->firmware + tlen,	buff,  plen);
 		if (ret < 0) {
-			pr_err("[DPRAM] Copy to user failed\n");
+			pr_err("MIF: Copy to user failed\n");
 			goto err_out;
 		}
 
@@ -912,7 +1446,7 @@ dpram_upload(struct dpram_link_device *dpld, struct dpram_firmware *uploaddata)
 	}
 
 	dpram_write_command(dpld, CMD_UL_RECEIVE_DONE_RESP);
-	pr_debug("[DPRAM] write CMD_UL_RECEIVE_DONE_RESP(0x9801)\n");
+	pr_debug("MIF: write CMD_UL_RECEIVE_DONE_RESP(0x9801)\n");
 
 	dpram_writew(0, &dpld->dpram->magic); /*clear magic code */
 
@@ -935,14 +1469,16 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	struct dpram_link_device *dpld;
 	struct link_device *ld;
 	struct resource *res;
-
+	unsigned long flag = 0;
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	struct modem_data *pdata = (struct modem_data *)pdev->dev.platform_data;
+#endif
 	BUILD_BUG_ON(sizeof(struct dpram_map) != DP_DPRAM_SIZE);
 
 	dpld = kzalloc(sizeof(struct dpram_link_device), GFP_KERNEL);
 	if (!dpld)
 		return NULL;
-
-	ld = &dpld->ld;
+		ld = &dpld->ld;
 
 	INIT_LIST_HEAD(&dpld->list_of_io_devices);
 	skb_queue_head_init(&ld->sk_fmt_tx_q);
@@ -966,18 +1502,22 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	ld->dump_start = dpram_set_ulmagic;
 	ld->dump_update = dpram_dump_update;
 
-	dpld->clear_interrupt = dpram_clear_interrupt;
-
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	dpld->clear_interrupt = pdata->clear_intr;
+	if(pdata->ota_reset != NULL)
+		dpld->board_ota_reset = pdata->ota_reset;
+#endif
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
-		pr_err("[DPRAM] Failed to get mem region\n");
+		pr_err("MIF:  Failed to get mem region\n");
 		goto err;
 	}
 	dpld->dpram = ioremap(res->start, resource_size(res));
-
-	dpld->irq = platform_get_irq(pdev, 1);
+	printk(KERN_INFO " MIF:  start address:0x%08x\n", \
+	res->start);
+	dpld->irq = platform_get_irq_byname(pdev, "dpram_irq");
 	if (!dpld->irq) {
-		pr_err("[MODEM_IF] %s: Failed to get IRQ\n", __func__);
+		pr_err("MIF:  %s: Failed to get IRQ\n", __func__);
 		goto err;
 	}
 
@@ -986,16 +1526,23 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	atomic_set(&dpld->raw_txq_req_ack_rcvd, 0);
 	atomic_set(&dpld->fmt_txq_req_ack_rcvd, 0);
 
-	dpram_clear_interrupt(dpld);
 	dpram_writeh(0, &dpld->dpram->magic);
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	ret = idpram_link_pm_init(dpld, pdev);
 
-	ret = request_irq(dpld->irq, dpram_irq_handler, IRQ_TYPE_LEVEL_LOW,
+	if (ret) {
+		pr_err("MIF: idpram_link_pm_init fail.(%d)\n", ret);
+	}
+#endif
+	flag = IRQF_DISABLED;
+	printk(KERN_ERR "dpram irq: %d\n", dpld->irq);
+	dpld->clear_interrupt();
+	ret = request_irq(dpld->irq, dpram_irq_handler, flag,
 							"dpram irq", ld);
 	if (ret) {
-		pr_err("DPRAM interrupt handler failed\n");
+		pr_err("MIF: DPRAM interrupt handler failed\n");
 		goto err;
 	}
-	enable_irq_wake(dpld->irq);
 
 	return ld;
 

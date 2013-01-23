@@ -258,16 +258,6 @@ extern void omapfb_set_platform_data(struct omapfb_platform_data *data);
 extern void omapfb_set_ctrl_platform_data(void *pdata);
 extern void omapfb_reserve_sdram_memblock(void);
 
-/* helper methods that may be used by other modules */
-enum omap_color_mode;
-struct omap_video_timings;
-int omapfb_mode_to_dss_mode(struct fb_var_screeninfo *var,
-			enum omap_color_mode *mode);
-void omapfb_fb2dss_timings(struct fb_videomode *fb_timings,
-			struct omap_video_timings *dss_timings);
-void omapfb_dss2fb_timings(struct omap_video_timings *dss_timings,
-			struct fb_videomode *fb_timings);
-
 #endif
 
 #endif /* __OMAPFB_H */

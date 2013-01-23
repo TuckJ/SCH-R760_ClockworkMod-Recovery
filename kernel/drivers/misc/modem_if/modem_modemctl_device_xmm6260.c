@@ -9,7 +9,7 @@
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
  * GNU General Public License for more details.
  *
  */
@@ -20,6 +20,7 @@
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
+#include <linux/platform_device.h>
 
 #include <linux/platform_data/modem.h>
 #include "modem_prj.h"
@@ -33,11 +34,15 @@ static int xmm6260_on(struct modem_ctl *mc)
 		return -ENXIO;
 	}
 
+	if (mc->gpio_revers_bias_clear)
+		mc->gpio_revers_bias_clear();
+
+
 	gpio_set_value(mc->gpio_cp_on, 0);
 	gpio_set_value(mc->gpio_cp_reset, 0);
 	udelay(160);
 	gpio_set_value(mc->gpio_pda_active, 0);
-	msleep(100);
+	msleep(500); /* must be >500ms for CP can boot up under -20 degrees */
 	gpio_set_value(mc->gpio_cp_reset, 1);
 	udelay(160);
 	gpio_set_value(mc->gpio_reset_req_n, 1);
@@ -46,11 +51,17 @@ static int xmm6260_on(struct modem_ctl *mc)
 	udelay(60);
 	gpio_set_value(mc->gpio_cp_on, 0);
 	msleep(20);
+
+	if (mc->gpio_revers_bias_restore)
+		mc->gpio_revers_bias_restore();
+
+
 	gpio_set_value(mc->gpio_pda_active, 1);
 
 	mc->phone_state = STATE_BOOTING;
 
 	return 0;
+
 }
 
 static int xmm6260_off(struct modem_ctl *mc)
@@ -73,19 +84,38 @@ static int xmm6260_off(struct modem_ctl *mc)
 
 static int xmm6260_reset(struct modem_ctl *mc)
 {
-	int ret;
 
 	pr_info("[MODEM_IF] xmm6260_reset()\n");
 
-	ret = xmm6260_off(mc);
-	if (ret)
-		return ret;
+	if (!mc->gpio_cp_reset || !mc->gpio_reset_req_n)
+		return -ENXIO;
 
-	msleep(100);
+	if (mc->gpio_revers_bias_clear)
+		mc->gpio_revers_bias_clear();
 
-	ret = xmm6260_on(mc);
-	if (ret)
-		return ret;
+	gpio_set_value(mc->gpio_cp_reset, 0);
+	gpio_set_value(mc->gpio_reset_req_n, 0);
+
+	mc->phone_state = STATE_OFFLINE;
+
+	msleep(20);
+
+	gpio_set_value(mc->gpio_cp_reset, 1);
+/* TODO: check the reset timming with C2C connection */
+	udelay(160);
+
+	gpio_set_value(mc->gpio_reset_req_n, 1);
+	udelay(100);
+
+	gpio_set_value(mc->gpio_cp_on, 1);
+	udelay(60);
+	gpio_set_value(mc->gpio_cp_on, 0);
+	msleep(20);
+
+	if (mc->gpio_revers_bias_restore)
+		mc->gpio_revers_bias_restore();
+
+	mc->phone_state = STATE_BOOTING;
 
 	return 0;
 }
@@ -141,28 +171,27 @@ static irqreturn_t phone_active_irq_handler(int irq, void *_mc)
 	pr_info("[MODEM_IF] PA EVENT : reset =%d, pa=%d, cp_dump=%d\n",
 				phone_reset, phone_active_value, cp_dump_value);
 
-	if (phone_reset && phone_active_value) {
-		phone_state = STATE_ONLINE;
-		if (mc->iod && mc->iod->modem_state_changed)
-			mc->iod->modem_state_changed(mc->iod, phone_state);
-	} else if (phone_reset && !phone_active_value) {
-		if ((mc->phone_state == STATE_ONLINE) &&
-			(mc->iod->link->com_state == COM_ONLINE)) {
-			if (cp_dump_value)
-				phone_state = STATE_CRASH_EXIT;
-			else
-				phone_state = STATE_CRASH_RESET;
-
-			if (mc->iod && mc->iod->modem_state_changed)
-				mc->iod->modem_state_changed(mc->iod,
-						phone_state);
-		}
-	} else {
+	if (phone_reset && phone_active_value)
+		phone_state = STATE_BOOTING;
+	else if (phone_reset && !phone_active_value) {
+		if (mc->phone_state == STATE_BOOTING)
+			goto set_type;
+		if (cp_dump_value)
+			phone_state = STATE_CRASH_EXIT;
+		else
+			phone_state = STATE_CRASH_RESET;
+		if (mc->iod && mc->iod->link->terminate_comm)
+			mc->iod->link->terminate_comm(mc->iod->link, mc->iod);
+	} else
 		phone_state = STATE_OFFLINE;
-		if (mc->iod && mc->iod->modem_state_changed)
-			mc->iod->modem_state_changed(mc->iod, phone_state);
-	}
 
+	if (mc->iod && mc->iod->modem_state_changed)
+		mc->iod->modem_state_changed(mc->iod, phone_state);
+
+	if (mc->bootd && mc->bootd->modem_state_changed)
+		mc->bootd->modem_state_changed(mc->bootd, phone_state);
+
+set_type:
 	if (phone_active_value)
 		irq_set_irq_type(mc->irq_phone_active, IRQ_TYPE_LEVEL_LOW);
 	else
@@ -176,13 +205,9 @@ static irqreturn_t sim_detect_irq_handler(int irq, void *_mc)
 {
 	struct modem_ctl *mc = (struct modem_ctl *)_mc;
 
-	pr_info("[MODEM_IF] SD EVENT : level=%d, online=%d, changed=%d\n",
-		gpio_get_value(mc->gpio_sim_detect), mc->sim_state.online,
-		mc->sim_state.changed);
-
 	if (mc->iod && mc->iod->sim_state_changed)
 		mc->iod->sim_state_changed(mc->iod,
-			!gpio_get_value(mc->gpio_sim_detect));
+				!gpio_get_value(mc->gpio_sim_detect));
 
 	return IRQ_HANDLED;
 }
@@ -210,31 +235,34 @@ int xmm6260_init_modemctl_device(struct modem_ctl *mc,
 	mc->gpio_cp_dump_int = pdata->gpio_cp_dump_int;
 	mc->gpio_flm_uart_sel = pdata->gpio_flm_uart_sel;
 	mc->gpio_cp_warm_reset = pdata->gpio_cp_warm_reset;
+	mc->gpio_revers_bias_clear = pdata->gpio_revers_bias_clear;
+	mc->gpio_revers_bias_restore = pdata->gpio_revers_bias_restore;
 	mc->gpio_sim_detect = pdata->gpio_sim_detect;
 
 	pdev = to_platform_device(mc->dev);
-	mc->irq_phone_active = platform_get_irq(pdev, 0);
+	/* mc->irq_phone_active = platform_get_irq(pdev, 0); */
+	mc->irq_phone_active = gpio_to_irq(mc->gpio_phone_active);
 
 	if (mc->gpio_sim_detect)
 		mc->irq_sim_detect = gpio_to_irq(mc->gpio_sim_detect);
 
 	xmm6260_get_ops(mc);
 
+	/* initialize phone active */
 	ret = request_irq(mc->irq_phone_active, phone_active_irq_handler,
 				IRQF_NO_SUSPEND | IRQF_TRIGGER_HIGH,
 				"phone_active", mc);
 	if (ret) {
 		pr_err("[MODEM_IF] %s: failed to request_irq:%d\n",
 					__func__, ret);
-		return ret;
+		goto err_phone_active_request_irq;
 	}
 
 	ret = enable_irq_wake(mc->irq_phone_active);
 	if (ret) {
 		pr_err("[MODEM_IF] %s: failed to enable_irq_wake:%d\n",
 					__func__, ret);
-		free_irq(mc->irq_phone_active, mc);
-		return ret;
+		goto err_phone_active_set_wake_irq;
 	}
 
 	/* initialize sim_state if gpio_sim_detect exists */
@@ -245,26 +273,31 @@ int xmm6260_init_modemctl_device(struct modem_ctl *mc,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 				"sim_detect", mc);
 		if (ret) {
-			pr_err("[MODEM_IF] %s: failed to SD request_irq:%d\n",
+			pr_err("[MODEM_IF] %s: failed to request_irq: %d\n",
 					__func__, ret);
-			free_irq(mc->irq_phone_active, mc);
-			return ret;
+			goto err_sim_detect_request_irq;
 		}
 
 		ret = enable_irq_wake(mc->irq_sim_detect);
 		if (ret) {
-			pr_err("[MODEM_IF] %s: failed to SD enable_irq:%d\n",
+			pr_err("[MODEM_IF] %s: failed to enable_irq_wake: %d\n",
 					__func__, ret);
-			free_irq(mc->irq_phone_active, mc);
-			free_irq(mc->irq_sim_detect, mc);
-			return ret;
+			goto err_sim_detect_set_wake_irq;
 		}
 
 		/* initialize sim_state => insert: gpio=0, remove: gpio=1 */
 		mc->sim_state.online = !gpio_get_value(mc->gpio_sim_detect);
-		pr_info("[MODEM_IF] %s: SIM detected online=%d\n",
-					__func__, mc->sim_state.online);
 	}
 
+	return ret;
+
+err_sim_detect_set_wake_irq:
+	free_irq(mc->irq_sim_detect, mc);
+err_sim_detect_request_irq:
+	mc->sim_state.online = false;
+	mc->sim_state.changed = false;
+err_phone_active_set_wake_irq:
+	free_irq(mc->irq_phone_active, mc);
+err_phone_active_request_irq:
 	return ret;
 }

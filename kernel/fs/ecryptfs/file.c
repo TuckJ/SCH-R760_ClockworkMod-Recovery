@@ -34,7 +34,6 @@
 #include "ecryptfs_kernel.h"
 
 #ifdef CONFIG_WTL_ENCRYPTION_FILTER
-#include <linux/ctype.h>
 #define ECRYPTFS_IOCTL_GET_ATTRIBUTES	_IOR('l', 0x10, __u32)
 #define ECRYPTFS_WAS_ENCRYPTED 128
 #endif
@@ -146,6 +145,27 @@ out:
 	return rc;
 }
 
+static void ecryptfs_vma_close(struct vm_area_struct *vma)
+{
+	filemap_write_and_wait(vma->vm_file->f_mapping);
+}
+
+static const struct vm_operations_struct ecryptfs_file_vm_ops = {
+	.close		= ecryptfs_vma_close,
+	.fault		= filemap_fault,
+};
+
+static int ecryptfs_file_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	int rc;
+
+	rc = generic_file_mmap(file, vma);
+	if (!rc)
+		vma->vm_ops = &ecryptfs_file_vm_ops;
+
+	return rc;
+}
+
 struct kmem_cache *ecryptfs_file_info_cache;
 
 /**
@@ -223,13 +243,14 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 		rc = 0;
 		goto out;
 	}
+/* change@wtl.fzhang encryption filter */
 #ifdef CONFIG_WTL_ENCRYPTION_FILTER
 	mutex_lock(&crypt_stat->cs_mutex);
 	if ((mount_crypt_stat->flags & ECRYPTFS_ENABLE_NEW_PASSTHROUGH)
 			&& (crypt_stat->flags & ECRYPTFS_ENCRYPTED)) {
 		if (ecryptfs_read_metadata(ecryptfs_dentry)) {
 			crypt_stat->flags &= ~(ECRYPTFS_I_SIZE_INITIALIZED
-					| ECRYPTFS_ENCRYPTED);
+					       | ECRYPTFS_ENCRYPTED);
 			mutex_unlock(&crypt_stat->cs_mutex);
 			goto out;
 		}
@@ -237,11 +258,8 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 			&& (crypt_stat->flags & ECRYPTFS_ENCRYPTED)) {
 		struct dentry *fp_dentry =
 			ecryptfs_inode_to_private(inode)->lower_file->f_dentry;
-		char filename[NAME_MAX+1] = {0};
-		if (fp_dentry->d_name.len <= NAME_MAX)
-			memcpy(filename, fp_dentry->d_name.name,
-					fp_dentry->d_name.len + 1);
-
+		char filename[256];
+		strcpy(filename, fp_dentry->d_name.name);
 		if (is_file_name_match(mount_crypt_stat, fp_dentry)
 			|| is_file_ext_match(mount_crypt_stat, filename)) {
 			if (ecryptfs_read_metadata(ecryptfs_dentry))
@@ -340,7 +358,7 @@ ecryptfs_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	if (cmd == ECRYPTFS_IOCTL_GET_ATTRIBUTES) {
 		u32 __user *user_attr = (u32 __user *)arg;
 		u32 attr = 0;
-		char filename[NAME_MAX+1] = {0};
+		char filename[256];
 		struct dentry *ecryptfs_dentry = file->f_path.dentry;
 		struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
 			&ecryptfs_superblock_to_private(ecryptfs_dentry->d_sb)
@@ -351,10 +369,7 @@ ecryptfs_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			&ecryptfs_inode_to_private(inode)->crypt_stat;
 		struct dentry *fp_dentry =
 			ecryptfs_inode_to_private(inode)->lower_file->f_dentry;
-		if (fp_dentry->d_name.len <= NAME_MAX)
-			memcpy(filename, fp_dentry->d_name.name,
-					fp_dentry->d_name.len + 1);
-
+		strcpy(filename, fp_dentry->d_name.name);
 		mutex_lock(&crypt_stat->cs_mutex);
 		if ((crypt_stat->flags & ECRYPTFS_ENCRYPTED) ||
 			((mount_crypt_stat->flags & ECRYPTFS_ENABLE_FILTERING)
@@ -388,88 +403,6 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 #endif
 
-#ifdef CONFIG_WTL_ENCRYPTION_FILTER
-int is_file_name_match(struct ecryptfs_mount_crypt_stat *mcs,
-					struct dentry *fp_dentry)
-{
-	int i;
-	char *str = NULL;
-	if (!(strcmp("/", fp_dentry->d_name.name))
-		|| !(strcmp("", fp_dentry->d_name.name)))
-		return 0;
-	str = kzalloc(mcs->max_name_filter_len + 1, GFP_KERNEL);
-	if (!str) {
-		printk(KERN_ERR "%s: Out of memory whilst attempting "
-			       "to kzalloc [%zd] bytes\n", __func__,
-			       (mcs->max_name_filter_len + 1));
-		return 0;
-	}
-
-	for (i = 0; i < ENC_NAME_FILTER_MAX_INSTANCE; i++) {
-		int len = 0;
-		struct dentry *p = fp_dentry;
-		if (!mcs->enc_filter_name[i] ||
-			 !strlen(mcs->enc_filter_name[i]))
-			break;
-
-		while (1) {
-			if (len == 0) {
-				len = strlen(p->d_name.name);
-				if (len > mcs->max_name_filter_len)
-					break;
-				strcpy(str, p->d_name.name);
-			} else {
-				len = len + 1 + strlen(p->d_name.name) ;
-				if (len > mcs->max_name_filter_len)
-					break;
-				strcat(str, "/");
-				strcat(str, p->d_name.name);
-			}
-
-			if (strnicmp(str, mcs->enc_filter_name[i], len))
-				break;
-			p = p->d_parent;
-
-			if (!(strcmp("/", p->d_name.name))
-				|| !(strcmp("", p->d_name.name))) {
-				if (len == strlen(mcs->enc_filter_name[i])) {
-					kfree(str);
-					return 1;
-				}
-				break;
-			}
-		}
-	}
-	kfree(str);
-	return 0;
-}
-
-int is_file_ext_match(struct ecryptfs_mount_crypt_stat *mcs, char *str)
-{
-	int i;
-	char ext[NAME_MAX + 1] = {0};
-
-	char *token;
-	int count = 0;
-	while ((token = strsep(&str, ".")) != NULL) {
-		strncpy(ext, token, NAME_MAX);
-		count++;
-	}
-	if (count <= 1)
-		return 0;
-
-	for (i = 0; i < ENC_EXT_FILTER_MAX_INSTANCE; i++) {
-		if (!mcs->enc_filter_ext[i] || !strlen(mcs->enc_filter_ext[i]))
-			return 0;
-		if (strlen(ext) != strlen(mcs->enc_filter_ext[i]))
-			continue;
-		if (!strnicmp(ext, mcs->enc_filter_ext[i], strlen(ext)))
-			return 1;
-	}
-	return 0;
-}
-#endif
-
 const struct file_operations ecryptfs_dir_fops = {
 	.readdir = ecryptfs_readdir,
 	.read = generic_read_dir,
@@ -497,7 +430,7 @@ const struct file_operations ecryptfs_main_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = ecryptfs_compat_ioctl,
 #endif
-	.mmap = generic_file_mmap,
+	.mmap = ecryptfs_file_mmap,
 	.open = ecryptfs_open,
 	.flush = ecryptfs_flush,
 	.release = ecryptfs_release,

@@ -138,7 +138,6 @@ struct clockdomain {
  * @clkdm_wakeup: Force a clockdomain to wakeup
  * @clkdm_allow_idle: Enable hw supervised idle transitions for clock domain
  * @clkdm_deny_idle: Disable hw supervised idle transitions for clock domain
- * @clkdm_is_idle: Check if hw supervised idle transitions are enabled
  * @clkdm_clk_enable: Put the clkdm in right state for a clock enable
  * @clkdm_clk_disable: Put the clkdm in right state for a clock disable
  */
@@ -155,7 +154,6 @@ struct clkdm_ops {
 	int	(*clkdm_wakeup)(struct clockdomain *clkdm);
 	void	(*clkdm_allow_idle)(struct clockdomain *clkdm);
 	void	(*clkdm_deny_idle)(struct clockdomain *clkdm);
-	int	(*clkdm_is_idle)(struct clockdomain *clkdm);
 	int	(*clkdm_clk_enable)(struct clockdomain *clkdm);
 	int	(*clkdm_clk_disable)(struct clockdomain *clkdm);
 };
@@ -179,7 +177,6 @@ int clkdm_clear_all_sleepdeps(struct clockdomain *clkdm);
 
 void clkdm_allow_idle(struct clockdomain *clkdm);
 void clkdm_deny_idle(struct clockdomain *clkdm);
-int clkdm_is_idle(struct clockdomain *clkdm);
 
 int clkdm_wakeup(struct clockdomain *clkdm);
 int clkdm_sleep(struct clockdomain *clkdm);

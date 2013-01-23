@@ -39,7 +39,7 @@
  *              The COM port number associated with the device in use.
  *  @return ML_SUCCESS if successful, a non-zero error code otherwise.
  */
-unsigned char MLSLSerialOpen(char const *port, void **sl_handle)
+tMLError MLSLSerialOpen(char const *port, void **sl_handle)
 {
 	return ML_SUCCESS;
 }
@@ -48,7 +48,7 @@ unsigned char MLSLSerialOpen(char const *port, void **sl_handle)
  *  @brief  used to reset any buffering the driver may be doing
  *  @return ML_SUCCESS if successful, a non-zero error code otherwise.
  */
-unsigned char MLSLSerialReset(void *sl_handle)
+tMLError MLSLSerialReset(void *sl_handle)
 {
 	return ML_SUCCESS;
 }
@@ -58,7 +58,7 @@ unsigned char MLSLSerialReset(void *sl_handle)
  *          This port is used to send and receive data to the MPU device.
  *  @return ML_SUCCESS if successful, a non-zero error code otherwise.
  */
-unsigned char MLSLSerialClose(void *sl_handle)
+tMLError MLSLSerialClose(void *sl_handle)
 {
 	return ML_SUCCESS;
 }
@@ -73,7 +73,7 @@ unsigned char MLSLSerialClose(void *sl_handle)
  *
  *  @return ML_SUCCESS if the command is successful, an error code otherwise.
  */
-unsigned char MLSLSerialWriteSingle(void *sl_handle,
+tMLError MLSLSerialWriteSingle(void *sl_handle,
 			       unsigned char slaveAddr,
 			       unsigned char registerAddr,
 			       unsigned char data)
@@ -94,11 +94,11 @@ unsigned char MLSLSerialWriteSingle(void *sl_handle,
  *
  *  @return ML_SUCCESS if successful, a non-zero error code otherwise.
  */
-unsigned char MLSLSerialWrite(void *sl_handle,
+tMLError MLSLSerialWrite(void *sl_handle,
 			 unsigned char slaveAddr,
 			 unsigned short length, unsigned char const *data)
 {
-	unsigned char result;
+	tMLError result;
 	const unsigned short dataLength = length - 1;
 	const unsigned char startRegAddr = data[0];
 	unsigned char i2cWrite[SERIAL_MAX_TRANSFER_SIZE + 1];
@@ -139,12 +139,12 @@ unsigned char MLSLSerialWrite(void *sl_handle,
  *
  *  @return Zero if successful; an error code otherwise
  */
-unsigned char MLSLSerialRead(void *sl_handle,
+tMLError MLSLSerialRead(void *sl_handle,
 			unsigned char slaveAddr,
 			unsigned char registerAddr,
 			unsigned short length, unsigned char *data)
 {
-	unsigned char result;
+	tMLError result;
 	unsigned short bytesRead = 0;
 
 	if (registerAddr == MPUREG_FIFO_R_W
@@ -177,17 +177,17 @@ unsigned char MLSLSerialRead(void *sl_handle,
  *
  *  @return Zero if successful; an error code otherwise
  */
-unsigned char MLSLSerialWriteMem(void *sl_handle,
+tMLError MLSLSerialWriteMem(void *sl_handle,
 			    unsigned char slaveAddr,
 			    unsigned short memAddr,
 			    unsigned short length,
 			    unsigned char const *data)
 {
-	unsigned char result;
+	tMLError result;
 	unsigned short bytesWritten = 0;
 
 	if ((memAddr & 0xFF) + length > MPU_MEM_BANK_SIZE) {
-		pr_err
+		printk
 		    ("memory read length (%d B) extends beyond its limits (%d) "
 		     "if started at location %d\n", length,
 		     MPU_MEM_BANK_SIZE, memAddr & 0xFF);
@@ -219,16 +219,16 @@ unsigned char MLSLSerialWriteMem(void *sl_handle,
  *
  *  @return Zero if successful; an error code otherwise
  */
-unsigned char MLSLSerialReadMem(void *sl_handle,
+tMLError MLSLSerialReadMem(void *sl_handle,
 			   unsigned char slaveAddr,
 			   unsigned short memAddr,
 			   unsigned short length, unsigned char *data)
 {
-	unsigned char result;
+	tMLError result;
 	unsigned short bytesRead = 0;
 
 	if ((memAddr & 0xFF) + length > MPU_MEM_BANK_SIZE) {
-		pr_err
+		printk
 		    ("memory read length (%d B) extends beyond its limits (%d) "
 		     "if started at location %d\n", length,
 		     MPU_MEM_BANK_SIZE, memAddr & 0xFF);
@@ -259,18 +259,18 @@ unsigned char MLSLSerialReadMem(void *sl_handle,
  *
  *  @return Zero if successful; an error code otherwise
  */
-unsigned char MLSLSerialWriteFifo(void *sl_handle,
+tMLError MLSLSerialWriteFifo(void *sl_handle,
 			     unsigned char slaveAddr,
 			     unsigned short length,
 			     unsigned char const *data)
 {
-	unsigned char result;
+	tMLError result;
 	unsigned char i2cWrite[SERIAL_MAX_TRANSFER_SIZE + 1];
 	unsigned short bytesWritten = 0;
 
 	if (length > FIFO_HW_SIZE) {
-		pr_err
-		       ("maximum fifo write length is %d\n", FIFO_HW_SIZE);
+		printk(KERN_ERR
+		       "maximum fifo write length is %d\n", FIFO_HW_SIZE);
 		return ML_ERROR_INVALID_PARAMETER;
 	}
 	while (bytesWritten < length) {
@@ -299,16 +299,16 @@ unsigned char MLSLSerialWriteFifo(void *sl_handle,
  *
  *  @return Zero if successful; an error code otherwise
  */
-unsigned char MLSLSerialReadFifo(void *sl_handle,
+tMLError MLSLSerialReadFifo(void *sl_handle,
 			    unsigned char slaveAddr,
 			    unsigned short length, unsigned char *data)
 {
-	unsigned char result;
+	tMLError result;
 	unsigned short bytesRead = 0;
 
 	if (length > FIFO_HW_SIZE) {
-		pr_err
-		       ("maximum fifo read length is %d\n", FIFO_HW_SIZE);
+		printk(KERN_ERR
+		       "maximum fifo read length is %d\n", FIFO_HW_SIZE);
 		return ML_ERROR_INVALID_PARAMETER;
 	}
 	while (bytesRead < length) {

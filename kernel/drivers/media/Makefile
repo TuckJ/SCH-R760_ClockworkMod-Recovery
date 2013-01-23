@@ -12,4 +12,5 @@ obj-y += common/ rc/ video/
 
 obj-$(CONFIG_VIDEO_DEV) += radio/
 obj-$(CONFIG_DVB_CORE)  += dvb/
-obj-$(CONFIG_DEV_SI470X) += radio/
+obj-$(CONFIG_TDMB)  += tdmb/
+obj-$(CONFIG_ISDBT_FC8100)	+= isdbt/

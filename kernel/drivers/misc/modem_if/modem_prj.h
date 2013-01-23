@@ -19,7 +19,6 @@
 #include <linux/wait.h>
 #include <linux/miscdevice.h>
 #include <linux/skbuff.h>
-#include <linux/wakelock.h>
 
 
 #define MAX_LINK_DEVTYPE 3
@@ -45,15 +44,12 @@
 #define IOCTL_MODEM_DUMP_START	_IO('o', 0x32)
 #define IOCTL_MODEM_DUMP_UPDATE	_IO('o', 0x33)
 #define IOCTL_MODEM_FORCE_CRASH_EXIT _IO('o', 0x34)
-#define IOCTL_MODEM_CP_UPLOAD _IO('o', 0x35)
-#define IOCTL_MODEM_DUMP_RESET _IO('o', 0x36)
+#define IOCTL_MODEM_DUMP_RESET _IO('o', 0x35)
 
 #define IPC_HEADER_MAX_SIZE	6 /* fmt 3, raw 6, rfs 6 */
 
 #define PSD_DATA_CHID_BEGIN	0x2A
 #define PSD_DATA_CHID_END	0x38
-
-#define CP_LOOPBACK_CHANNEL	30
 
 #define IP6VERSION	6
 
@@ -63,14 +59,12 @@
 /* Be careful!! below sequence shouldn't be changed*/
 enum modem_state {
 	STATE_OFFLINE,
-	STATE_CRASH_RESET,
+	__UNUSED__,
 	STATE_CRASH_EXIT,
 	STATE_BOOTING,
 	STATE_ONLINE,
 	STATE_NV_REBUILDING,
 	STATE_LOADER_DONE,
-	STATE_SIM_ATTACH,
-	STATE_SIM_DETACH,
 };
 
 enum {
@@ -80,11 +74,6 @@ enum {
 	COM_BOOT,
 	COM_CRASH,
 	COM_BOOT_EBL,
-};
-
-struct sim_state {
-	bool online; /* SIM is online? */
-	bool changed; /* online is changed? */
 };
 
 struct header_data {
@@ -121,8 +110,6 @@ struct io_device {
 	enum modem_io io_typ;
 	enum modem_network net_typ;
 
-	atomic_t opened;
-
 	struct sk_buff_head sk_rx_q;
 
 	/* work for each io device, when delayed work needed
@@ -142,14 +129,8 @@ struct io_device {
 	 */
 	void (*modem_state_changed)(struct io_device *iod, enum modem_state);
 
-	/* inform the IO device that the SIM is not inserting or removing */
-	void (*sim_state_changed)(struct io_device *iod, bool sim_online);
-
 	struct link_device *link;
 	struct modem_ctl *mc;
-
-	struct wake_lock wakelock;
-	long waketime;
 
 	void *private_data;
 };
@@ -216,7 +197,6 @@ struct modem_ctl {
 	char *name;
 
 	int phone_state;
-	struct sim_state sim_state;
 
 	unsigned gpio_cp_on;
 	unsigned gpio_reset_req_n;
@@ -227,14 +207,12 @@ struct modem_ctl {
 	unsigned gpio_flm_uart_sel;
 	unsigned gpio_cp_warm_reset;
 	unsigned gpio_cp_off;
-	unsigned gpio_sim_detect;
 
 	int irq_phone_active;
-	int irq_sim_detect;
 
 	struct work_struct work;
 
-#ifdef CONFIG_LTE_MODEM_CMC221
+#if defined(CONFIG_LTE_MODEM_CMC221) || defined(CONFIG_LTE_MODEM_CMC220)
 	const struct attribute_group *group;
 	unsigned gpio_slave_wakeup;
 	unsigned gpio_host_wakeup;
@@ -249,6 +227,9 @@ struct modem_ctl {
 	int irq[3];
 #endif /*CONFIG_LTE_MODEM_CMC221*/
 
+#ifdef CONFIG_INTERNAL_MODEM_IF
+	void (*clear_intr)(void);
+#endif
 	struct modemctl_ops ops;
 	struct io_device *iod;
 };

@@ -22,12 +22,15 @@
 #include <linux/i2c.h>
 #include <linux/delay.h>
 #include <linux/power_supply.h>
+#include <linux/power/sec_battery_px.h>
 #include <linux/power/smb347_charger.h>
+#include <linux/mfd/max8997.h>
 #include <linux/gpio.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
-#include <linux/battery.h>
+#include <plat/gpio-cfg.h>
+#include <mach/gpio-p4.h>
 
 /* Slave address */
 #define SMB347_SLAVE_ADDR		0x0C
@@ -69,31 +72,48 @@
 #define SMB347_CHARGING_STATUS	(1 << 5)
 #define SMB347_CHARGER_ERROR	(1 << 6)
 
-#define CHARGER_STATUS_FULL             0x1
-#define CHARGER_STATUS_CHARGERERR       0x2
-#define CHARGER_STATUS_USB_FAIL         0x3
-#define CHARGER_VBATT_UVLO              0x4
-
 struct smb347_chg_data {
-	struct device *dev;
 	struct i2c_client *client;
 	struct smb_charger_data *pdata;
-	struct smb_charger_callbacks callbacks;
-	struct work_struct charger_work;
+	struct smb_charger_callbacks *callbacks;
 };
+
+static struct smb347_chg_data *smb347_chg;
+
+static bool smb347_check_powersource(struct smb347_chg_data *chg)
+{
+	/* Power source needs for only P4C H/W rev0.2 */
+	if (system_rev != 2)
+		return true;
+
+	/* V_BUS detect by TA_nConnected */
+	if (!gpio_get_value(chg->pdata->ta_nconnected)) {
+		pr_err("smb347 power source is not detected\n");
+		return false;
+	}
+
+	return true;
+}
 
 static int smb347_i2c_read(struct i2c_client *client, u8 reg, u8 *data)
 {
+	struct smb347_chg_data *chg = smb347_chg;
 	int ret = 0;
 
+	/* Only for P4C rev0.2, Check vbus for opeartion charger */
+	if (!smb347_check_powersource(chg))
+		return -EINVAL;
+
 	if (!client) {
-		dev_err(&client->dev, "%s: err\n", __func__);
+		pr_err("smb347 i2c client error(addr : 0x%02x)\n", reg);
 		return -ENODEV;
 	}
 
 	ret = i2c_smbus_read_byte_data(client, reg);
-	if (ret < 0)
-		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
+	if (ret < 0) {
+		pr_err("smb347 i2c read error(addr : 0x%02x)\n", reg);
+		return -EIO;
+	}
 
 	*data = ret & 0xff;
 	return 0;
@@ -101,41 +121,76 @@ static int smb347_i2c_read(struct i2c_client *client, u8 reg, u8 *data)
 
 static int smb347_i2c_write(struct i2c_client *client, u8 reg, u8 data)
 {
+	struct smb347_chg_data *chg = smb347_chg;
 	int ret = 0;
 
+	/* Only for P4C rev0.2, Check vbus for opeartion charger */
+	if (!smb347_check_powersource(chg))
+		return -EINVAL;
+
 	if (!client) {
-		dev_err(&client->dev, "%s: err\n", __func__);
+		pr_err("smb347 i2c client error(addr:0x%02x data:0x%02x)\n",
+			reg, data);
 		return -ENODEV;
 	}
 
 	ret = i2c_smbus_write_byte_data(client, reg, data);
-	if (ret < 0)
-		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
+	if (ret < 0) {
+		pr_err("smb347 i2c write error(addr:0x%02x data:0x%02x)\n",
+			reg, data);
+		return -EIO;
+	}
 
+	udelay(10);
 	return ret;
 }
 
-static void smb347_test_read(struct smb347_chg_data *chg)
+static void smb347_test_read(void)
 {
+	struct smb347_chg_data *chg = smb347_chg;
 	u8 data = 0;
 	u32 addr = 0;
 	pr_info("%s\n", __func__);
 
+	/* Only for P4C rev0.2, Check vbus for opeartion charger */
+	if (!smb347_check_powersource(chg))
+		return;
+
 	for (addr = 0; addr <= 0x0E; addr++) {
 		smb347_i2c_read(chg->client, addr, &data);
-		dev_info(&chg->client->dev,
-			"smb347 addr : 0x%02x data : 0x%02x\n",	addr, data);
+		pr_info("smb347 addr : 0x%02x data : 0x%02x\n", addr, data);
 	}
 
 	for (addr = 0x30; addr <= 0x3F; addr++) {
 		smb347_i2c_read(chg->client, addr, &data);
-		dev_info(&chg->client->dev,
-			"smb347 addr : 0x%02x data : 0x%02x\n",	addr, data);
+		pr_info("smb347 addr : 0x%02x data : 0x%02x\n", addr, data);
 	}
+}
+
+static void smb347_enable_charging(struct smb347_chg_data *chg)
+{
+	pr_info("%s\n", __func__);
+	gpio_set_value(chg->pdata->enable, 0);
+}
+
+static void smb347_disable_charging(struct smb347_chg_data *chg)
+{
+	pr_info("%s\n", __func__);
+	gpio_set_value(chg->pdata->enable, 1);
 }
 
 static void smb347_charger_init(struct smb347_chg_data *chg)
 {
+	pr_info("%s\n", __func__);
+
+	/* Only for P4C rev0.2, Check vbus for opeartion charger */
+	if (!smb347_check_powersource(chg))
+		return;
+
+	/* Set GPIO_TA_EN as HIGH, charging disable */
+	smb347_disable_charging(chg);
+	mdelay(100);
+
 	/* Allow volatile writes to CONFIG registers */
 	smb347_i2c_write(chg->client, SMB347_COMMAND_A, 0x80);
 
@@ -155,7 +210,7 @@ static void smb347_charger_init(struct smb347_chg_data *chg)
 	smb347_i2c_write(chg->client, SMB347_INPUT_CURRENTLIMIT, 0x66);
 
 	/* Various func. : USBIN primary input, VCHG func. enable */
-	smb347_i2c_write(chg->client, SMB347_VARIOUS_FUNCTIONS, 0x87);
+	smb347_i2c_write(chg->client, SMB347_VARIOUS_FUNCTIONS, 0xA7);
 
 	/* Float voltage : 4.2V */
 	smb347_i2c_write(chg->client, SMB347_FLOAT_VOLTAGE, 0x63);
@@ -167,21 +222,28 @@ static void smb347_charger_init(struct smb347_chg_data *chg)
 	smb347_i2c_write(chg->client, SMB347_STAT_TIMERS_CONTROL, 0x1A);
 
 	/* Therm control : Therm monitor disable */
-	smb347_i2c_write(chg->client, SMB347_THERM_CONTROL_A, 0x7F);
+	smb347_i2c_write(chg->client, SMB347_THERM_CONTROL_A, 0xBF);
 
 	/* USB selection : USB2.0(100mA/500mA), INOK polarity */
-	/* Active low */
-	smb347_i2c_write(chg->client, SMB347_SYSOK_USB30_SELECTION, 0x08);
+	if ((system_rev >= 2) && (system_rev <= 5)) {
+		/* Active high */
+		smb347_i2c_write(chg->client, SMB347_SYSOK_USB30_SELECTION,
+		0x09);
+	} else {
+		/* Active low */
+		smb347_i2c_write(chg->client, SMB347_SYSOK_USB30_SELECTION,
+		0x08);
+	}
 
 	/* Other control */
-	smb347_i2c_write(chg->client, SMB347_OTHER_CONTROL_A, 0x1D);
+	smb347_i2c_write(chg->client, SMB347_OTHER_CONTROL_A, 0x0D);
 
 	/* OTG tlim therm control */
 	smb347_i2c_write(chg->client, SMB347_OTG_TLIM_THERM_CONTROL, 0x3F);
 
 	/* Limit cell temperature */
-	smb347_i2c_write(chg->client,
-			SMB347_LIMIT_CELL_TEMPERATURE_MONITOR, 0x01);
+	smb347_i2c_write(chg->client, SMB347_LIMIT_CELL_TEMPERATURE_MONITOR,
+	0x01);
 
 	/* Fault interrupt : Clear */
 	smb347_i2c_write(chg->client, SMB347_FAULT_INTERRUPT, 0x00);
@@ -190,46 +252,63 @@ static void smb347_charger_init(struct smb347_chg_data *chg)
 	smb347_i2c_write(chg->client, SMB347_STATUS_INTERRUPT, 0x00);
 }
 
-static int smb347_read_status(struct smb_charger_callbacks *ptr)
+static int smb347_get_charging_state(void)
 {
-	struct smb347_chg_data *chg = container_of(ptr,
-			struct smb347_chg_data, callbacks);
+	struct smb347_chg_data *chg = smb347_chg;
+	int status = POWER_SUPPLY_STATUS_UNKNOWN;
+	u8 data = 0;
 
-	u8 res = 0;
-	u8 reg_c;
-	int ret;
+	smb347_i2c_read(chg->client, SMB347_STATUS_C, &data);
+	pr_info("%s : 0x%xh(0x%02x)\n", __func__, SMB347_STATUS_C, data);
 
-	ret = smb347_i2c_read(chg->client, SMB347_STATUS_C, &reg_c);
-	if (ret < 0) {
-		dev_err(&chg->client->dev, "%s: I2C Read fail addr : 0x%x\n",
-			__func__, SMB347_STATUS_C);
-		msleep(50);
-		smb347_i2c_read(chg->client, SMB347_STATUS_C, &reg_c);
+	if (data & SMB347_CHARGING_ENABLE)
+		status = POWER_SUPPLY_STATUS_CHARGING;
+	else {
+		/* if error bit check, ignore the status of charger-ic */
+		if (data & SMB347_CHARGER_ERROR)
+			status = POWER_SUPPLY_STATUS_DISCHARGING;
+		/* At least one charge cycle terminated */
+		/*Charge current < Termination Current */
+		else if (data & SMB347_CHARGING_STATUS)
+			status = POWER_SUPPLY_STATUS_FULL;
 	}
 
-	dev_info(&chg->client->dev,
-		"addr : 0x%x, data : 0x%x\n", SMB347_STATUS_C, reg_c);
-
-	if (reg_c & SMB347_CHARGER_ERROR)
-		res = CHARGER_STATUS_CHARGERERR;
-	else if (reg_c & SMB347_CHARGING_STATUS)
-		res = CHARGER_STATUS_FULL;
-
-	return res;
+	return status;
 }
 
-static void smb347_set_charging_state(struct smb_charger_callbacks *ptr,
-		int cable_status)
+static int smb347_get_charger_is_full(void)
 {
-	struct smb347_chg_data *chg = container_of(ptr,
-			struct smb347_chg_data, callbacks);
+	struct smb347_chg_data *chg = smb347_chg;
+	int status = POWER_SUPPLY_STATUS_UNKNOWN;
+	u8 data = 0;
 
-	if (cable_status) {
+	smb347_i2c_read(chg->client, SMB347_STATUS_C, &data);
+	pr_info("%s : 0x%xh(0x%02x)\n", __func__, SMB347_STATUS_C, data);
+
+	if (data & SMB347_CHARGER_ERROR)
+		status = POWER_SUPPLY_STATUS_DISCHARGING;
+	else if (data & SMB347_CHARGING_STATUS)
+		status = POWER_SUPPLY_STATUS_FULL;
+
+	return status;
+}
+
+static void smb347_set_charging_state(int enable, int charging_mode)
+{
+	struct smb347_chg_data *chg = smb347_chg;
+	pr_info("%s : enable(%d), charging_mode(%d)\n",
+		__func__, enable, charging_mode);
+
+	if (enable) {
+		/* Only for P4C rev0.2, Check vbus for opeartion charger */
+		if (!smb347_check_powersource(chg))
+			return;
+
 		/* Init smb347 charger */
 		smb347_charger_init(chg);
 
-		switch (cable_status) {
-		case CABLE_TYPE_AC:
+		switch (charging_mode) {
+		case CABLE_TYPE_TA:
 			/* Input current limit : DCIN 1800mA, USBIN HC 1800mA */
 			smb347_i2c_write(chg->client,
 				SMB347_INPUT_CURRENTLIMIT, 0x66);
@@ -238,6 +317,15 @@ static void smb347_set_charging_state(struct smb_charger_callbacks *ptr,
 			smb347_i2c_write(chg->client, SMB347_COMMAND_B, 0x03);
 
 			pr_info("%s : 1.8A charging enable\n", __func__);
+			break;
+		case CABLE_TYPE_DESKDOCK:
+			/* Input current limit : DCIN 1500mA, USBIN HC 1500mA */
+			smb347_i2c_write(chg->client,
+				SMB347_INPUT_CURRENTLIMIT, 0x55);
+
+			/* CommandB : High-current mode */
+			smb347_i2c_write(chg->client, SMB347_COMMAND_B, 0x03);
+			pr_info("%s : 1.5A charging enable\n", __func__);
 			break;
 		case CABLE_TYPE_USB:
 			/* CommandB : USB5 */
@@ -250,11 +338,18 @@ static void smb347_set_charging_state(struct smb_charger_callbacks *ptr,
 			pr_info("%s : LOW(USB1) charging enable\n", __func__);
 			break;
 		}
+
+		smb347_enable_charging(chg);
+	} else {
+		smb347_disable_charging(chg);
 	}
+
+	smb347_test_read();
 }
 
-int smb347_get_charging_current(struct smb347_chg_data *chg)
+int smb347_get_charging_current(void)
 {
+	struct smb347_chg_data *chg = smb347_chg;
 	u8 data = 0;
 	int get_current = 0;
 
@@ -292,8 +387,24 @@ int smb347_get_charging_current(struct smb347_chg_data *chg)
 	return get_current;
 }
 
-static int smb347_i2c_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+void smb347_set_charging_current(int set_current)
+{
+	struct smb347_chg_data *chg = smb347_chg;
+
+	if (set_current > 450) {
+		/* CommandB : High-current mode */
+		smb347_i2c_write(chg->client, SMB347_COMMAND_B, 0x03);
+		udelay(10);
+	} else {
+		/* CommandB : USB5 */
+		smb347_i2c_write(chg->client, SMB347_COMMAND_B, 0x02);
+		udelay(10);
+	}
+	pr_debug("%s: Set charging current as %dmA.\n", __func__, set_current);
+}
+
+static int smb347_i2c_probe
+(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	struct smb347_chg_data *chg;
@@ -302,43 +413,46 @@ static int smb347_i2c_probe(struct i2c_client *client,
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE))
 		return -EIO;
 
-	dev_info(&client->dev, "%s : smb347 Charger Driver Loading\n",
-		__func__);
+	pr_info("%s : smb347 Charger Driver Loading\n", __func__);
 
 	chg = kzalloc(sizeof(struct smb347_chg_data), GFP_KERNEL);
 	if (!chg)
 		return -ENOMEM;
 
-	chg->client = client;
-	if (!chg->client) {
-		dev_err(&client->dev, "%s : No client\n", __func__);
-		ret = -EINVAL;
-		goto err_client;
-	} else {
-		chg->dev = &client->dev;
+	chg->callbacks = kzalloc(sizeof(struct smb_charger_callbacks),
+		GFP_KERNEL);
+	if (!chg->callbacks) {
+		kfree(chg);
+		return -ENOMEM;
 	}
 
+	chg->client = client;
 	chg->pdata = client->dev.platform_data;
+
+	i2c_set_clientdata(client, chg);
+	smb347_chg = chg;
+
 	if (!chg->pdata) {
-		dev_err(&client->dev, "%s : No platform data supplied\n",
-			__func__);
+		pr_err("%s : No platform data supplied\n", __func__);
 		ret = -EINVAL;
 		goto err_pdata;
 	}
 
-	i2c_set_clientdata(client, chg);
-
-	chg->callbacks.set_charging_state = smb347_set_charging_state;
-	chg->callbacks.get_status_reg = smb347_read_status;
-	if (chg->pdata->register_callbacks)
-		chg->pdata->register_callbacks(&chg->callbacks);
+	pr_info("register callback functions!\n");
+	chg->callbacks->set_charging_state = smb347_set_charging_state;
+	chg->callbacks->get_charging_state = smb347_get_charging_state;
+	chg->callbacks->set_charging_current = smb347_set_charging_current;
+	chg->callbacks->get_charging_current = smb347_get_charging_current;
+	chg->callbacks->get_charger_is_full = smb347_get_charger_is_full;
+	if (chg->pdata && chg->pdata->register_callbacks)
+		chg->pdata->register_callbacks(chg->callbacks);
 
 	pr_info("smb347 charger initialized.\n");
 
 	return 0;
 
 err_pdata:
-err_client:
+	kfree(chg->callbacks);
 	kfree(chg);
 	return ret;
 }

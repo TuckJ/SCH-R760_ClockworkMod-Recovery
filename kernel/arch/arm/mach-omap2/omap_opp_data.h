@@ -49,8 +49,6 @@
  */
 struct omap_opp_def {
 	char *hwmod_name;
-	char *voltdm_name;
-	char *clk_name;
 
 	unsigned long freq;
 	unsigned long u_volt;
@@ -61,11 +59,9 @@ struct omap_opp_def {
 /*
  * Initialization wrapper used to define an OPP for OMAP variants.
  */
-#define OPP_INITIALIZER(_hwmod_name, _clk_name, _voltdm_name, _enabled, _freq, _uv)	\
+#define OPP_INITIALIZER(_hwmod_name, _enabled, _freq, _uv)	\
 {								\
 	.hwmod_name	= _hwmod_name,				\
-	.clk_name	= _clk_name,				\
-	.voltdm_name	= _voltdm_name,				\
 	.default_available	= _enabled,			\
 	.freq		= _freq,				\
 	.u_volt		= _uv,					\
@@ -75,15 +71,12 @@ struct omap_opp_def {
  * Initialization wrapper used to define SmartReflex process data
  * XXX Is this needed?  Just use C99 initializers in data files?
  */
-#define VOLT_DATA_DEFINE(_v_nom, _v_margin, \
-		_efuse_offs, _errminlimit, _errgain, _abb_type) \
+#define VOLT_DATA_DEFINE(_v_nom, _efuse_offs, _errminlimit, _errgain)  \
 {								       \
 	.volt_nominal	= _v_nom,				       \
-	.volt_margin	= _v_margin,				       \
 	.sr_efuse_offs	= _efuse_offs,				       \
 	.sr_errminlimit = _errminlimit,				       \
-	.vp_errgain	= _errgain,				       \
-	.abb_type	= _abb_type,				       \
+	.vp_errgain	= _errgain				       \
 }
 
 /* Use this to initialize the default table */
@@ -93,21 +86,11 @@ extern int __init omap_init_opp_table(struct omap_opp_def *opp_def,
 
 extern struct omap_volt_data omap34xx_vddmpu_volt_data[];
 extern struct omap_volt_data omap34xx_vddcore_volt_data[];
-extern struct omap_vdd_dep_info omap34xx_vddmpu_dep_info[];
 extern struct omap_volt_data omap36xx_vddmpu_volt_data[];
 extern struct omap_volt_data omap36xx_vddcore_volt_data[];
-extern struct omap_vdd_dep_info omap36xx_vddmpu_dep_info[];
 
-extern struct omap_volt_data omap443x_vdd_mpu_volt_data[];
-extern struct omap_volt_data omap443x_vdd_iva_volt_data[];
-extern struct omap_volt_data omap443x_vdd_core_volt_data[];
-extern struct omap_volt_data omap446x_vdd_mpu_volt_data[];
-extern struct omap_volt_data omap446x_vdd_iva_volt_data[];
-extern struct omap_volt_data omap446x_vdd_core_volt_data[];
-
-extern struct omap_vdd_dep_info omap443x_vddmpu_dep_info[];
-extern struct omap_vdd_dep_info omap443x_vddiva_dep_info[];
-extern struct omap_vdd_dep_info omap446x_vddmpu_dep_info[];
-extern struct omap_vdd_dep_info omap446x_vddiva_dep_info[];
+extern struct omap_volt_data omap44xx_vdd_mpu_volt_data[];
+extern struct omap_volt_data omap44xx_vdd_iva_volt_data[];
+extern struct omap_volt_data omap44xx_vdd_core_volt_data[];
 
 #endif		/* __ARCH_ARM_MACH_OMAP2_OMAP_OPP_DATA_H */

@@ -23,25 +23,13 @@
 #include <linux/gpio.h>
 #include <linux/if_arp.h>
 #include <linux/wakelock.h>
-
+#include <linux/semaphore.h>
 #include <linux/hsi_driver_if.h>
 
 #include <linux/platform_data/modem.h>
 #include "modem_prj.h"
 #include "modem_link_device_mipi.h"
-
-
-static int mipi_hsi_attach_io_dev(struct link_device *ld,
-			struct io_device *iod)
-{
-	struct mipi_link_device *mipi_ld = to_mipi_link_device(ld);
-
-	iod->link = ld;
-
-	/* list up io devices */
-	list_add_tail(&iod->list, &mipi_ld->list_of_io_devices);
-	return 0;
-}
+#include "modem_utils.h"
 
 static int mipi_hsi_init_communication(struct link_device *ld,
 			struct io_device *iod)
@@ -53,17 +41,8 @@ static int mipi_hsi_init_communication(struct link_device *ld,
 		return hsi_init_handshake(mipi_ld, HSI_INIT_MODE_NORMAL);
 
 	case IPC_BOOT:
-		if (iod->id == 0x0) {
-			/* to prevent modem back powering by mipi
-			 * do not intialize mipi-link here !!
-			 */
-			mipi_ld->modem_power_on = false;
-			return 0;
-		} else if (iod->id == 0x01) {
-			return hsi_init_handshake(mipi_ld,
-				HSI_INIT_MODE_FLASHLESS_BOOT_EBL);
-		} else
-			return 0;
+		return hsi_init_handshake(mipi_ld,
+					HSI_INIT_MODE_FLASHLESS_BOOT);
 
 	case IPC_RAMDUMP:
 		return hsi_init_handshake(mipi_ld,
@@ -83,19 +62,15 @@ static void mipi_hsi_terminate_communication(
 
 	switch (iod->format) {
 	case IPC_BOOT:
-		if (mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened)
+		if (&mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened)
 			if_hsi_close_channel(&mipi_ld->hsi_channles[
 					HSI_FLASHLESS_CHANNEL]);
-		if (wake_lock_active(&mipi_ld->wlock))
-			wake_unlock(&mipi_ld->wlock);
 		break;
 
 	case IPC_RAMDUMP:
-		if (mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].opened)
+		if (&mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].opened)
 			if_hsi_close_channel(&mipi_ld->hsi_channles[
 					HSI_CP_RAMDUMP_CHANNEL]);
-		if (wake_lock_active(&mipi_ld->wlock))
-			wake_unlock(&mipi_ld->wlock);
 		break;
 
 	case IPC_FMT:
@@ -111,12 +86,11 @@ static int mipi_hsi_send(struct link_device *ld, struct io_device *iod,
 {
 	int ret;
 	struct mipi_link_device *mipi_ld = to_mipi_link_device(ld);
+
 	struct sk_buff_head *txq;
-	size_t tx_size;
 
 	switch (iod->format) {
 	case IPC_RAW:
-	case IPC_MULTI_RAW:
 		txq = &ld->sk_raw_tx_q;
 		break;
 
@@ -134,16 +108,6 @@ static int mipi_hsi_send(struct link_device *ld, struct io_device *iod,
 		return ret;
 
 	case IPC_BOOT:
-		if (iod->id == 0x0 && unlikely(!mipi_ld->modem_power_on)) {
-			mipi_ld->modem_power_on = true;
-			ret = hsi_init_handshake(mipi_ld,
-				HSI_INIT_MODE_FLASHLESS_BOOT);
-			if (ret < 0) {
-				pr_err("[MIPI-HSI] init fail : %d\n", ret);
-				return ret;
-			}
-		}
-
 		ret = if_hsi_write(&mipi_ld->hsi_channles[
 					HSI_FLASHLESS_CHANNEL],
 					(u32 *)skb->data, skb->len);
@@ -163,26 +127,13 @@ static int mipi_hsi_send(struct link_device *ld, struct io_device *iod,
 		break;
 	}
 
-	/* set wake_lock to prevent to sleep before tx_work thread run */
-	if (!wake_lock_active(&mipi_ld->wlock)) {
-		wake_lock(&mipi_ld->wlock);
-		pr_debug("[MIPI-HSI] wake_lock\n");
-	}
-
-	/* store the tx size before run the tx_delayed_work*/
-	tx_size = skb->len;
-
-	/* save io device into cb area */
-	*((struct io_device **)skb->cb) = iod;
+	/* save io device */
+	skbpriv(skb)->iod = iod;
 	/* en queue skb data */
 	skb_queue_tail(txq, skb);
 
-	if ((iod->format == IPC_RAW) || (iod->format == IPC_MULTI_RAW))
-		queue_delayed_work(ld->tx_raw_wq, &ld->tx_delayed_work, 0);
-	else
-		queue_work(ld->tx_wq, &ld->tx_work);
-
-	return tx_size;
+	queue_work(ld->tx_wq, &ld->tx_work);
+	return skb->len;
 }
 
 static void mipi_hsi_tx_work(struct work_struct *work)
@@ -193,22 +144,25 @@ static void mipi_hsi_tx_work(struct work_struct *work)
 	struct mipi_link_device *mipi_ld = to_mipi_link_device(ld);
 	struct io_device *iod;
 	struct sk_buff *fmt_skb;
+	struct sk_buff *raw_skb;
 	int send_channel = 0;
 
-	while (ld->sk_fmt_tx_q.qlen) {
-		pr_debug("[MIPI-HSI] fmt qlen : %d\n", ld->sk_fmt_tx_q.qlen);
-
-		if (ld->com_state != COM_ONLINE) {
-			pr_debug("[MIPI-HSI] fmt CP not ready\n");
-			return;
-		}
+	while (ld->sk_fmt_tx_q.qlen || ld->sk_raw_tx_q.qlen) {
+		pr_debug("[MIPI-HSI] fmt qlen : %d, raw qlen:%d\n",
+				ld->sk_fmt_tx_q.qlen, ld->sk_raw_tx_q.qlen);
 
 		fmt_skb = skb_dequeue(&ld->sk_fmt_tx_q);
 		if (fmt_skb) {
-			iod = *((struct io_device **)fmt_skb->cb);
+			iod = skbpriv(fmt_skb)->iod;
 
 			pr_debug("[MIPI-HSI] dequeue. fmt qlen : %d\n",
 						ld->sk_fmt_tx_q.qlen);
+
+			if (ld->com_state != COM_ONLINE) {
+				pr_err("[MIPI-HSI] CP not ready\n");
+				skb_queue_head(&ld->sk_fmt_tx_q, fmt_skb);
+				return;
+			}
 
 			switch (iod->format) {
 			case IPC_FMT:
@@ -235,69 +189,33 @@ static void mipi_hsi_tx_work(struct work_struct *work)
 			if (ret < 0) {
 				/* TODO: Re Enqueue */
 				pr_err("[MIPI-HSI] write fail : %d\n", ret);
-			}  else {
+			}  else
 				pr_debug("[MIPI-HSI] write Done\n");
-
-				if ((iod->format == IPC_FMT) ||
-						(iod->format == IPC_RFS))
-					print_hex_dump(KERN_DEBUG,
-							iod->format == IPC_FMT ?
-							"IPC-TX: " : "RFS-TX: ",
-							DUMP_PREFIX_NONE,
-							1, 1,
-							(void *)fmt_skb->data,
-							fmt_skb->len <= 16 ?
-							(size_t)fmt_skb->len :
-							(size_t)16, false);
-			}
 
 			dev_kfree_skb_any(fmt_skb);
 		}
-	}
-}
 
-static void mipi_hsi_tx_raw_work(struct work_struct *work)
-{
-	int ret;
-	struct link_device *ld = container_of(work, struct link_device,
-				tx_delayed_work.work);
-	struct mipi_link_device *mipi_ld = to_mipi_link_device(ld);
-	struct sk_buff *raw_skb;
-	unsigned bulk_size;
-
-	while (ld->sk_raw_tx_q.qlen) {
-		pr_debug("[MIPI-HSI] raw qlen:%d\n", ld->sk_raw_tx_q.qlen);
-
-		if (ld->com_state != COM_ONLINE) {
-			pr_debug("[MIPI-HSI] raw CP not ready\n");
-			return;
-		}
-
-		bulk_size = 0;
 		raw_skb = skb_dequeue(&ld->sk_raw_tx_q);
-		while (raw_skb) {
-			if (bulk_size + raw_skb->len < MIPI_BULK_TX_SIZE) {
-				memcpy(mipi_ld->bulk_tx_buf + bulk_size,
-						raw_skb->data, raw_skb->len);
-				bulk_size += raw_skb->len;
-				skb_queue_head(&mipi_ld->bulk_txq, raw_skb);
-			} else {
+		if (raw_skb) {
+			if (ld->com_state != COM_ONLINE) {
+				pr_err("[MIPI-HSI] RAW CP not ready\n");
 				skb_queue_head(&ld->sk_raw_tx_q, raw_skb);
-				break;
+				return;
 			}
-			raw_skb = skb_dequeue(&ld->sk_raw_tx_q);
-		}
 
-		ret = if_hsi_protocol_send(mipi_ld, HSI_RAW_CHANNEL,
-					(u32 *)mipi_ld->bulk_tx_buf, bulk_size);
-		if (ret < 0) {
-			raw_skb = skb_dequeue(&mipi_ld->bulk_txq);
-			while (raw_skb) {
-				skb_queue_head(&ld->sk_raw_tx_q, raw_skb);
-				raw_skb = skb_dequeue(&mipi_ld->bulk_txq);
-			}
-		} else
-			skb_queue_purge(&mipi_ld->bulk_txq);
+			pr_debug("[MIPI-HSI] dequeue. raw qlen:%d\n",
+						ld->sk_raw_tx_q.qlen);
+
+			ret = if_hsi_protocol_send(mipi_ld, HSI_RAW_CHANNEL,
+					(u32 *)raw_skb->data, raw_skb->len);
+			if (ret < 0) {
+				/* TODO: Re Enqueue */
+				pr_err("[MIPI-HSI] write fail : %d\n", ret);
+			}  else
+				pr_debug("[MIPI-HSI] write Done\n");
+
+			dev_kfree_skb_any(raw_skb);
+		}
 	}
 }
 
@@ -324,9 +242,8 @@ static int if_hsi_set_wakeline(struct if_hsi_channel *channel,
 	ret = hsi_ioctl(channel->dev, state ?
 		HSI_IOCTL_ACWAKE_UP : HSI_IOCTL_ACWAKE_DOWN, NULL);
 	if (ret) {
-		if (ret != -EPERM)
-			pr_err("[MIPI-HSI] ACWAKE(%d) setting fail : %d\n",
-						state, ret);
+		pr_err("[MIPI-HSI] ACWAKE(%d) setting fail : %d\n", state,
+					ret);
 		/* duplicate operation */
 		if (ret == -EPERM)
 			channel->acwake = state;
@@ -378,13 +295,12 @@ static int if_hsi_open_channel(struct if_hsi_channel *channel)
 	ret = hsi_open(channel->dev);
 	if (ret) {
 		pr_err("[MIPI-HSI] hsi_open fail : %d\n", ret);
-		if (ret == -EBUSY)
-			pr_err("[MIPI-HSI] ch %d already opened\n",
-					channel->channel_id);
-		else
-			return ret;
+		return ret;
 	}
 	channel->opened = 1;
+
+	channel->send_step = STEP_IDLE;
+	channel->recv_step = STEP_IDLE;
 
 	pr_debug("[MIPI-HSI] hsi_open Done : %d\n", channel->channel_id);
 	return 0;
@@ -429,7 +345,6 @@ static void mipi_hsi_start_work(struct work_struct *work)
 			container_of(work, struct mipi_link_device,
 						start_work.work);
 
-	mipi_ld->ld.com_state = COM_HANDSHAKE;
 	ret = if_hsi_protocol_send(mipi_ld, HSI_CMD_CHANNEL, &start_cmd, 1);
 	if (ret < 0) {
 		/* TODO: Re Enqueue */
@@ -462,8 +377,6 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 				if (ret)
 					return ret;
 			}
-			mipi_ld->hsi_channles[i].send_step = STEP_IDLE;
-			mipi_ld->hsi_channles[i].recv_step = STEP_IDLE;
 
 			hsi_ioctl(mipi_ld->hsi_channles[i].dev,
 						HSI_IOCTL_GET_TX, &tx_config);
@@ -481,11 +394,11 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 			hsi_ioctl(mipi_ld->hsi_channles[i].dev,
 						HSI_IOCTL_SET_RX, &rx_config);
 			pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-		}
 
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-			HSI_IOCTL_SET_WAKE_RX_4WIRES_MODE, NULL);
-		pr_debug("[MIPI-HSI] Set 4 WIRE MODE\n");
+			hsi_ioctl(mipi_ld->hsi_channles[i].dev,
+				HSI_IOCTL_SET_ACREADY_NORMAL, NULL);
+			pr_debug("[MIPI-HSI] ACREADY_NORMAL\n");
+		}
 
 		if (mipi_ld->ld.com_state != COM_ONLINE)
 			mipi_ld->ld.com_state = COM_HANDSHAKE;
@@ -505,73 +418,17 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 	case HSI_INIT_MODE_FLASHLESS_BOOT:
 		mipi_ld->ld.com_state = COM_BOOT;
 
-		if (timer_pending(&mipi_ld->hsi_acwake_down_timer))
-			del_timer(&mipi_ld->hsi_acwake_down_timer);
-
 		if (mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened) {
-			hsi_ioctl(mipi_ld->hsi_channles[
-			HSI_FLASHLESS_CHANNEL].dev, HSI_IOCTL_SW_RESET,
-						NULL);
-			for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++)
-				mipi_ld->hsi_channles[i].opened = 0;
-		}
-
-		if (!mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened)
-			if_hsi_open_channel(
+			hsi_write_cancel(mipi_ld->hsi_channles[
+					HSI_FLASHLESS_CHANNEL].dev);
+			hsi_read_cancel(mipi_ld->hsi_channles[
+					HSI_FLASHLESS_CHANNEL].dev);
+		} else {
+			ret = if_hsi_open_channel(
 				&mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL]);
-		mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].send_step
-					= STEP_IDLE;
-		mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].recv_step
-					= STEP_IDLE;
-
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-					HSI_IOCTL_GET_TX, &tx_config);
-		tx_config.mode = 2;
-		tx_config.divisor = 3; /* Speed : 24MHz */
-		tx_config.channels = 1;
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-					HSI_IOCTL_SET_TX, &tx_config);
-
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-					HSI_IOCTL_GET_RX, &rx_config);
-		rx_config.mode = 2;
-		rx_config.divisor = 3; /* Speed : 24MHz */
-		rx_config.channels = 1;
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-					HSI_IOCTL_SET_RX, &rx_config);
-		pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-				HSI_IOCTL_SET_WAKE_RX_3WIRES_MODE, NULL);
-		pr_debug("[MIPI-HSI] Set 3 WIRE MODE\n");
-
-		if (!wake_lock_active(&mipi_ld->wlock)) {
-			wake_lock(&mipi_ld->wlock);
-			pr_debug("[MIPI-HSI] wake_lock\n");
+			if (ret)
+				return ret;
 		}
-
-		ret = hsi_read(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-		mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].rx_data, 1);
-		if (ret)
-			pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
-
-		pr_debug("[MIPI-HSI] hsi_init_handshake Done : FLASHLESS_BOOT\n");
-		return 0;
-
-	case HSI_INIT_MODE_FLASHLESS_BOOT_EBL:
-		mipi_ld->ld.com_state = COM_BOOT_EBL;
-
-		if (mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened) {
-			hsi_ioctl(mipi_ld->hsi_channles[
-			HSI_FLASHLESS_CHANNEL].dev, HSI_IOCTL_SW_RESET,
-						NULL);
-			for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++)
-				mipi_ld->hsi_channles[i].opened = 0;
-		}
-
-		if (!mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].opened)
-			if_hsi_open_channel(
-				&mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL]);
 
 		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
 					HSI_IOCTL_GET_TX, &tx_config);
@@ -589,10 +446,6 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
 					HSI_IOCTL_SET_RX, &rx_config);
 		pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-				HSI_IOCTL_SET_WAKE_RX_4WIRES_MODE, NULL);
-		pr_debug("[MIPI-HSI] Set 4 WIRE MODE\n");
 
 		if (!wake_lock_active(&mipi_ld->wlock)) {
 			wake_lock(&mipi_ld->wlock);
@@ -603,31 +456,31 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 			&mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL], 1);
 
 		ret = hsi_read(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
-		mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].rx_data, 1);
+			mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].rx_data,
+					HSI_FLASHBOOT_ACK_LEN / 4);
 		if (ret)
 			pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
 
-		pr_debug("[MIPI-HSI] hsi_init_handshake Done : FLASHLESS_BOOT_EBL\n");
+		hsi_ioctl(mipi_ld->hsi_channles[HSI_FLASHLESS_CHANNEL].dev,
+			HSI_IOCTL_SET_ACREADY_NORMAL, NULL);
+
+		pr_debug("[MIPI-HSI] hsi_init_handshake Done : FLASHLESS_BOOT\n");
 		return 0;
 
 	case HSI_INIT_MODE_CP_RAMDUMP:
 		mipi_ld->ld.com_state = COM_CRASH;
 
 		if (mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].opened) {
-			hsi_ioctl(mipi_ld->hsi_channles[
-			HSI_CP_RAMDUMP_CHANNEL].dev, HSI_IOCTL_SW_RESET,
-						NULL);
-			for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++)
-				mipi_ld->hsi_channles[i].opened = 0;
-		}
-
-		if (!mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].opened)
-			if_hsi_open_channel(
+			hsi_write_cancel(mipi_ld->hsi_channles[
+					HSI_CP_RAMDUMP_CHANNEL].dev);
+			hsi_read_cancel(mipi_ld->hsi_channles[
+					HSI_CP_RAMDUMP_CHANNEL].dev);
+		} else {
+			ret = if_hsi_open_channel(
 				&mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL]);
-		mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].send_step
-					= STEP_IDLE;
-		mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].recv_step
-					= STEP_IDLE;
+			if (ret)
+				return ret;
+		}
 
 		hsi_ioctl(mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].dev,
 					HSI_IOCTL_GET_TX, &tx_config);
@@ -645,10 +498,6 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 		hsi_ioctl(mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].dev,
 					HSI_IOCTL_SET_RX, &rx_config);
 		pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].dev,
-				HSI_IOCTL_SET_WAKE_RX_4WIRES_MODE, NULL);
-		pr_debug("[MIPI-HSI] Set 4 WIRE MODE\n");
 
 		if (!wake_lock_active(&mipi_ld->wlock)) {
 			wake_lock(&mipi_ld->wlock);
@@ -665,156 +514,15 @@ static int hsi_init_handshake(struct mipi_link_device *mipi_ld, int mode)
 		if (ret)
 			pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
 
+		hsi_ioctl(mipi_ld->hsi_channles[HSI_CP_RAMDUMP_CHANNEL].dev,
+			HSI_IOCTL_SET_ACREADY_NORMAL, NULL);
+
 		pr_debug("[MIPI-HSI] hsi_init_handshake Done : RAMDUMP\n");
 		return 0;
 
 	default:
 		return -EINVAL;
 	}
-}
-
-static void hsi_conn_err_recovery(struct mipi_link_device *mipi_ld)
-{
-	int i;
-	int ret;
-	struct hst_ctx tx_config;
-	struct hsr_ctx rx_config;
-	unsigned long int flags;
-	struct if_hsi_command *hsi_cmd;
-
-	/* Remove all tx-command in list */
-	do {
-		spin_lock_irqsave(&mipi_ld->list_cmd_lock, flags);
-		if (!list_empty(&mipi_ld->list_of_hsi_cmd)) {
-			hsi_cmd = list_entry(mipi_ld->list_of_hsi_cmd.next,
-					struct if_hsi_command, list);
-			list_del(&hsi_cmd->list);
-			spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
-		} else {
-			spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
-			break;
-		}
-	} while (true);
-
-	if (timer_pending(&mipi_ld->hsi_acwake_down_timer))
-		del_timer(&mipi_ld->hsi_acwake_down_timer);
-
-	if (mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].opened) {
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-				HSI_IOCTL_SW_RESET, NULL);
-		for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++)
-			mipi_ld->hsi_channles[i].opened = 0;
-	}
-
-	for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++) {
-		if (!mipi_ld->hsi_channles[i].opened)
-			if_hsi_open_channel(&mipi_ld->hsi_channles[i]);
-
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_GET_TX, &tx_config);
-		tx_config.mode = 2;
-		tx_config.divisor = 0; /* Speed : 96MHz */
-		tx_config.channels = HSI_MAX_CHANNELS;
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_SET_TX, &tx_config);
-
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_GET_RX, &rx_config);
-		rx_config.mode = 2;
-		rx_config.divisor = 0; /* Speed : 96MHz */
-		rx_config.channels = HSI_MAX_CHANNELS;
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_SET_RX, &rx_config);
-		pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-	}
-
-	hsi_ioctl(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-			HSI_IOCTL_SET_WAKE_RX_4WIRES_MODE, NULL);
-	pr_debug("[MIPI-HSI] Set 4 WIRE MODE\n");
-
-	ret = hsi_read(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-		mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].rx_data, 1);
-	if (ret)
-		pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
-
-	for (i = 1; i < HSI_NUM_OF_USE_CHANNELS; i++) {
-		if ((mipi_ld->hsi_channles[i].recv_step ==
-				STEP_WAIT_FOR_CONN_READY) &&
-				(mipi_ld->hsi_channles[i].rx_count)) {
-			pr_err("[MIPI-HSI] there was rx pending. ch:%d, len:%d",
-					i, mipi_ld->hsi_channles[i].rx_count);
-			ret = hsi_read(mipi_ld->hsi_channles[i].dev,
-					mipi_ld->hsi_channles[i].rx_data,
-					mipi_ld->hsi_channles[i].rx_count / 4);
-			if (ret)
-				pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
-		}
-	}
-
-	pr_info("[MIPI-HSI] hsi_conn_err_recovery Done\n");
-}
-
-static void hsi_conn_reset(struct mipi_link_device *mipi_ld)
-{
-	int i;
-	struct hst_ctx tx_config;
-	struct hsr_ctx rx_config;
-	unsigned long int flags;
-	struct if_hsi_command *hsi_cmd;
-
-	/* Remove all tx-command in list */
-	do {
-		spin_lock_irqsave(&mipi_ld->list_cmd_lock, flags);
-		if (!list_empty(&mipi_ld->list_of_hsi_cmd)) {
-			hsi_cmd = list_entry(mipi_ld->list_of_hsi_cmd.next,
-					struct if_hsi_command, list);
-			list_del(&hsi_cmd->list);
-			spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
-		} else {
-			spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
-			break;
-		}
-	} while (true);
-
-	if (timer_pending(&mipi_ld->hsi_acwake_down_timer))
-		del_timer(&mipi_ld->hsi_acwake_down_timer);
-
-	if (mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].opened) {
-		hsi_ioctl(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-				HSI_IOCTL_SW_RESET, NULL);
-		for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++)
-			mipi_ld->hsi_channles[i].opened = 0;
-	}
-
-	for (i = 0; i < HSI_NUM_OF_USE_CHANNELS; i++) {
-		if (!mipi_ld->hsi_channles[i].opened)
-			if_hsi_open_channel(&mipi_ld->hsi_channles[i]);
-
-		mipi_ld->hsi_channles[i].send_step = STEP_IDLE;
-		mipi_ld->hsi_channles[i].recv_step = STEP_IDLE;
-
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_GET_TX, &tx_config);
-		tx_config.mode = 2;
-		tx_config.divisor = 0; /* Speed : 96MHz */
-		tx_config.channels = HSI_MAX_CHANNELS;
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_SET_TX, &tx_config);
-
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_GET_RX, &rx_config);
-		rx_config.mode = 2;
-		rx_config.divisor = 0; /* Speed : 96MHz */
-		rx_config.channels = HSI_MAX_CHANNELS;
-		hsi_ioctl(mipi_ld->hsi_channles[i].dev,
-					HSI_IOCTL_SET_RX, &rx_config);
-		pr_debug("[MIPI-HSI] Set TX/RX MIPI-HSI\n");
-	}
-
-	hsi_ioctl(mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL].dev,
-			HSI_IOCTL_SET_WAKE_RX_4WIRES_MODE, NULL);
-
-	pr_info("[MIPI-HSI] hsi_conn_reset Done\n");
 }
 
 static u32 if_hsi_create_cmd(u32 cmd_type, int ch, void *arg)
@@ -872,10 +580,9 @@ static u32 if_hsi_create_cmd(u32 cmd_type, int ch, void *arg)
 static void if_hsi_cmd_work(struct work_struct *work)
 {
 	int ret;
-	int retry_count = 0;
 	unsigned long int flags;
 	struct mipi_link_device *mipi_ld =
-	container_of(work, struct mipi_link_device, cmd_work.work);
+			container_of(work, struct mipi_link_device, cmd_work);
 	struct if_hsi_channel *channel =
 			&mipi_ld->hsi_channles[HSI_CONTROL_CHANNEL];
 	struct if_hsi_command *hsi_cmd;
@@ -901,32 +608,12 @@ static void if_hsi_cmd_work(struct work_struct *work)
 		}
 		pr_debug("[MIPI-HSI] take command : %08x\n", hsi_cmd->command);
 
-		if (((hsi_cmd->command & 0xF0000000) >> 28) ==
-					HSI_LL_MSG_CONN_CLOSED)
-			mipi_ld->hsi_channles[(hsi_cmd->command & 0x0F000000)
-				>> 24].recv_step = STEP_SEND_TO_CONN_CLOSED;
-
 		ret = if_hsi_write(channel, &hsi_cmd->command, 4);
 		if (ret < 0) {
 			pr_err("[MIPI-HSI] write command fail : %d\n", ret);
-
-			retry_count++;
-			if (retry_count > 5) {
-				channel->send_step = STEP_IDLE;
-				kfree(hsi_cmd);
-				return;
-			}
-
-			hsi_conn_err_recovery(mipi_ld);
+			if_hsi_set_wakeline(channel, 0);
 			channel->send_step = STEP_IDLE;
-
-			spin_lock_irqsave(&mipi_ld->list_cmd_lock, flags);
-			list_add(&hsi_cmd->list, &mipi_ld->list_of_hsi_cmd);
-			spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
-
-			pr_err("[MIPI-HSI] retry write command : %d\n",
-						retry_count);
-			continue;
+			return;
 		}
 		pr_debug("[MIPI-HSI] SEND CMD : %08x\n", hsi_cmd->command);
 
@@ -955,13 +642,13 @@ static int if_hsi_send_command(struct mipi_link_device *mipi_ld,
 	spin_unlock_irqrestore(&mipi_ld->list_cmd_lock, flags);
 
 	pr_debug("[MIPI-HSI] queue_work : cmd_work\n");
-	queue_delayed_work(mipi_ld->mipi_wq, &mipi_ld->cmd_work, 0);
+	queue_work(mipi_ld->mipi_wq, &mipi_ld->cmd_work);
 
 	return 0;
 }
 
-static int if_hsi_decode_cmd(struct mipi_link_device *mipi_ld,
-			u32 *cmd_data, u32 *cmd, u32 *ch, u32 *param)
+static int if_hsi_decode_cmd(u32 *cmd_data, u32 *cmd, u32 *ch,
+			u32 *param)
 {
 	u32 data = *cmd_data;
 	u8 lrc_cal, lrc_act;
@@ -970,15 +657,7 @@ static int if_hsi_decode_cmd(struct mipi_link_device *mipi_ld,
 	*cmd = ((data & 0xF0000000) >> 28);
 	switch (*cmd) {
 	case HSI_LL_MSG_BREAK:
-		mipi_ld->ld.com_state = COM_HANDSHAKE;
-		hsi_conn_reset(mipi_ld);
 		pr_err("[MIPI-HSI] Command MSG_BREAK Received\n");
-
-		if_hsi_send_command(mipi_ld, HSI_LL_MSG_BREAK,
-				HSI_CONTROL_CHANNEL, 0);
-		pr_err("[MIPI-HSI] Send MSG BREAK TO CP\n");
-
-		schedule_delayed_work(&mipi_ld->start_work, HZ / 100);
 		return -1;
 
 	case HSI_LL_MSG_OPEN_CONN:
@@ -1069,7 +748,7 @@ static int if_hsi_rx_cmd_handle(struct mipi_link_device *mipi_ld, u32 cmd,
 			}
 
 			channel->packet_size = param;
-			channel->recv_step = STEP_WAIT_FOR_CONN_READY;
+			channel->recv_step = STEP_RX;
 			if (param % 4)
 				param += (4 - (param % 4));
 			channel->rx_count = param;
@@ -1082,7 +761,6 @@ static int if_hsi_rx_cmd_handle(struct mipi_link_device *mipi_ld, u32 cmd,
 			return 0;
 
 		case STEP_NOT_READY:
-		case STEP_SEND_TO_CONN_CLOSED:
 			ret = if_hsi_send_command(mipi_ld, HSI_LL_MSG_NAK, ch,
 						param);
 			if (ret) {
@@ -1092,40 +770,9 @@ static int if_hsi_rx_cmd_handle(struct mipi_link_device *mipi_ld, u32 cmd,
 			}
 			return 0;
 
-		case STEP_RX:
-			pr_err("[MIPI-HSI] wrong open cmd in rx step\n");
-			return -1;
-
 		default:
-			if (channel->packet_size != param) {
-				hsi_read_cancel(channel->dev);
-				pr_err("[MIPI-HSI] read cancel\n");
-
-				pr_err("[MIPI-HSI] %d open-cmd param changed "
-					"packet_size : %d, param : %d\n",
-					channel->channel_id,
-					channel->packet_size, param);
-
-				channel->packet_size = param;
-				channel->recv_step = STEP_WAIT_FOR_CONN_READY;
-				if (param % 4)
-					param += (4 - (param % 4));
-				channel->rx_count = param;
-				hsi_read(channel->dev, channel->rx_data,
-						channel->rx_count / 4);
-				pr_err("[MIPI-HSI] read again with new len\n");
-			}
-
-			ret = if_hsi_send_command(mipi_ld, HSI_LL_MSG_ACK, ch,
-						param);
-			if (ret) {
-				pr_err("[MIPI-HSI] if_hsi_send_command fail : %d\n",
-							ret);
-				return ret;
-			}
-			pr_debug("[MIPI-HSI] wrong state : %08x, recv_step : %d, "
-				"size : %d\n", cmd, channel->recv_step, param);
-
+			pr_err("[MIPI-HSI] wrong state : %08x, recv_step : %d\n",
+						cmd, channel->recv_step);
 			return -1;
 		}
 
@@ -1148,8 +795,7 @@ static int if_hsi_rx_cmd_handle(struct mipi_link_device *mipi_ld, u32 cmd,
 			return 0;
 
 		default:
-			pr_err("[MIPI-HSI] wrong state : %d, %08x(%d)\n",
-				channel->send_step, cmd, channel->channel_id);
+			pr_err("[MIPI-HSI] wrong state : %08x\n", cmd);
 			return -1;
 		}
 
@@ -1159,33 +805,18 @@ static int if_hsi_rx_cmd_handle(struct mipi_link_device *mipi_ld, u32 cmd,
 		case STEP_WAIT_FOR_CONN_CLOSED:
 			pr_debug("[MIPI-HSI] got close\n");
 
-			mod_timer(&mipi_ld->hsi_acwake_down_timer, jiffies +
-					HSI_ACWAKE_DOWN_TIMEOUT);
 			channel->send_step = STEP_IDLE;
 			up(&channel->close_conn_done_sem);
 			return 0;
 
 		default:
-			pr_err("[MIPI-HSI] wrong state : %d, %08x(%d)\n",
-				channel->send_step, cmd, channel->channel_id);
+			pr_err("[MIPI-HSI] wrong state : %08x\n", cmd);
 			return -1;
 		}
 
-	case HSI_LL_MSG_CANCEL_CONN:
-		pr_err("[MIPI-HSI] HSI_LL_MSG_CANCEL_CONN\n");
-
-		ret = if_hsi_send_command(mipi_ld, HSI_LL_MSG_ACK,
-				HSI_CONTROL_CHANNEL, 0);
-		if (ret) {
-			pr_err("[MIPI-HSI] if_hsi_send_command fail : %d\n",
-						ret);
-			return ret;
-		}
-		pr_err("[MIPI-HSI] RESET MIPI, SEND ACK\n");
-		return -1;
-
 	case HSI_LL_MSG_OPEN_CONN:
 	case HSI_LL_MSG_ECHO:
+	case HSI_LL_MSG_CANCEL_CONN:
 	case HSI_LL_MSG_CONF_RATE:
 	default:
 		pr_err("[MIPI-HSI] ERROR... CMD Not supported : %08x\n", cmd);
@@ -1237,36 +868,19 @@ retry_send:
 		pr_err("[MIPI-HSI] ch=%d, ack_done timeout\n",
 					channel->channel_id);
 
-		list_for_each_entry(iod, &mipi_ld->list_of_io_devices, list)
-			if (iod->format == IPC_FMT)
-				break;
+		if_hsi_set_wakeline(channel, 0);
 
-		if (((mipi_ld->ld.com_state == COM_ONLINE) ||
-			(mipi_ld->ld.com_state == COM_HANDSHAKE)) &&
-			(iod->mc->phone_state == STATE_ONLINE)) {
-			channel->send_step = STEP_SEND_OPEN_CONN;
-			hsi_conn_err_recovery(mipi_ld);
-
+		if (mipi_ld->ld.com_state == COM_ONLINE) {
 			ack_timeout_cnt++;
-			if (ack_timeout_cnt < 5) {
-				pr_err("[MIPI-HSI] check ack again. cnt:%d\n",
-						ack_timeout_cnt);
-				msleep(10);
-				if (down_trylock(&channel->ack_done_sem)) {
-					pr_err("[MIPI-HSI] retry send open\n");
-					if_hsi_set_wakeline(channel, 0);
-					if_hsi_set_wakeline(channel, 1);
-					sema_init(&channel->ack_done_sem, 0);
-					goto retry_send;
-				} else {
-					pr_err("[MIPI-HSI] got ack after sw-reset\n");
-					goto check_nack;
-				}
+			if (ack_timeout_cnt < 10) {
+				if_hsi_set_wakeline(channel, 1);
+				pr_err("[MIPI-HSI] ch=%d, retry send open. cnt : %d\n",
+					channel->channel_id, ack_timeout_cnt);
+				goto retry_send;
 			}
 
 			/* try to recover cp */
-			list_for_each_entry(iod, &mipi_ld->list_of_io_devices,
-						list) {
+			io_devs_for_each(iod, &mipi_ld->ld) {
 				if (iod->format == IPC_FMT) {
 					iod->modem_state_changed(iod,
 						STATE_CRASH_RESET);
@@ -1278,9 +892,6 @@ retry_send:
 		channel->send_step = STEP_IDLE;
 		return -ETIMEDOUT;
 	}
-
-check_nack:
-
 	pr_debug("[MIPI-HSI] ch=%d, got ack_done=%d\n", channel->channel_id,
 				channel->got_nack);
 
@@ -1289,7 +900,7 @@ check_nack:
 				channel->channel_id, channel->got_nack,
 				retry_count);
 		retry_count++;
-		msleep(1);
+		msleep_interruptible(1);
 		goto retry_send;
 	}
 	retry_count = 0;
@@ -1316,9 +927,9 @@ check_nack:
 				HSI_CLOSE_CONN_DONE_TIMEOUT) < 0) {
 		pr_err("[MIPI-HSI] ch=%d, close conn timeout\n",
 					channel->channel_id);
-
+		if_hsi_set_wakeline(channel, 0);
 		channel->send_step = STEP_IDLE;
-		hsi_conn_err_recovery(mipi_ld);
+		return -ETIMEDOUT;
 	}
 	pr_debug("[MIPI-HSI] ch=%d, got close_conn_done\n",
 				channel->channel_id);
@@ -1367,8 +978,10 @@ static int if_hsi_write(struct if_hsi_channel *channel, u32 *data,
 		pr_err("[MIPI-HSI] ch=%d, hsi_write_done timeout : %d\n",
 					channel->channel_id, size);
 
-		print_hex_dump_bytes("[HSI]", DUMP_PREFIX_OFFSET,
-						channel->tx_data, size);
+		pr_err("[MIPI-HSI] data : %08x %08x %08x %08x %08x ...\n",
+			*channel->tx_data, *(channel->tx_data + 1),
+			*(channel->tx_data + 2), *(channel->tx_data + 3),
+			*(channel->tx_data + 4));
 
 		hsi_write_cancel(channel->dev);
 
@@ -1383,10 +996,10 @@ static int if_hsi_write(struct if_hsi_channel *channel, u32 *data,
 		pr_err("[MIPI-HSI] ch:%d,write_done fail,write_size:%d,origin_size:%d\n",
 				channel->channel_id, channel->tx_count, size);
 
-#ifdef DEBUG
-	print_hex_dump_bytes("[HSI]", DUMP_PREFIX_OFFSET,
-					channel->tx_data, size);
-#endif
+	pr_debug("[MIPI-HSI] len:%d, id:%d, data : %08x %08x %08x %08x %08x ...\n",
+		channel->tx_count, channel->channel_id, *channel->tx_data,
+		*(channel->tx_data + 1), *(channel->tx_data + 2),
+		*(channel->tx_data + 3), *(channel->tx_data + 4));
 
 	return channel->tx_count;
 }
@@ -1397,16 +1010,6 @@ static void if_hsi_write_done(struct hsi_device *dev, unsigned int size)
 	struct mipi_link_device *mipi_ld =
 			(struct mipi_link_device *)if_hsi_driver.priv_data;
 	struct if_hsi_channel *channel = &mipi_ld->hsi_channles[dev->n_ch];
-
-	if ((channel->channel_id == HSI_CONTROL_CHANNEL) &&
-		(((*channel->tx_data & 0xF0000000) >> 28) ==
-			HSI_LL_MSG_CONN_CLOSED) &&
-			mipi_ld->ld.com_state == COM_ONLINE) {
-		mod_timer(&mipi_ld->hsi_acwake_down_timer, jiffies +
-					HSI_ACWAKE_DOWN_TIMEOUT);
-		mipi_ld->hsi_channles[
-		(*channel->tx_data & 0x0F000000) >> 24].recv_step = STEP_IDLE;
-	}
 
 	pr_debug("[MIPI-HSI] got write data : 0x%x(%d)\n",
 				*(u32 *)channel->tx_data, size);
@@ -1459,8 +1062,8 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 				return;
 			}
 
-			ret = if_hsi_decode_cmd(mipi_ld, channel->rx_data,
-						&cmd, &ch, &param);
+			ret = if_hsi_decode_cmd(channel->rx_data, &cmd, &ch,
+						&param);
 			if (ret)
 				pr_err("[MIPI-HSI] decode_cmd fail=%d, cmd=%x\n",
 							ret, cmd);
@@ -1469,7 +1072,7 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 				ret = if_hsi_rx_cmd_handle(mipi_ld, cmd, ch,
 							param);
 				if (ret)
-					pr_debug("[MIPI-HSI] handle cmd cmd=%x\n",
+					pr_err("[MIPI-HSI] handle cmd cmd=%x\n",
 								cmd);
 			}
 
@@ -1483,13 +1086,17 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 			pr_debug("[MIPI-HSI] receive data : 0x%x(%d)\n",
 					*channel->rx_data, channel->rx_count);
 
-			list_for_each_entry(iod, &mipi_ld->list_of_io_devices,
-						list) {
-				if ((iod->format == IPC_BOOT) &&
-					(iod->id == 0x0)) {
+			io_devs_for_each(iod, &mipi_ld->ld) {
+				if (iod->format == IPC_BOOT) {
+					channel->packet_size =
+							*channel->rx_data;
+					pr_debug("[MIPI-HSI] flashless packet size : "
+						"%d\n", channel->packet_size);
+
 					ret = iod->recv(iod,
-						(char *)channel->rx_data,
-						channel->rx_count);
+						&mipi_ld->ld,
+						(char *)channel->rx_data + 4,
+						HSI_FLASHBOOT_ACK_LEN - 4);
 					if (ret < 0)
 						pr_err("[MIPI-HSI] recv call "
 							"fail : %d\n", ret);
@@ -1498,31 +1105,8 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 				}
 			}
 
-			ret = hsi_read(channel->dev, channel->rx_data, 1);
-			if (ret)
-				pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
-			return;
-
-		case COM_BOOT_EBL:
-			pr_debug("[MIPI-HSI] receive data : 0x%x(%d)\n",
-					*channel->rx_data, channel->rx_count);
-
-			list_for_each_entry(iod, &mipi_ld->list_of_io_devices,
-						list) {
-				if ((iod->format == IPC_BOOT) &&
-					(iod->id == 0x1)) {
-					ret = iod->recv(iod,
-						(char *)channel->rx_data,
-						channel->rx_count);
-					if (ret < 0)
-						pr_err("[MIPI-HSI] recv call "
-							"fail : %d\n", ret);
-
-					break;
-				}
-			}
-
-			ret = hsi_read(channel->dev, channel->rx_data, 1);
+			ret = hsi_read(channel->dev, channel->rx_data,
+						HSI_FLASHBOOT_ACK_LEN / 4);
 			if (ret)
 				pr_err("[MIPI-HSI] hsi_read fail : %d\n", ret);
 			return;
@@ -1531,8 +1115,7 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 			pr_debug("[MIPI-HSI] receive data : 0x%x(%d)\n",
 					*channel->rx_data, channel->rx_count);
 
-			list_for_each_entry(iod, &mipi_ld->list_of_io_devices,
-						list) {
+			io_devs_for_each(iod, &mipi_ld->ld) {
 				if (iod->format == IPC_RAMDUMP) {
 					channel->packet_size =
 							*channel->rx_data;
@@ -1540,6 +1123,7 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 						"%d\n", channel->packet_size);
 
 					ret = iod->recv(iod,
+						&mipi_ld->ld,
 						(char *)channel->rx_data + 4,
 						channel->packet_size);
 					if (ret < 0)
@@ -1587,17 +1171,19 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 					ch, param);
 		if (ret)
 			pr_err("[MIPI-HSI] send_cmd fail=%d\n", ret);
+
+		channel->recv_step = STEP_IDLE;
 		return;
 
 	default:
 		return;
 	}
 
-	list_for_each_entry(iod, &mipi_ld->list_of_io_devices, list) {
+	io_devs_for_each(iod, &mipi_ld->ld) {
 		pr_debug("[MIPI-HSI] iodevice format : %d\n", iod->format);
 
 		if (iod->format == format_type) {
-			channel->recv_step = STEP_RX;
+			channel->recv_step = STEP_NOT_READY;
 
 			pr_debug("[MIPI-HSI] RECV DATA : %08x(%d)-%d\n",
 				*channel->rx_data, channel->packet_size,
@@ -1609,48 +1195,20 @@ static void if_hsi_read_done(struct hsi_device *dev, unsigned int size)
 			*(channel->rx_data + 4), *(channel->rx_data + 5),
 			*(channel->rx_data + 6), *(channel->rx_data + 7));
 
-			ret = iod->recv(iod, (char *)channel->rx_data,
-						channel->packet_size);
-			if (ret < 0) {
+			ret = iod->recv(iod, &mipi_ld->ld,
+				(char *)channel->rx_data, channel->packet_size);
+			if (ret < 0)
 				pr_err("[MIPI-HSI] recv call fail : %d\n", ret);
 
-				ch = channel->channel_id;
-				param = 0;
-				ret = if_hsi_send_command(mipi_ld,
-					HSI_LL_MSG_CONN_CLOSED, ch, param);
-				if (ret)
-					pr_err("[MIPI-HSI] send_cmd fail=%d\n",
-						ret);
-
-				print_hex_dump_bytes("[HSI]",
-					DUMP_PREFIX_OFFSET,
-					channel->rx_data, channel->packet_size);
-
-				/* to clean the all wrong packet */
-				channel->packet_size = 0;
-				hsi_conn_err_recovery(mipi_ld);
-				return;
-			}
-
-			if ((iod->format == IPC_FMT) ||
-						(iod->format == IPC_RFS))
-				print_hex_dump(KERN_DEBUG,
-						iod->format == IPC_FMT ?
-						"IPC-RX: " : "RFS-RX: ",
-						DUMP_PREFIX_NONE,
-						1, 1,
-						(void *)channel->rx_data,
-						channel->packet_size <= 16 ?
-						(size_t)channel->packet_size :
-						(size_t)16, false);
-
-			channel->packet_size = 0;
 			ch = channel->channel_id;
 			param = 0;
 			ret = if_hsi_send_command(mipi_ld,
 				HSI_LL_MSG_CONN_CLOSED, ch, param);
 			if (ret)
 				pr_err("[MIPI-HSI] send_cmd fail=%d\n", ret);
+
+			channel->recv_step = STEP_IDLE;
+
 			return;
 		}
 	}
@@ -1716,7 +1274,6 @@ static int __devinit if_hsi_probe(struct hsi_device *dev)
 {
 	int port = 0;
 	unsigned long *address;
-
 	struct mipi_link_device *mipi_ld =
 			(struct mipi_link_device *)if_hsi_driver.priv_data;
 
@@ -1745,10 +1302,12 @@ static int __devinit if_hsi_probe(struct hsi_device *dev)
 		spin_lock_init(&mipi_ld->hsi_channles[dev->n_ch].tx_state_lock);
 		spin_lock_init(&mipi_ld->hsi_channles[dev->n_ch].rx_state_lock);
 		spin_lock_init(&mipi_ld->hsi_channles[dev->n_ch].acwake_lock);
-		sema_init(&mipi_ld->hsi_channles[dev->n_ch].write_done_sem, 0);
-		sema_init(&mipi_ld->hsi_channles[dev->n_ch].ack_done_sem, 0);
+		sema_init(&mipi_ld->hsi_channles[dev->n_ch].write_done_sem,
+			  0);
+		sema_init(&mipi_ld->hsi_channles[dev->n_ch].ack_done_sem,
+			  0);
 		sema_init(&mipi_ld->hsi_channles[dev->n_ch].close_conn_done_sem,
-					0);
+			  0);
 	}
 
 	pr_debug("[MIPI-HSI] if_hsi_probe() done. ch : %d\n", dev->n_ch);
@@ -1779,13 +1338,12 @@ static int if_hsi_init(struct link_device *ld)
 		return ret;
 	}
 
-	mipi_ld->mipi_wq = alloc_workqueue("mipi_cmd_wq",
-		WQ_HIGHPRI | WQ_UNBOUND | WQ_RESCUER, 1);
+	mipi_ld->mipi_wq = create_singlethread_workqueue("mipi_cmd_wq");
 	if (!mipi_ld->mipi_wq) {
 		pr_err("[MIPI-HSI] fail to create work Q.\n");
 		return -ENOMEM;
 	}
-	INIT_DELAYED_WORK(&mipi_ld->cmd_work, if_hsi_cmd_work);
+	INIT_WORK(&mipi_ld->cmd_work, if_hsi_cmd_work);
 	INIT_DELAYED_WORK(&mipi_ld->start_work, mipi_hsi_start_work);
 
 	setup_timer(&mipi_ld->hsi_acwake_down_timer, if_hsi_acwake_down_func,
@@ -1823,14 +1381,6 @@ static int if_hsi_init(struct link_device *ld)
 		return -ENOMEM;
 	}
 
-	mipi_ld->bulk_tx_buf = kmalloc(MIPI_BULK_TX_SIZE, GFP_DMA | GFP_ATOMIC);
-	if (!mipi_ld->bulk_tx_buf) {
-		pr_err("[MIPI-HSI] alloc bulk tx buffer fail\n");
-		return -ENOMEM;
-	}
-
-	skb_queue_head_init(&mipi_ld->bulk_txq);
-
 	return 0;
 }
 
@@ -1847,7 +1397,6 @@ struct link_device *mipi_create_link_device(struct platform_device *pdev)
 	if (!mipi_ld)
 		return NULL;
 
-	INIT_LIST_HEAD(&mipi_ld->list_of_io_devices);
 	INIT_LIST_HEAD(&mipi_ld->list_of_hsi_cmd);
 	spin_lock_init(&mipi_ld->list_cmd_lock);
 	skb_queue_head_init(&mipi_ld->ld.sk_fmt_tx_q);
@@ -1858,7 +1407,6 @@ struct link_device *mipi_create_link_device(struct platform_device *pdev)
 	ld = &mipi_ld->ld;
 
 	ld->name = "mipi_hsi";
-	ld->attach = mipi_hsi_attach_io_dev;
 	ld->init_comm = mipi_hsi_init_communication;
 	ld->terminate_comm = mipi_hsi_terminate_communication;
 	ld->send = mipi_hsi_send;
@@ -1874,18 +1422,9 @@ struct link_device *mipi_create_link_device(struct platform_device *pdev)
 	}
 	INIT_WORK(&ld->tx_work, mipi_hsi_tx_work);
 
-	ld->tx_raw_wq = alloc_workqueue("mipi_tx_raw_wq",
-		WQ_HIGHPRI | WQ_UNBOUND | WQ_RESCUER, 1);
-	if (!ld->tx_raw_wq) {
-		pr_err("[MIPI-HSI] fail to create raw work Q.\n");
-		return NULL;
-	}
-	INIT_DELAYED_WORK(&ld->tx_delayed_work, mipi_hsi_tx_raw_work);
-
 	ret = if_hsi_init(ld);
 	if (ret)
 		return NULL;
 
 	return ld;
 }
-

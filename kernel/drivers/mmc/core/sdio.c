@@ -115,7 +115,7 @@ static int sdio_read_cccr(struct mmc_card *card)
 
 	cccr_vsn = data & 0x0f;
 
-	if (cccr_vsn > SDIO_CCCR_REV_1_20) {
+	if (cccr_vsn > 3) {
 		printk(KERN_ERR "%s: unrecognised CCCR structure version %d\n",
 			mmc_hostname(card->host), cccr_vsn);
 		return -EINVAL;
@@ -572,6 +572,14 @@ static void mmc_sdio_remove(struct mmc_host *host)
 }
 
 /*
+ * Card detection - card is alive.
+ */
+static int mmc_sdio_alive(struct mmc_host *host)
+{
+	return mmc_select_card(host->card);
+}
+
+/*
  * Card detection callback from host.
  */
 static void mmc_sdio_detect(struct mmc_host *host)
@@ -593,7 +601,7 @@ static void mmc_sdio_detect(struct mmc_host *host)
 	/*
 	 * Just check if our card has been removed.
 	 */
-	err = mmc_select_card(host->card);
+	err = _mmc_detect_card_removed(host);
 
 	mmc_release_host(host);
 
@@ -617,6 +625,7 @@ out:
 
 		mmc_claim_host(host);
 		mmc_detach_bus(host);
+		mmc_power_off(host);
 		mmc_release_host(host);
 	}
 }
@@ -629,6 +638,9 @@ out:
 static int mmc_sdio_suspend(struct mmc_host *host)
 {
 	int i, err = 0;
+
+	if (host->pm_flags & MMC_PM_IGNORE_SUSPEND_RESUME)
+		goto out;
 
 	for (i = 0; i < host->card->sdio_funcs; i++) {
 		struct sdio_func *func = host->card->sdio_func[i];
@@ -657,12 +669,16 @@ static int mmc_sdio_suspend(struct mmc_host *host)
 		mmc_release_host(host);
 	}
 
+ out:
 	return err;
 }
 
 static int mmc_sdio_resume(struct mmc_host *host)
 {
 	int i, err = 0;
+
+	if (host->pm_flags & MMC_PM_IGNORE_SUSPEND_RESUME)
+		goto out;
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
@@ -705,6 +721,7 @@ static int mmc_sdio_resume(struct mmc_host *host)
 		}
 	}
 
+ out:
 	return err;
 }
 
@@ -747,7 +764,7 @@ static int mmc_sdio_power_restore(struct mmc_host *host)
 	if (host->ocr_avail_sdio)
 		host->ocr_avail = host->ocr_avail_sdio;
 
-	host->ocr = mmc_select_voltage(host, ocr & ~0x7F);
+	host->ocr = mmc_select_voltage(host, ocr & ~0xFF);
 	if (!host->ocr) {
 		ret = -EINVAL;
 		goto out;
@@ -770,6 +787,7 @@ static const struct mmc_bus_ops mmc_sdio_ops = {
 	.suspend = mmc_sdio_suspend,
 	.resume = mmc_sdio_resume,
 	.power_restore = mmc_sdio_power_restore,
+	.alive = mmc_sdio_alive,
 };
 
 
@@ -797,11 +815,11 @@ int mmc_attach_sdio(struct mmc_host *host)
 	 * Sanity check the voltages that the card claims to
 	 * support.
 	 */
-	if (ocr & 0x7F) {
+	if (ocr & 0xFF) {
 		printk(KERN_WARNING "%s: card claims to support voltages "
 		       "below the defined range. These will be ignored.\n",
 		       mmc_hostname(host));
-		ocr &= ~0x7F;
+		ocr &= ~0xFF;
 	}
 
 	host->ocr = mmc_select_voltage(host, ocr);
@@ -940,6 +958,13 @@ int sdio_reset_comm(struct mmc_card *card)
 	if (err)
 		goto err;
 
+	if (ocr & 0xFF) {
+		printk(KERN_WARNING "%s: card claims to support voltages "
+		       "below the defined range. These will be ignored.\n",
+		       mmc_hostname(host));
+		ocr &= ~0xFF;
+	}
+
 	host->ocr = mmc_select_voltage(host, ocr);
 	if (!host->ocr) {
 		err = -EINVAL;
@@ -997,3 +1022,63 @@ err:
 	return err;
 }
 EXPORT_SYMBOL(sdio_reset_comm);
+int cmc732_sdio_reset_comm(struct mmc_card *card)
+{
+        struct mmc_host *host = card->host;
+        u32 ocr;
+        int err;
+	printk("%s():\n",__func__);
+	cmc732_sdio_reset(host);
+	err = mmc_send_io_op_cond(host, 0, &ocr);
+        if (err)
+                goto err;
+#if 1//refer to mmc_attach_sdio()
+        if (!host->index)
+                ocr |= 0x00000080; //correct cmc ocr to show support for 1.8v operation
+        host->ocr = mmc_select_voltage(host, ocr);
+        if (!host->index)
+                host->ocr = 0x8000;//lie to cmc card that 2.8v operation selected
+#else
+        host->ocr = mmc_select_voltage(host, ocr);
+#endif
+        if (!host->ocr) {
+                err = -EINVAL;
+                goto err;
+        }
+        err = mmc_send_io_op_cond(host, host->ocr, &ocr);
+        if (err)
+                goto err;
+        if (mmc_host_is_spi(host)) {
+                err = mmc_spi_set_crc(host, use_spi_crc);
+                if (err)
+                goto err;
+        }
+        if (!mmc_host_is_spi(host)) {
+                err = mmc_send_relative_addr(host, &card->rca);
+                if (err)
+                        goto err;
+                mmc_set_bus_mode(host, MMC_BUSMODE_PUSHPULL);
+        }
+        if (!mmc_host_is_spi(host)) {
+                err = mmc_select_card(card);
+                if (err)
+                        goto err;
+        }
+        err = sdio_enable_hs(card);
+        if (err)
+                goto err;
+        if (mmc_card_highspeed(card)) {
+                mmc_set_clock(host, 50000000);
+        } else {
+                mmc_set_clock(host, card->cis.max_dtr);
+        }
+        err = sdio_enable_wide(card);
+        if (err)
+                goto err;
+        return 0;
+err:
+        printk("%s: Error resetting SDIO communications (%d)\n",
+               mmc_hostname(host), err);
+        return err;
+}
+EXPORT_SYMBOL(cmc732_sdio_reset_comm);

@@ -1,19 +1,19 @@
 /*
  $License:
-    Copyright (C) 2010 InvenSense Corporation, All Rights Reserved.
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+	Copyright (C) 2010 InvenSense Corporation, All Rights Reserved.
+	
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+	
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+	
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <http://www.gnu.org/licenses/>.
   $
  */
 
@@ -32,7 +32,7 @@
 #include <stddef.h>
 
 #include "mldl_cfg.h"
-#include "mpu_v333.h"
+#include "mpu.h"
 
 #include "mlsl.h"
 #include "mlos.h"
@@ -397,13 +397,13 @@ static int MLDLSetLevelShifterBit(struct mldl_cfg *pdata,
  *  @internal
  * @param reset 1 to reset hardware
  */
-static unsigned char mpu60xx_pwr_mgmt(struct mldl_cfg *pdata,
+static tMLError mpu60xx_pwr_mgmt(struct mldl_cfg *pdata,
 				 void *mlsl_handle,
 				 unsigned char reset,
 				 unsigned char powerselection)
 {
 	unsigned char b;
-	unsigned char result;
+	tMLError result;
 
 	if (powerselection < 0 || powerselection > 7)
 		return ML_ERROR_INVALID_PARAMETER;
@@ -445,14 +445,14 @@ static unsigned char mpu60xx_pwr_mgmt(struct mldl_cfg *pdata,
 /**
  *  @internal
  */
-static unsigned char MLDLStandByGyros(struct mldl_cfg *pdata,
+static tMLError MLDLStandByGyros(struct mldl_cfg *pdata,
 				 void *mlsl_handle,
 				 unsigned char disable_gx,
 				 unsigned char disable_gy,
 				 unsigned char disable_gz)
 {
 	unsigned char b;
-	unsigned char result;
+	tMLError result;
 
 	result =
 	    MLSLSerialRead(mlsl_handle, pdata->addr, MPUREG_PWR_MGMT_2, 1,
@@ -472,14 +472,14 @@ static unsigned char MLDLStandByGyros(struct mldl_cfg *pdata,
 /**
  *  @internal
  */
-static unsigned char MLDLStandByAccels(struct mldl_cfg *pdata,
+static tMLError MLDLStandByAccels(struct mldl_cfg *pdata,
 				  void *mlsl_handle,
 				  unsigned char disable_ax,
 				  unsigned char disable_ay,
 				  unsigned char disable_az)
 {
 	unsigned char b;
-	unsigned char result;
+	tMLError result;
 
 	result =
 	    MLSLSerialRead(mlsl_handle, pdata->addr, MPUREG_PWR_MGMT_2, 1,
@@ -1355,7 +1355,7 @@ int mpu3050_resume(struct mldl_cfg *mldl_cfg,
 {
 	int result = ML_SUCCESS;
 
-#ifdef CONFIG_MPU_SENSORS_DEBUG_V333
+#ifdef CONFIG_MPU_SENSORS_DEBUG
 	mpu_print_cfg(mldl_cfg);
 #endif
 
@@ -1381,8 +1381,13 @@ int mpu3050_resume(struct mldl_cfg *mldl_cfg,
 			ERROR_CHECK(result);
 		}
 
+#if 0
+		result = mldl_cfg->accel->resume(accel_handle,
+						 mldl_cfg->accel,
+						 &mldl_cfg->pdata->accel);
+#else
 	result = mpu_accel_resume(mldl_cfg);
-
+#endif
 		ERROR_CHECK(result);
 		mldl_cfg->accel_is_suspended = FALSE;
 	}
@@ -1520,8 +1525,13 @@ int mpu3050_suspend(struct mldl_cfg *mldl_cfg,
 			ERROR_CHECK(result);
 		}
 
+#if 0
+		result = mldl_cfg->accel->suspend(accel_handle,
+						  mldl_cfg->accel,
+						  &mldl_cfg->pdata->accel);
+#else
 		result = mpu_accel_suspend(mldl_cfg);
-
+#endif
 		ERROR_CHECK(result);
 		mldl_cfg->accel_is_suspended = TRUE;
 	}

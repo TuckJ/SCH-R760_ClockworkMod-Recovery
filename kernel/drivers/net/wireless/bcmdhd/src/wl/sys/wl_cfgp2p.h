@@ -2,13 +2,13 @@
  * Linux cfgp2p driver
  *
  * Copyright (C) 1999-2011, Broadcom Corporation
- *
+ * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
  * under the terms of the GNU General Public License version 2 (the "GPL"),
  * available at http://www.broadcom.com/licenses/GPLv2.php, with the
  * following added to such license:
- *
+ * 
  *      As a special exception, the copyright holders of this software give you
  * permission to link this software with independent modules, and to copy and
  * distribute the resulting executable under terms of your choice, provided that
@@ -16,7 +16,7 @@
  * the license of that module.  An independent module is a module which is not
  * derived from this software.  The special exception does not apply to any
  * modifications of the software.
- *
+ * 
  *      Notwithstanding the above, under no circumstances may you combine this
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
@@ -98,10 +98,10 @@ enum wl_cfgp2p_status {
 };
 
 
-#define wl_to_p2p_bss_ndev(w, type)	((wl)->p2p->bss_idx[type].dev)
-#define wl_to_p2p_bss_bssidx(w, type)	((wl)->p2p->bss_idx[type].bssidx)
-#define wl_to_p2p_bss_saved_ie(w, type)		((wl)->p2p->bss_idx[type].saved_ie)
-#define wl_to_p2p_bss_private(w, type)	((wl)->p2p->bss_idx[type].private_data)
+#define wl_to_p2p_bss_ndev(w, type) 	((wl)->p2p->bss_idx[type].dev)
+#define wl_to_p2p_bss_bssidx(w, type) 	((wl)->p2p->bss_idx[type].bssidx)
+#define wl_to_p2p_bss_saved_ie(w, type) 	((wl)->p2p->bss_idx[type].saved_ie)
+#define wl_to_p2p_bss_private(w, type) 	((wl)->p2p->bss_idx[type].private_data)
 #define wl_to_p2p_bss(wl, type) ((wl)->p2p->bss_idx[type])
 #define wl_get_p2p_status(wl, stat) ((!(wl)->p2p_supported) ? 0 : test_bit(WLP2P_STATUS_ ## stat, \
 									&(wl)->p2p->status))
@@ -123,21 +123,21 @@ enum wl_cfgp2p_status {
 #define CFGP2P_ERR(args)									\
 	do {										\
 		if (wl_dbg_level & WL_DBG_ERR) {				\
-			printk(KERN_ERR "CFGP2P-INF02) %s : ", __func__);	\
+			printk(KERN_INFO "CFGP2P-ERROR) %s : ", __func__);	\
 			printk args;						\
 		}									\
 	} while (0)
 #define	CFGP2P_INFO(args)									\
 	do {										\
 		if (wl_dbg_level & WL_DBG_INFO) {				\
-			printk(KERN_ERR "CFGP2P-INFO) %s : ", __func__);	\
+			printk(KERN_INFO "CFGP2P-INFO) %s : ", __func__);	\
 			printk args;						\
 		}									\
 	} while (0)
 #define	CFGP2P_DBG(args)								\
 	do {									\
 		if (wl_dbg_level & WL_DBG_DBG) {			\
-			printk(KERN_ERR "CFGP2P-DEBUG) %s :", __func__);	\
+			printk(KERN_DEBUG "CFGP2P-DEBUG) %s :", __func__);	\
 			printk args;							\
 		}									\
 	} while (0)
@@ -219,6 +219,8 @@ wl_cfgp2p_clear_management_ie(struct wl_priv *wl, s32 bssidx);
 extern s32
 wl_cfgp2p_find_idx(struct wl_priv *wl, struct net_device *ndev);
 
+extern s32
+wl_cfgp2p_p2p_listen_suspend(void);
 
 extern s32
 wl_cfgp2p_listen_complete(struct wl_priv *wl, struct net_device *ndev,

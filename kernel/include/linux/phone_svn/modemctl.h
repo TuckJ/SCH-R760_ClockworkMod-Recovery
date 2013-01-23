@@ -45,9 +45,6 @@ struct modemctl_platform_data {
 	unsigned gpio_suspend_request;
 	unsigned gpio_active_state;
 	unsigned gpio_cp_dump_int;
-	unsigned gpio_ap_cp_int1;
-	unsigned gpio_ap_cp_int2;
-
 	int wakeup;
 	struct modemctl_ops ops;
 };
@@ -68,9 +65,6 @@ struct modemctl {
 	unsigned gpio_suspend_request;
 	unsigned gpio_active_state;
 	unsigned gpio_cp_dump_int;
-	unsigned gpio_ap_cp_int1;
-	unsigned gpio_ap_cp_int2;
-
 	struct modemctl_ops *ops;
 	struct regulator *vcc;
 

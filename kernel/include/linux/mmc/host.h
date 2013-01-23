@@ -107,6 +107,15 @@ struct mmc_host_ops {
 	 */
 	int (*enable)(struct mmc_host *host);
 	int (*disable)(struct mmc_host *host, int lazy);
+	/*
+	 * It is optional for the host to implement pre_req and post_req in
+	 * order to support double buffering of requests (prepare one
+	 * request while another request is active).
+	 */
+	void	(*post_req)(struct mmc_host *host, struct mmc_request *req,
+			    int err);
+	void	(*pre_req)(struct mmc_host *host, struct mmc_request *req,
+			   bool is_first_req);
 	void	(*request)(struct mmc_host *host, struct mmc_request *req);
 	/*
 	 * Avoid calling these three functions too often or in a "fast path",
@@ -140,10 +149,21 @@ struct mmc_host_ops {
 	int	(*start_signal_voltage_switch)(struct mmc_host *host, struct mmc_ios *ios);
 	int	(*execute_tuning)(struct mmc_host *host);
 	void	(*enable_preset_value)(struct mmc_host *host, bool enable);
+	void	(*hw_reset)(struct mmc_host *host);
 };
 
 struct mmc_card;
 struct device;
+
+struct mmc_async_req {
+	/* active mmc request */
+	struct mmc_request	*mrq;
+	/*
+	 * Check error status of completed mmc request.
+	 * Returns 0 if success otherwise non zero.
+	 */
+	int (*err_check) (struct mmc_card *, struct mmc_async_req *);
+};
 
 struct mmc_host {
 	struct device		*parent;
@@ -212,8 +232,22 @@ struct mmc_host {
 #define MMC_CAP_MAX_CURRENT_600	(1 << 28)	/* Host max current limit is 600mA */
 #define MMC_CAP_MAX_CURRENT_800	(1 << 29)	/* Host max current limit is 800mA */
 #define MMC_CAP_CMD23		(1 << 30)	/* CMD23 supported. */
+#define MMC_CAP_HW_RESET	(1 << 31)	/* Hardware reset */
+
+	unsigned int		caps2;		/* More host capabilities */
+
+#define MMC_CAP2_CACHE_CTRL	(1 << 1)	/* Allow cache control */
+#define MMC_CAP2_POWEROFF_NOTIFY (1 << 2)	/* Notify poweroff supported */
+#define MMC_CAP2_PACKED_RD	(1 << 3)	/* Allow packed read */
+#define MMC_CAP2_PACKED_WR	(1 << 4)	/* Allow packed write */
+#define MMC_CAP2_PACKED_CMD	(MMC_CAP2_PACKED_RD | \
+				 MMC_CAP2_PACKED_WR) /* Allow packed commands */
 
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
+	unsigned int        power_notify_type;
+#define MMC_HOST_PW_NOTIFY_NONE		0
+#define MMC_HOST_PW_NOTIFY_SHORT	1
+#define MMC_HOST_PW_NOTIFY_LONG		2
 
 #ifdef CONFIG_MMC_CLKGATE
 	int			clk_requests;	/* internal reference counter */
@@ -232,6 +266,7 @@ struct mmc_host {
 	unsigned int		max_req_size;	/* maximum number of bytes in one req */
 	unsigned int		max_blk_size;	/* maximum size of one mmc block */
 	unsigned int		max_blk_count;	/* maximum number of blocks in one req */
+	unsigned int		max_discard_to;	/* max. discard timeout in ms */
 
 	/* private data */
 	spinlock_t		lock;		/* lock for claim and bus ops */
@@ -246,6 +281,22 @@ struct mmc_host {
 #ifdef CONFIG_MMC_DEBUG
 	unsigned int		removed:1;	/* host is being removed */
 #endif
+	unsigned int            state;          /* card slot state for SD */
+#define MMC_SD_STATE_PRESENT	(1<<0)		/* present state for SD */
+#define MMC_SD_INIT_STATUS	(1<<1)		/* present state for SD */
+#define MMC_SD_PREV_STATUS	(1<<2)		/* present state for SD */
+
+#define mmc_host_sd_present(h)		((h)->state & MMC_SD_STATE_PRESENT)
+#define mmc_host_sd_set_present(h)      ((h)->state |= MMC_SD_STATE_PRESENT)
+#define mmc_host_sd_clear_present(h)    ((h)->state &= ~MMC_SD_STATE_PRESENT)
+
+#define mmc_host_sd_init_stat(h)	((h)->state & MMC_SD_INIT_STATUS)
+#define mmc_host_sd_set_init_stat(h)	((h)->state |= MMC_SD_INIT_STATUS)
+#define mmc_host_sd_clear_init_stat(h)	((h)->state &= ~MMC_SD_INIT_STATUS)
+
+#define mmc_host_sd_prev_stat(h)	((h)->state & MMC_SD_PREV_STATUS)
+#define mmc_host_sd_set_prev_stat(h)	((h)->state |= MMC_SD_PREV_STATUS)
+#define mmc_host_sd_clear_prev_stat(h)	((h)->state &= ~MMC_SD_PREV_STATUS)
 
 	/* Only used with MMC_CAP_DISABLE */
 	int			enabled;	/* host is enabled */
@@ -262,6 +313,7 @@ struct mmc_host {
 	int			claim_cnt;	/* "claim" nesting count */
 
 	struct delayed_work	detect;
+	int			detect_change;	/* card detect flag */
 	struct wake_lock	detect_wake_lock;
 
 	const struct mmc_bus_ops *bus_ops;	/* current bus driver */
@@ -295,6 +347,8 @@ struct mmc_host {
 		int				num_funcs;
 	} embedded_sdio_data;
 #endif
+
+	struct mmc_async_req	*areq;		/* active async req */
 
 	unsigned long		private[0] ____cacheline_aligned;
 };
@@ -343,6 +397,8 @@ extern int mmc_power_restore_host(struct mmc_host *host);
 
 extern void mmc_detect_change(struct mmc_host *, unsigned long delay);
 extern void mmc_request_done(struct mmc_host *, struct mmc_request *);
+
+extern int mmc_cache_ctrl(struct mmc_host *, u8);
 
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
@@ -409,4 +465,3 @@ static inline int mmc_host_cmd23(struct mmc_host *host)
 	return host->caps & MMC_CAP_CMD23;
 }
 #endif
-

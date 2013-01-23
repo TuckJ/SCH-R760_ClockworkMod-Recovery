@@ -11,7 +11,6 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/cpu.h>
-#include <linux/cpu_pm.h>
 #include <linux/kernel.h>
 #include <linux/notifier.h>
 #include <linux/signal.h>
@@ -404,7 +403,9 @@ static void vfp_enable(void *unused)
 	set_copro_access(access | CPACC_FULL(10) | CPACC_FULL(11));
 }
 
-#ifdef CONFIG_CPU_PM
+#ifdef CONFIG_PM
+#include <linux/syscore_ops.h>
+
 static int vfp_pm_suspend(void)
 {
 	struct thread_info *ti = current_thread_info();
@@ -438,33 +439,19 @@ static void vfp_pm_resume(void)
 	fmxr(FPEXC, fmrx(FPEXC) & ~FPEXC_EN);
 }
 
-static int vfp_cpu_pm_notifier(struct notifier_block *self, unsigned long cmd,
-	void *v)
-{
-	switch (cmd) {
-	case CPU_PM_ENTER:
-		vfp_pm_suspend();
-		break;
-	case CPU_PM_ENTER_FAILED:
-	case CPU_PM_EXIT:
-		vfp_pm_resume();
-		break;
-	}
-	return NOTIFY_OK;
-}
-
-static struct notifier_block vfp_cpu_pm_notifier_block = {
-	.notifier_call = vfp_cpu_pm_notifier,
+static struct syscore_ops vfp_pm_syscore_ops = {
+	.suspend	= vfp_pm_suspend,
+	.resume		= vfp_pm_resume,
 };
 
 static void vfp_pm_init(void)
 {
-	cpu_pm_register_notifier(&vfp_cpu_pm_notifier_block);
+	register_syscore_ops(&vfp_pm_syscore_ops);
 }
 
 #else
 static inline void vfp_pm_init(void) { }
-#endif /* CONFIG_CPU_PM */
+#endif /* CONFIG_PM */
 
 void vfp_sync_hwstate(struct thread_info *thread)
 {
@@ -605,7 +592,6 @@ static int __init vfp_init(void)
 				elf_hwcap |= HWCAP_VFPv3D16;
 		}
 #endif
-#ifdef CONFIG_NEON
 		/*
 		 * Check for the presence of the Advanced SIMD
 		 * load/store instructions, integer and single
@@ -613,10 +599,13 @@ static int __init vfp_init(void)
 		 * for NEON if the hardware has the MVFR registers.
 		 */
 		if ((read_cpuid_id() & 0x000f0000) == 0x000f0000) {
+#ifdef CONFIG_NEON
 			if ((fmrx(MVFR1) & 0x000fff00) == 0x00011100)
 				elf_hwcap |= HWCAP_NEON;
-		}
 #endif
+			if ((fmrx(MVFR1) & 0xf0000000) == 0x10000000)
+				elf_hwcap |= HWCAP_VFPv4;
+		}
 	}
 	return 0;
 }

@@ -1,14 +1,15 @@
-# FIXME
-/dev/pvrsrvkm             0666   system     system
-
 #for DSSCOMP
 /dev/dsscomp              0666   system     system
 /dev/tiler                0666   system     system
 
 #for SYSLINK
-/dev/rpmsg-omx0           0660   drmrpc    drmrpc
-/dev/rpmsg-omx1           0660   drmrpc    drmrpc
-/dev/rproc_user           0660   drmrpc    drmrpc
+################################################
+#rajireddy.k: user changed to system. Otherwise 
+# VideoEditor_T1 is failing to load TI OMX
+################################################
+/dev/rpmsg-omx0           0660   system    drmrpc
+/dev/rpmsg-omx1           0660   system    drmrpc
+/dev/rproc_user           0660   system    drmrpc
 /dev/tf_driver            0660   drmrpc    drmrpc
 /dev/tf_ctrl              0660   drmrpc    drmrpc
 
@@ -16,7 +17,8 @@
 /dev/mpu                  0660   system     system
 /dev/mpuirq               0660   system     system
 /dev/timerirq             0660   system     system
-/dev/akm8975		      0660	 system	    system
+# for AKM8975
+/dev/akm8975		0660	system	system
 
 #for HSPA RIL
 /dev/umts_boot0           0660   radio      radio
@@ -29,9 +31,10 @@
 /dev/umts_router          0660   radio      system
 /dev/umts_csd             0660   radio      system
 
+#SISO Anuradha change start
 #hdcp
 /dev/hdcp		0664	root		root
-
+#SISO Anuradha change end
 # used by RIL and GPS
 /dev/ttyO0                0660   system     radio
 
@@ -54,6 +57,3 @@
 /dev/modem_br           0660    radio   radio
 /dev/cdma_ramdump0      0660    radio   radio
 /dev/lte_ramdump0       0660    radio   radio
-
-# for wifi
-/dev/rfkill             0666    root    root

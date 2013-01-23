@@ -1,17 +1,3 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 /**************************************************************
 
 	spi_data.c
@@ -46,12 +32,13 @@
 
 ***************************************************************/
 
-static struct spi_data_queue	*spi_queue;
-static struct spi_data_div_buf *spi_div_buf;
-static struct spi_data_queue_info	*spi_queue_info;
+struct spi_data_queue	*spi_queue;
+struct spi_data_queue_info	*spi_queue_info;
+struct spi_data_div_buf *spi_div_buf;
 
-static char *gspi_data_prepare_packet;
-static char *gspi_data_packet_buf;
+char *gspi_data_prepare_packet;
+
+char *gspi_data_packet_buf;
 
 static int _prepare_tx_type_packet(void *buf,
 		struct spi_data_queue_info *queue_info,
@@ -62,46 +49,33 @@ static int _spi_data_verify(void *buf,  unsigned int mux);
 
 /**********************************************************
 
-Prototype		void spi_get_queue_info(spi_data_queue_info *pQueueinfo)
-
-Type		function
-
-Description	set spi_queue_info
-
-***********************************************************/
-struct spi_data_queue_info *spi_get_queue_info(void)
-{
-	return spi_queue_info;
-}
-
-
-/**********************************************************
-
-Prototype		spi_get_data_packet_buf(char *spi_data_packet_buf)
-
-Type		function
-
-Description	set spi data packet buffer
-
-***********************************************************/
-char *spi_get_data_packet_buf(void)
-{
-	return gspi_data_packet_buf;
-}
-
-
-/**********************************************************
-
 Prototype		void spi_data_queue_init ( void )
 
 Type		function
 
 Description	init buffer and data variable
 
+Param input	(none)
+
+Return value	(none)
+
 ***********************************************************/
 void spi_data_queue_init(void)
 {
-	int i;
+	int i = 0;
+
+	/* This is defined at ipc_spi.c file and copied. */
+	#define FMT_OUT 0x0FE000
+	#define FMT_IN		0x10E000
+	#define FMT_SZ		0x10000   /* 65536 bytes */
+
+	#define RAW_OUT 0x11E000
+	#define RAW_IN		0x21E000
+	#define RAW_SZ		0x100000 /* 1 MB */
+
+	#define RFS_OUT 0x31E000
+	#define RFS_IN		0x41E000
+	#define RFS_SZ		0x100000 /* 1 MB */
 
 	void *p_virtual_buff;
 	unsigned int buffer_offset[SPI_DATA_QUEUE_TYPE_NB] = {
@@ -166,11 +140,15 @@ Type		function
 
 Description	memfree buffer and data variable
 
+Param input	(none)
+
+Return value	(none)
+
 ***********************************************************/
 
 void spi_data_queue_destroy(void)
 {
-	int i;
+	int i = 0;
 
 	if (spi_div_buf != NULL) {
 		for (i = 0 ; i < SPI_DATA_QUEUE_TYPE_NB ; i++) {
@@ -227,29 +205,29 @@ Return value	0 : fail
 int spi_data_inqueue(struct spi_data_queue_info *queue_info,
 		void *data, unsigned int length)
 {
-	char *pdata;
-	struct spi_data_queue *queue;
+	char *pdata = NULL;
+	struct spi_data_queue *queue = NULL;
 	pdata = data;
 	queue = queue_info->header;
 
 	if (queue->tail < queue->head) {
 		if ((queue->head - queue->tail) < length) {
-			pr_err("%s%s[%u],%s[%u],%s[%u],%s[%u]\n",
+			SPI_OS_ASSERT(("%s%s[%u],%s[%u],%s[%u],%s[%u]\n",
 				"[SPI] ERROR : spi_data_inqueue : ",
 				"queue is overflow head", queue->head,
 				"tail", queue->tail, "length", length,
-				"buf_size", queue_info->buf_size);
-			return -1;
+				"buf_size", queue_info->buf_size));
+			return 0;
 		}
 	} else {
 		if ((queue_info->buf_size - (queue->tail - queue->head))
 			< length) {
-			pr_err("%s%s[%u],%s[%u],%s[%u],%s[%u]\n",
+			SPI_OS_ASSERT(("%s%s[%u],%s[%u],%s[%u],%s[%u]\n",
 			"[SPI] ERROR : spi_data_inqueue : queue is overflow ",
 			"head", queue->head, "tail", queue->tail,
 			"request length", length,
-			"buf_size", queue_info->buf_size);
-			return -1;
+			"buf_size", queue_info->buf_size));
+			return 0;
 		}
 	}
 
@@ -307,14 +285,16 @@ Return value	0 : fail
 unsigned int spi_data_dequeue(struct spi_data_queue_info *queue_info,
 		void *pdata)
 {
-	unsigned int length = 0, buf_length, pre_data_len;
-	struct spi_data_queue *queue;
+	unsigned int length = 0, buf_length = 0, pre_data_len = 0;
+	struct spi_data_queue *queue = NULL;
 
 	queue = queue_info->header;
 
 	if (queue->tail == queue->head) { /* empty */
-		pr_err("[SPI] ERROR : spi_data_dequeue: queue is empty\n");
-		return -1;
+		SPI_OS_ERROR(("%s %s\n",
+			"[SPI] ERROR : spi_data_dequeue:",
+			"queue is empty"));
+		return 0;
 	}
 
 	if (queue->head == queue_info->buf_size)
@@ -384,32 +364,32 @@ unsigned int spi_data_dequeue(struct spi_data_queue_info *queue_info,
 		if (&spi_queue_info[SPI_DATA_QUEUE_TYPE_IPC_TX] == queue_info ||
 		&spi_queue_info[SPI_DATA_QUEUE_TYPE_IPC_RX] == queue_info) {
 			/* IPC Case */
-			pr_err("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
+			SPI_OS_ERROR(("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
 				"[SPI] ERROR : spi_data_dequeue: IPC error",
 				"length", length, "buf_size",
 				queue_info->buf_size, "head",
-				queue->head, "tail", queue->tail);
+				queue->head, "tail", queue->tail));
 		} else if (
 		&spi_queue_info[SPI_DATA_QUEUE_TYPE_RAW_TX] == queue_info
 		|| &spi_queue_info[SPI_DATA_QUEUE_TYPE_RAW_RX] == queue_info) {
 			/* RAW Case */
-			pr_err("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
+			SPI_OS_ERROR(("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
 				"[SPI] ERROR : spi_data_dequeue: RAW error",
 				"length", length,
 				"buf_size", queue_info->buf_size,
-				"head", queue->head, "tail", queue->tail);
+				"head", queue->head, "tail", queue->tail));
 		} else { /* RFS Case */
-			pr_err("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
+			SPI_OS_ERROR(("%s %s[%x],%s[%u],%s[%u],%s[%u]\n",
 				"[SPI] ERROR : spi_data_dequeue: RFS error",
 				"length", length,
 				"buf_size", queue_info->buf_size,
-				"head", queue->head, "tail", queue->tail);
+				"head", queue->head, "tail", queue->tail));
 		}
 		spi_os_trace_dump_low("spi_data_dequeue error",
 			queue_info->buffer + queue->head - 1, 16);
 		spi_os_trace_dump_low("spi_data_dequeue error",
 			queue_info->buffer + queue->tail - 1, 16);
-		return -1;
+		return 0;
 	}
 
 	if (&spi_queue_info[SPI_DATA_QUEUE_TYPE_IPC_TX] == queue_info
@@ -428,30 +408,30 @@ unsigned int spi_data_dequeue(struct spi_data_queue_info *queue_info,
 
 	if (queue->tail > queue->head) {
 		if (queue->tail - queue->head < length) {
-			pr_err("%s %s tail[%u], head[%u], length[%u]\n",
+			SPI_OS_ERROR(("%s %s tail[%u], head[%u], length[%u]\n",
 				"[SPI] ERROR : spi_data_dequeue:",
 				"request data length is less than queue`s remain data.",
-				queue->tail, queue->head, length);
+				queue->tail, queue->head, length));
 
 			spi_os_trace_dump_low("spi_data_dequeue error",
 				queue_info->buffer + queue->head - 1, 16);
 			spi_os_trace_dump_low("spi_data_dequeue error",
 				queue_info->buffer + queue->tail - 1, 16);
-			return -1;
+			return 0;
 		}
 	} else if (queue->tail < queue->head) {
 		if ((queue_info->buf_size - queue->head + queue->tail)
 			< length) {
-			pr_err("%s %s tail[%u], head[%u], length[%u]\n",
+			SPI_OS_ERROR(("%s %s tail[%u], head[%u], length[%u]\n",
 				"[SPI] ERROR : spi_data_dequeue:",
 				"request data length is less than queue`s remain data.",
-				queue->tail, queue->head, length);
+				queue->tail, queue->head, length));
 
 			spi_os_trace_dump_low("spi_data_dequeue error",
 				queue_info->buffer + queue->head - 1, 16);
 			spi_os_trace_dump_low("spi_data_dequeue error",
 				queue_info->buffer + queue->tail - 1, 16);
-			return -1;
+			return 0;
 		}
 	}
 
@@ -578,7 +558,7 @@ Return value	0	: fail
 
 int spi_data_prepare_tx_packet(void *buf)
 {
-	struct spi_data_queue *queue;
+	struct spi_data_queue *queue = NULL;
 	int flag_to_send = 0;
 
 	/* process IPC data */
@@ -660,16 +640,16 @@ static int _prepare_tx_type_packet(void *buf,
 	struct spi_data_div_buf *spi_data_buf,
 	enum SPI_DATA_TYPE_T spi_type)
 {
-	char *spi_packet;
+	char *spi_packet = NULL;
 
-	struct spi_data_packet_header	*spi_packet_header;
-	unsigned int spi_packet_free_length;
+	struct spi_data_packet_header	*spi_packet_header = NULL;
+	unsigned int spi_packet_free_length = 0;
 
+	unsigned int cur_dequeue_length = 0;
 	unsigned int spi_packet_count = 0;
-	unsigned int cur_dequeue_length;
-	unsigned int spi_data_mux;
+	unsigned int spi_data_mux = 0;
 
-	struct spi_data_queue *queue;
+	struct spi_data_queue *queue = NULL;
 
 	queue = queue_info->header;
 
@@ -716,7 +696,7 @@ static int _prepare_tx_type_packet(void *buf,
 				gspi_data_prepare_packet);
 		}
 
-		if (cur_dequeue_length < 0)
+		if (cur_dequeue_length == 0)
 			continue;
 
 		if (spi_packet_free_length < cur_dequeue_length) {
@@ -755,9 +735,9 @@ static int _prepare_tx_type_packet(void *buf,
 		/* check spi maximum count per packet */
 		if (spi_packet_count >= SPI_DATA_MAX_COUNT_PER_PACKET) {
 
-			pr_err("%s %s\n",
+			SPI_OS_ERROR(("%s %s\n",
 				"[SPI] ERROR : spi _prepare_tx_type_packet :",
-				"spi_packet_count is full");
+				"spi_packet_count is full"));
 
 			return 0;
 		}
@@ -791,17 +771,17 @@ Return value	0	: fail
 
 int spi_data_parsing_rx_packet(void *buf, unsigned int length)
 {
-	struct spi_data_packet_header *spi_packet_header;
-	char *spi_packet;
-	unsigned int spi_packet_length;
+	struct spi_data_packet_header *spi_packet_header = NULL;
+	char *spi_packet = NULL;
+	unsigned int spi_packet_length	= 0;
 	unsigned int spi_packet_cur_pos = SPI_DATA_PACKET_HEADER_SIZE;
 
-	unsigned int spi_data_mux;
-	unsigned int spi_data_length;
-	char *spi_cur_data;
+	unsigned int spi_data_mux = 0;
+	unsigned int spi_data_length = 0;
+	char *spi_cur_data		= NULL;
 
-	struct spi_data_queue_info *queue_info;
-	struct spi_data_div_buf *tx_div_buf;
+	struct spi_data_queue_info *queue_info = NULL;
+	struct spi_data_div_buf *tx_div_buf = NULL;
 
 
 	/* check spi packet header */
@@ -848,9 +828,9 @@ int spi_data_parsing_rx_packet(void *buf, unsigned int length)
 			break;
 
 		default:
-			pr_err("%s len[%u], pos[%u]\n",
+			SPI_OS_ERROR(("%s len[%u], pos[%u]\n",
 				"[SPI] ERROR : spi_data_parsing_rx_packet : MUX error",
-				spi_packet_length, spi_packet_cur_pos);
+				spi_packet_length, spi_packet_cur_pos));
 
 			spi_os_trace_dump_low("mux error",
 				spi_packet + spi_packet_cur_pos, 16);
@@ -926,8 +906,7 @@ int spi_data_parsing_rx_packet(void *buf, unsigned int length)
 
 /**********************************************************
 
-Prototype		static int _spi_data_verify( void * buf,
-					unsigned int mux )
+Prototype		int _spi_data_verify( void * buf,  unsigned int mux )
 
 Type		function
 
@@ -943,10 +922,9 @@ Return value	0	: fail
 
 ***********************************************************/
 
-static int _spi_data_verify(void *buf,
-	unsigned int mux)
+int _spi_data_verify(void *buf, unsigned int mux)
 {
-	unsigned int length;
+	unsigned int length = 0;
 
 	unsigned int max_data_len = SPI_DATA_MAX_SIZE_PER_PACKET;
 	char bof = 0x00;
@@ -970,24 +948,24 @@ static int _spi_data_verify(void *buf,
 					SPI_DATA_EOF_SIZE);
 
 				if (eof != SPI_DATA_EOF) {
-					pr_err("%s %s\n",
+					SPI_OS_ERROR(("%s %s\n",
 						"[SPI] ERROR : _spi_data_verify:",
-						"invalid");
+						"invalid"));
 
 					return 0;
 				}
 			}
 		} else {
-			pr_err("%s %s\n",
+			SPI_OS_ERROR(("%s %s\n",
 				"[SPI] ERROR : _spi_data_verify:",
-				"invalid : length error");
+				"invalid : length error"));
 
 			return 0;
 		}
 	} else {
-		pr_err("%s %s\n",
+		SPI_OS_ERROR(("%s %s\n",
 			"[SPI] ERROR : _spi_data_verify:",
-			"invalid : bof error");
+			"invalid : bof error"));
 
 		return 0;
 	}

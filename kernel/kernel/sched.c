@@ -77,14 +77,14 @@
 #include <asm/irq_regs.h>
 #include <asm/mutex.h>
 
+#include <mach/sec_debug.h>
+
 #include "sched_cpupri.h"
 #include "workqueue_sched.h"
 #include "sched_autogroup.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
-
-#include <mach/sec_addon.h>
 
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]
@@ -3190,6 +3190,13 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	finish_task_switch(this_rq(), prev);
 }
 
+unsigned long get_cpu_nr_running(unsigned int cpu)
+{
+    if(cpu <=NR_CPUS)
+        return cpu_rq(cpu)->nr_running;
+    else
+        return 0;
+}
 /*
  * nr_running, nr_uninterruptible and nr_context_switches:
  *
@@ -4295,8 +4302,7 @@ need_resched:
 	} else
 		raw_spin_unlock_irq(&rq->lock);
 
-	sec_debug_task_log(cpu, rq->curr);
-
+	sec_debug_task_sched_log(cpu, rq->curr);
 	post_schedule(rq);
 
 	preempt_enable_no_resched();

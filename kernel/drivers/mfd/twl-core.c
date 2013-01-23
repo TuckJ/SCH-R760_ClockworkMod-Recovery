@@ -83,7 +83,7 @@
 #define twl_has_madc()	false
 #endif
 
-#if defined(CONFIG_TWL4030_POWER) || defined(CONFIG_TWL6030_POWER)
+#ifdef CONFIG_TWL4030_POWER
 #define twl_has_power()        true
 #else
 #define twl_has_power()        false
@@ -126,7 +126,6 @@
 
 /* Last - for index max*/
 #define TWL4030_MODULE_LAST		TWL4030_MODULE_SECURED_REG
-#define TWL6030_MODULE_LAST		TWL6030_MODULE_SLAVE_RES
 
 #define TWL_NUM_SLAVES		4
 
@@ -142,7 +141,7 @@
 #define SUB_CHIP_ID2 2
 #define SUB_CHIP_ID3 3
 
-#define TWL_MODULE_LAST TWL6030_MODULE_LAST
+#define TWL_MODULE_LAST TWL4030_MODULE_LAST
 
 /* Base Address defns for twl4030_map[] */
 
@@ -188,7 +187,6 @@
 #define TWL6030_BASEADD_MEM		0x0017
 #define TWL6030_BASEADD_PM_MASTER	0x001F
 #define TWL6030_BASEADD_PM_SLAVE_MISC	0x0030 /* PM_RECEIVER */
-#define TWL6030_BASEADD_PM_SLAVE_RES	0x00AD
 #define TWL6030_BASEADD_PM_MISC		0x00E2
 #define TWL6030_BASEADD_PM_PUPD		0x00F0
 
@@ -241,13 +239,6 @@ unsigned int twl_rev(void)
 	return twl_id;
 }
 EXPORT_SYMBOL(twl_rev);
-
-static bool twl_6030_lite;
-bool is_twl6030_lite(void)
-{
-	return twl_6030_lite;
-}
-EXPORT_SYMBOL(is_twl6030_lite);
 
 /* Structure for each TWL4030/TWL6030 Slave */
 struct twl_client {
@@ -342,7 +333,6 @@ static struct twl_mapping twl6030_map[] = {
 	{ SUB_CHIP_ID0, TWL6030_BASEADD_RTC },
 	{ SUB_CHIP_ID0, TWL6030_BASEADD_MEM },
 	{ SUB_CHIP_ID1, TWL6025_BASEADD_CHARGER },
-	{ SUB_CHIP_ID0, TWL6030_BASEADD_PM_SLAVE_RES },
 };
 
 /*----------------------------------------------------------------------*/
@@ -396,9 +386,8 @@ int twl_i2c_write(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes)
 
 	/* i2c_transfer returns number of messages transferred */
 	if (ret != 1) {
-		pr_err("%s: i2c_write failed to transfer all messages "
-			"(addr 0x%04x, reg %d, len %d)\n",
-			DRIVER_NAME, twl->address, reg, msg->len);
+		pr_err("%s: i2c_write failed to transfer all messages\n",
+			DRIVER_NAME);
 		if (ret < 0)
 			return ret;
 		else
@@ -456,9 +445,8 @@ int twl_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes)
 
 	/* i2c_transfer returns number of messages transferred */
 	if (ret != 2) {
-		pr_err("%s: i2c_read failed to transfer all messages "
-			"(addr 0x%04x, reg %d, len %d)\n",
-			DRIVER_NAME, twl->address, reg, msg->len);
+		pr_err("%s: i2c_read failed to transfer all messages\n",
+			DRIVER_NAME);
 		if (ret < 0)
 			return ret;
 		else
@@ -691,7 +679,7 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 		 */
 		sub_chip_id = twl_map[TWL_MODULE_RTC].sid;
 		child = add_child(sub_chip_id, "twl_rtc",
-				pdata->rtc, sizeof(*pdata->rtc),
+				NULL, 0,
 				true, pdata->irq_base + RTC_INTR_OFFSET, 0);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
@@ -839,7 +827,7 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 	/* Phoenix codec driver is probed directly atm */
 	if (twl_has_codec() && pdata->codec && twl_class_is_6030()) {
 		sub_chip_id = twl_map[TWL_MODULE_AUDIO_VOICE].sid;
-		child = add_child(sub_chip_id, "twl6040-audio",
+		child = add_child(sub_chip_id, "twl6040-codec",
 				pdata->codec, sizeof(*pdata->codec),
 				false, 0, 0);
 		if (IS_ERR(child))
@@ -978,13 +966,7 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-
-		child = add_regulator(TWL6030_REG_VMEM, pdata->vmem,
-					features);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL6030_REG_V2V1, pdata->v2v1,
+		child = add_regulator(TWL6030_REG_CLK32KG, pdata->clk32kg,
 					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
@@ -994,21 +976,6 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 	if (twl_has_regulator() && twl_class_is_6030()) {
 		child = add_regulator(TWL6030_REG_VANA, pdata->vana,
 					features);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL6030_REG_SYSEN, pdata->sysen,
-					features);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL6030_REG_CLK32KG, pdata->clk32kg,
-					features);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL6030_REG_CLK32KAUDIO,
-				pdata->clk32kaudio, features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
@@ -1261,13 +1228,6 @@ twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		twl_map = &twl4030_map[0];
 	}
 
-	if (((id->driver_data) & TWL6030_CLASS) &&
-			(id->driver_data & TWL6025_SUBCLASS)) {
-		twl_6030_lite = true;
-		dev_info(&client->dev, "Board PMIC is TWL6032\n");
-	}
-
-
 	/* setup clock framework */
 	clocks_init(&client->dev, pdata->clock);
 
@@ -1278,12 +1238,8 @@ twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	}
 
 	/* load power event scripts */
-	if (twl_has_power()) {
-		if (twl_class_is_4030() && pdata->power)
-			twl4030_power_init(pdata->power);
-		if (twl_class_is_6030())
-			twl6030_power_init(pdata->power);
-	}
+	if (twl_has_power() && pdata->power)
+		twl4030_power_init(pdata->power);
 
 	/* Maybe init the T2 Interrupt subsystem */
 	if (client->irq

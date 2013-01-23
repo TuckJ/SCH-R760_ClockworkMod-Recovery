@@ -1,17 +1,3 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 #ifndef _SPI_DATA_H_
 #define _SPI_DATA_H_
 
@@ -72,18 +58,6 @@
 
 #define SPI_DATA_DIVIDE_BUFFER_SIZE SPI_DEV_MAX_PACKET_SIZE
 
-/* This is defined at ipc_spi.c file and copied. */
-#define FMT_OUT 0x0FE000
-#define FMT_IN		0x10E000
-#define FMT_SZ		0x10000   /* 65536 bytes */
-
-#define RAW_OUT 0x11E000
-#define RAW_IN		0x21E000
-#define RAW_SZ		0x100000 /* 1 MB */
-
-#define RFS_OUT 0x31E000
-#define RFS_IN		0x41E000
-#define RFS_SZ		0x100000 /* 1 MB */
 
 
 enum SPI_DATA_TYPE_T {
@@ -127,10 +101,11 @@ struct spi_data_div_buf {
 	char *buffer;		 /* queue data */
 };
 
-extern struct spi_data_queue_info *spi_get_queue_info(void);
-extern char *spi_get_data_packet_buf(void);
-
 extern void *ipc_spi_get_queue_buff(void);
+
+extern struct spi_data_queue *spi_data_queue;
+extern struct spi_data_queue_info	 *spi_queue_info;
+extern char *gspi_data_packet_buf;
 
 extern void spi_data_queue_init(void);
 extern void spi_data_queue_destroy(void);
@@ -148,3 +123,6 @@ extern int spi_data_parsing_rx_packet(void *buf, unsigned int length);
 
 extern void spi_data_print_raw_data(void *data, unsigned int length);
 #endif
+
+
+

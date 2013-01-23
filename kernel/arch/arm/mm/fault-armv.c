@@ -236,9 +236,9 @@ void __init check_writebuffer_bugs(void)
 	struct page *page;
 	const char *reason;
 	unsigned long v = 1;
-
+    #ifndef PRODUCT_SHIP
 	printk(KERN_INFO "CPU: Testing write buffer coherency: ");
-
+    #endif
 	page = alloc_page(GFP_KERNEL);
 	if (page) {
 		unsigned long *p1, *p2;
@@ -263,9 +263,13 @@ void __init check_writebuffer_bugs(void)
 	}
 
 	if (v) {
+        #ifndef PRODUCT_SHIP	
 		printk("failed, %s\n", reason);
+        #endif		
 		shared_pte_mask = L_PTE_MT_UNCACHED;
 	} else {
+        #ifndef PRODUCT_SHIP 	
 		printk("ok\n");
+        #endif		
 	}
 }

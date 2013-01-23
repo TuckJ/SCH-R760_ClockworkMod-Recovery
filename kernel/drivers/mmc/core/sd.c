@@ -306,6 +306,9 @@ static int mmc_read_switch(struct mmc_card *card)
 		goto out;
 	}
 
+	if (status[13] & 0x02)
+		card->sw_caps.hs_max_dtr = 50000000;
+
 	if (card->scr.sda_spec3) {
 		card->sw_caps.sd3_bus_mode = status[13];
 
@@ -348,9 +351,6 @@ static int mmc_read_switch(struct mmc_card *card)
 		}
 
 		card->sw_caps.sd3_curr_limit = status[7];
-	} else {
-		if (status[13] & 0x02)
-			card->sw_caps.hs_max_dtr = 50000000;
 	}
 
 out:
@@ -1007,13 +1007,21 @@ static void mmc_sd_remove(struct mmc_host *host)
 }
 
 /*
+ * Card detection - card is alive.
+ */
+static int mmc_sd_alive(struct mmc_host *host)
+{
+	return mmc_send_status(host->card, NULL);
+}
+
+/*
  * Card detection callback from host.
  */
 static void mmc_sd_detect(struct mmc_host *host)
 {
 	int err = 0;
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
-	int retries = 2;
+        int retries = 5;
 #endif
 
 	BUG_ON(!host);
@@ -1026,7 +1034,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 	 */
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
 	while(retries) {
-		err = mmc_send_status(host->card, NULL);
+		err = _mmc_detect_card_removed(host);
 		if (err) {
 			retries--;
 			udelay(5);
@@ -1039,7 +1047,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 		       __func__, mmc_hostname(host), err);
 	}
 #else
-	err = mmc_send_status(host->card, NULL);
+	err = _mmc_detect_card_removed(host);
 #endif
 	mmc_release_host(host);
 
@@ -1048,6 +1056,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 
 		mmc_claim_host(host);
 		mmc_detach_bus(host);
+		mmc_power_off(host);
 		mmc_release_host(host);
 	}
 }
@@ -1126,6 +1135,7 @@ static const struct mmc_bus_ops mmc_sd_ops = {
 	.suspend = NULL,
 	.resume = NULL,
 	.power_restore = mmc_sd_power_restore,
+	.alive = mmc_sd_alive,
 };
 
 static const struct mmc_bus_ops mmc_sd_ops_unsafe = {
@@ -1134,6 +1144,7 @@ static const struct mmc_bus_ops mmc_sd_ops_unsafe = {
 	.suspend = mmc_sd_suspend,
 	.resume = mmc_sd_resume,
 	.power_restore = mmc_sd_power_restore,
+	.alive = mmc_sd_alive,
 };
 
 static void mmc_sd_attach_bus_ops(struct mmc_host *host)
@@ -1164,7 +1175,7 @@ int mmc_attach_sd(struct mmc_host *host)
 	/* Make sure we are at 3.3V signalling voltage */
 	err = mmc_set_signal_voltage(host, MMC_SIGNAL_VOLTAGE_330, false);
 	if (err)
-		return err;
+		goto ret_err;
 
 	/* Disable preset value enable if already set since last time */
 	if (host->ops->enable_preset_value)
@@ -1172,7 +1183,7 @@ int mmc_attach_sd(struct mmc_host *host)
 
 	err = mmc_send_app_op_cond(host, 0, &ocr);
 	if (err)
-		return err;
+		goto ret_err;
 
 	mmc_sd_attach_bus_ops(host);
 	if (host->ocr_avail_sd)
@@ -1249,6 +1260,8 @@ int mmc_attach_sd(struct mmc_host *host)
 	if (err)
 		goto remove_card;
 
+	mmc_host_sd_set_init_stat(host);
+	mmc_host_sd_clear_prev_stat(host);
 	return 0;
 
 remove_card:
@@ -1261,6 +1274,9 @@ err:
 
 	printk(KERN_ERR "%s: error %d whilst initialising SD card\n",
 		mmc_hostname(host), err);
+ret_err:
+	mmc_host_sd_clear_init_stat(host);
+	mmc_host_sd_set_prev_stat(host);
 
 	return err;
 }

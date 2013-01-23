@@ -94,12 +94,11 @@
 /*-------------------------------------------------------------------------*/
 
 #define MTPG_BULK_BUFFER_SIZE	4096
-#define MTPG_INTR_BUFFER_SIZE	28
+#define INT_MAX_PACKET_SIZE	10
 
 /* number of rx and tx requests to allocate */
-#define MTPG_RX_REQ_MAX		4
-#define MTPG_MTPG_TX_REQ_MAX	4
-#define MTPG_INTR_REQ_MAX	5
+#define MTPG_RX_REQ_MAX				4
+#define MTPG_MTPG_TX_REQ_MAX		4
 
 /* ID for Microsoft MTP OS String */
 #define MTPG_OS_STRING_ID   0xEE
@@ -110,6 +109,10 @@ static const char mtpg_longname[] =	"mtp";
 static const char shortname[] = DRIVER_NAME;
 static int mtp_pid;
 
+typedef enum {
+mtp_disable_desc = 0,  // 0
+mtp_enable_desc  // 1
+} mtp_desc_t;
 /* MTP Device Structure*/
 struct mtpg_dev {
 	struct usb_function function;
@@ -122,14 +125,11 @@ struct mtpg_dev {
 	int			online;
 	int			error;
 	int			read_ready;
-
 	struct list_head	tx_idle;
 	struct list_head	rx_idle;
 	struct list_head	rx_done;
-	struct list_head	intr_idle;
 	wait_queue_head_t	read_wq;
 	wait_queue_head_t	write_wq;
-	wait_queue_head_t	intr_wq;
 
 	struct usb_request	*read_req;
 	unsigned char		*read_buf;
@@ -138,6 +138,7 @@ struct mtpg_dev {
 	struct usb_ep		*bulk_in;
 	struct usb_ep		*bulk_out;
 	struct usb_ep		*int_in;
+	struct usb_request	*notify_req;
 
 	atomic_t		read_excl;
 	atomic_t		write_excl;
@@ -195,8 +196,8 @@ static struct usb_endpoint_descriptor int_fs_notify_desc = {
 	.bDescriptorType =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes =		USB_ENDPOINT_XFER_INT,
-	.wMaxPacketSize	= __constant_cpu_to_le16(MTPG_INTR_BUFFER_SIZE),
-	.bInterval =		6,
+	.wMaxPacketSize =	__constant_cpu_to_le16(64),
+	.bInterval =		0x04,
 };
 
 static struct usb_descriptor_header *fs_mtpg_desc[] = {
@@ -231,8 +232,8 @@ static struct usb_endpoint_descriptor int_hs_notify_desc = {
 	.bDescriptorType =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes =		USB_ENDPOINT_XFER_INT,
-	.wMaxPacketSize = __constant_cpu_to_le16(MTPG_INTR_BUFFER_SIZE),
-	.bInterval =		6,
+	.wMaxPacketSize =	__constant_cpu_to_le16(64),
+	.bInterval =		INT_MAX_PACKET_SIZE + 4,
 };
 
 static struct usb_descriptor_header *hs_mtpg_desc[] = {
@@ -566,8 +567,7 @@ requeue_req:
 			if (dev->read_count == 0) {
 				DEBUG_MTPR("[%s] and line is = %d\n",
 							__func__, __LINE__);
-				mtpg_req_put(dev, &dev->rx_idle,
-						dev->read_req);
+				mtpg_req_put(dev, &dev->rx_idle, dev->read_req);
 				dev->read_req = 0;
 			}
 
@@ -684,8 +684,7 @@ static ssize_t mtpg_write(struct file *fp, const char __user *buf,
 			buf += xfer;
 			count -= xfer;
 
-			/* zero this so we don't try to
-			 *free it on error exit */
+			/* zero this so we don't try to free it on error exit */
 			req = 0;
 			}
 	}
@@ -715,36 +714,32 @@ static ssize_t interrupt_write(struct file *fd,
 	int  ret;
 
 	DEBUG_MTPB("[%s] \tline = [%d]\n", __func__, __LINE__);
+	req = dev->notify_req;
 
-	if (count < 0 || count > MTPG_INTR_BUFFER_SIZE)
-		return -EINVAL;
+	if (!req)
+		printk(KERN_ERR "[%s]Alloc has failed\n", __func__);
 
-	ret = wait_event_interruptible_timeout(dev->intr_wq,
-		(req = mtpg_req_get(dev, &dev->intr_idle)),
-						msecs_to_jiffies(1000));
-
-	if (!req) {
-		printk(KERN_ERR "[%s:%d]\n", __func__, __LINE__);
-	    return -ETIME;
+	if (_lock(&dev->wintfd_excl)) {
+		printk(KERN_ERR "write failed on interrupt endpoint\n");
+		return -EBUSY;
 	}
 
 	if (copy_from_user(req->buf, buf, count)) {
-		mtpg_req_put(dev, &dev->intr_idle, req);
 		printk(KERN_ERR "[%s]copy from user has failed\n", __func__);
 		return -EIO;
 	}
 
 	req->length = count;
-	/*req->complete = interrupt_complete;*/
+	req->complete = interrupt_complete;
 
 	ret = usb_ep_queue(dev->int_in, req, GFP_ATOMIC);
-	if (ret) {
-		printk(KERN_ERR "[%s:%d]\n", __func__, __LINE__);
-		mtpg_req_put(dev, &dev->intr_idle, req);
+
+	if (ret < 0) {
+		printk(KERN_ERR "[%s]usb_ep_queue failed\n", __func__);
+		return -EIO;
 	}
 
-	DEBUG_MTPB("[%s] \tline = [%d] returning ret is %d\\n",
-						__func__, __LINE__, ret);
+	_unlock(&dev->wintfd_excl);
 	return ret;
 }
 
@@ -774,24 +769,26 @@ static long  mtpg_ioctl(struct file *fd, unsigned int code, unsigned long arg)
 	DEBUG_MTPB("[%s] \tline = [%d]\n", __func__, __LINE__);
 
 	switch (code) {
-	case MTP_ONLY_ENABLE:
-		printk(KERN_DEBUG "[%s:%d] calling mtp_function_enable\n",
-				__func__, __LINE__);
-		if (dev->cdev && dev->cdev->gadget) {
-			usb_gadget_disconnect(cdev->gadget);
-			printk(KERN_DEBUG "[%s] B4 disconnecting gadget\tline = [%d]\n",
-					__func__, __LINE__);
-			/* usb_composite_force_reset(dev->cdev); */
-			usleep_range(5000, 5500);
-			usb_gadget_connect(cdev->gadget);
-			printk(KERN_DEBUG "[%s] \tline = [%d] calling usb_gadget_connect after msleep of 5\n",
-					__func__, __LINE__);
-		}
-		status = 10;
-		printk(KERN_DEBUG "[%s]  [%d] MTP_ONLY_ENABLE ioctl and clearing the error = 0\n",
-				__func__, __LINE__);
-		the_mtpg->error = 0;
-		break;
+		case MTP_ACM_ENABLE:
+			DEBUG_MTPB("[%s]\tline[%d] MTP_ACM_ENABLE \n", __func__,__LINE__);
+//			mtp_enable();
+			break;
+		case MTP_ONLY_ENABLE:
+			printk("[%s:%d] calling mtp_function_enable with %d \n",__func__,__LINE__,mtp_enable_desc);
+			mtp_function_enable(mtp_enable_desc);
+			DEBUG_MTPB("[%s] \tline [%d] MTP_ONLY_ENABLE \n", __func__,__LINE__);
+
+			if (dev->cdev && dev->cdev->gadget )
+			{
+				printk("[%s] B4 disconnecting gadget\tline = [%d] \n", __func__,__LINE__);
+				usb_composite_force_reset(dev->cdev);
+				printk("[%s] \tline = [%d] calling usb_gadget_connect after msleep of 5 \n", __func__,__LINE__);
+			}
+			status = 10;
+			printk("[%s]  [%d] MTP_ONLY_ENABLE ioctl and clearing the error = 0 \n", __func__,__LINE__);
+			the_mtpg->error = 0;
+			break;
+		/* USB & MTP Issue on Reboot fix (Pulled from GB Kernel)  End  */ 
 
 	case MTP_DISABLE:
 		/*mtp_function_enable(mtp_disable_desc);*/
@@ -806,9 +803,8 @@ static long  mtpg_ioctl(struct file *fd, unsigned int code, unsigned long arg)
 		status = usb_ep_clear_halt(dev->bulk_out);
 		break;
 	case MTP_WRITE_INT_DATA:
-		/*printk(KERN_INFO "[%s]\t%d MTP slep1  intrpt_Write\n",
-						__func__, __LINE__);*/
-		msleep(1);
+		printk(KERN_INFO "[%s]\t%d MTP intrpt_Write\n",
+						__func__, __LINE__);
 		ret_value = interrupt_write(fd, (const char *)arg,
 					MTP_MAX_PACKET_LEN_FROM_APP);
 		if (ret_value < 0) {
@@ -1014,37 +1010,19 @@ static void mtpg_complete_out(struct usb_ep *ep, struct usb_request *req)
 	wake_up(&dev->read_wq);
 }
 
-static void mtpg_complete_intr(struct usb_ep *ep, struct usb_request *req)
-{
-	struct mtpg_dev *dev = the_mtpg;
-	/*printk(KERN_INFO "[%s]\tline = [%d]\n", __func__, __LINE__);*/
-
-	if (req->status != 0)
-		dev->error = 1;
-
-	mtpg_req_put(dev, &dev->intr_idle, req);
-
-	wake_up(&dev->intr_wq);
-}
-
 static void
 mtpg_function_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct mtpg_dev	*dev = mtpg_func_to_dev(f);
 	struct usb_request *req;
 
-	printk(KERN_INFO "[%s]\tline = [%d]\n", __func__, __LINE__);
-	dev->online = 0;
-	dev->error = 1;
+	printk(KERN_DEBUG "[%s]\tline = [%d]\n", __func__, __LINE__);
 
 	while ((req = mtpg_req_get(dev, &dev->rx_idle)))
 		mtpg_request_free(req, dev->bulk_out);
 
 	while ((req = mtpg_req_get(dev, &dev->tx_idle)))
 		mtpg_request_free(req, dev->bulk_in);
-
-	while ((req = mtpg_req_get(dev, &dev->intr_idle)))
-		mtpg_request_free(req, dev->int_in);
 }
 
 static int
@@ -1098,13 +1076,12 @@ mtpg_function_bind(struct usb_configuration *c, struct usb_function *f)
 	mtpg->int_in = ep;
 	the_mtpg->int_in = ep;
 
-	for (i = 0; i < MTPG_INTR_REQ_MAX; i++) {
-		req = mtpg_request_new(mtpg->int_in, MTPG_INTR_BUFFER_SIZE);
-		if (!req)
-			goto out;
-		req->complete = mtpg_complete_intr;
-		mtpg_req_put(mtpg, &mtpg->intr_idle, req);
-	}
+	mtpg->notify_req = alloc_ep_req(ep,
+			sizeof(struct usb_mtp_ctrlrequest) + 2,
+			GFP_ATOMIC);
+	if (!mtpg->notify_req)
+		goto out;
+
 	for (i = 0; i < MTPG_RX_REQ_MAX; i++) {
 		req = mtpg_request_new(mtpg->bulk_out, MTPG_BULK_BUFFER_SIZE);
 		if (!req)
@@ -1215,7 +1192,7 @@ static void mtpg_function_disable(struct usb_function *f)
 {
 	struct mtpg_dev	*dev = mtpg_func_to_dev(f);
 
-	printk(KERN_INFO "[%s]\tline = [%d]\n", __func__, __LINE__);
+	printk(KERN_DEBUG "[%s]\tline = [%d]\n", __func__, __LINE__);
 	dev->online = 0;
 	dev->error = 1;
 
@@ -1313,17 +1290,19 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 			}
 			return value;
 		}
+        #ifndef PRODUCT_SHIP		
 		printk(KERN_DEBUG "mtp_ctrlrequest "
 				"%02x.%02x v%04x i%04x l%u\n",
 				ctrl->bRequestType, ctrl->bRequest,
 				w_value, w_index, w_length);
+        #endif				
 	}
 
 	switch ((ctrl->bRequestType << 8) | ctrl->bRequest) {
 	case ((USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE) << 8)
 		| USB_PTPREQUEST_CANCELIO:
 		DEBUG_MTPB("[%s]\tline=[%d]w_v=%x, w_i=%x, w_l=%x\n",
-			__func__, __LINE__, w_value, w_index, w_length);
+				__func__, __LINE__, w_value, w_index, w_length);
 		/* if (w_value == 0x00 && w_index ==
 			mtpg_interface_desc.bInterfaceNumber
 			&& w_length == 0x06) */
@@ -1413,6 +1392,34 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 	return usb_add_function(c, &mtpg->function);
 }
 
+/* USB & MTP Issue on Reboot fix (Pulled from GB Kernel) Start  */ 
+/* used when mtp function is disabled */
+static struct usb_descriptor_header *null_mtpg_descs[] = {
+        NULL,
+};
+
+void mtp_function_enable(int enable)
+{
+	struct mtpg_dev *dev = the_mtpg;
+
+	if (dev) {
+		printk("[%s] mtp_function => (%s)\n", __func__,
+			enable ? "enabled" : "disabled");
+
+		if (enable) {
+			printk("****** %s and line %d fs and hs desc \n",__FUNCTION__,__LINE__);
+			dev->function.descriptors = fs_mtpg_desc;
+			dev->function.hs_descriptors = hs_mtpg_desc;
+		} else {
+			printk("****** %s and line %d null_desc \n",__FUNCTION__,__LINE__);
+			dev->function.descriptors = null_mtpg_descs;
+			dev->function.hs_descriptors = null_mtpg_descs;
+		}
+	}
+	else {
+		printk("[%s] dev does not exist\n", __func__);
+	}
+}
 static int mtp_setup(void)
 {
 	struct mtpg_dev	*mtpg;
@@ -1426,7 +1433,6 @@ static int mtp_setup(void)
 	}
 
 	spin_lock_init(&mtpg->lock);
-	init_waitqueue_head(&mtpg->intr_wq);
 	init_waitqueue_head(&mtpg->read_wq);
 	init_waitqueue_head(&mtpg->write_wq);
 
@@ -1438,7 +1444,6 @@ static int mtp_setup(void)
 	INIT_LIST_HEAD(&mtpg->rx_idle);
 	INIT_LIST_HEAD(&mtpg->rx_done);
 	INIT_LIST_HEAD(&mtpg->tx_idle);
-	INIT_LIST_HEAD(&mtpg->intr_idle);
 
 	/* the_mtpg must be set before calling usb_gadget_register_driver */
 	the_mtpg = mtpg;

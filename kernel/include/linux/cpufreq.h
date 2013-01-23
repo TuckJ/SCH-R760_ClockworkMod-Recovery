@@ -331,6 +331,17 @@ static inline unsigned int cpufreq_quick_get(unsigned int cpu)
 }
 #endif
 
+#ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_FLEXRATE
+extern int cpufreq_ondemand_flexrate_request(unsigned int rate_ms,
+					     unsigned int duration);
+#else
+static inline int cpufreq_ondemand_flexrate_request(unsigned int rate_ms,
+						    unsigned int duration)
+{
+	return 0;
+}
+#endif
+
 
 /*********************************************************************
  *                       CPUFREQ DEFAULT GOVERNOR                    *
@@ -361,9 +372,12 @@ extern struct cpufreq_governor cpufreq_gov_conservative;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE)
 extern struct cpufreq_governor cpufreq_gov_interactive;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_interactive)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_HOTPLUG)
-extern struct cpufreq_governor cpufreq_gov_hotplug;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_hotplug)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_ADAPTIVE)
+extern struct cpufreq_governor cpufreq_gov_adaptive;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_adaptive)
+#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_PEGASUSQ)
+extern struct cpufreq_governor cpufreq_gov_pegasusq;
+#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_pegasusq)
 #endif
 
 
@@ -404,15 +418,6 @@ void cpufreq_frequency_table_get_attr(struct cpufreq_frequency_table *table,
 				      unsigned int cpu);
 
 void cpufreq_frequency_table_put_attr(unsigned int cpu);
-
-/* the following are for use in governors, or anywhere else */
-extern int cpufreq_frequency_table_next_lowest(struct cpufreq_policy *policy,
-					struct cpufreq_frequency_table *table,
-					int *index);
-
-extern int cpufreq_frequency_table_next_highest(struct cpufreq_policy *policy,
-					struct cpufreq_frequency_table *table,
-					int *index);
 
 
 #endif /* _LINUX_CPUFREQ_H */

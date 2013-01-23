@@ -41,11 +41,6 @@ struct usbhs_omap_board_data {
 	 * Each PHY can have a separate regulator.
 	 */
 	struct regulator		*regulator[OMAP3_HS_USB_PORTS];
-	/*
-	 * Each Port can have an external transceiver requiring clock control
-	 * for low power mode entry
-	 */
-	struct clk			*transceiver_clk[OMAP3_HS_USB_PORTS];
 };
 
 struct ehci_hcd_omap_platform_data {
@@ -53,11 +48,6 @@ struct ehci_hcd_omap_platform_data {
 	int				reset_gpio_port[OMAP3_HS_USB_PORTS];
 	struct regulator		*regulator[OMAP3_HS_USB_PORTS];
 	unsigned			phy_reset:1;
-	/*
-	 * Each Port can have an external transceiver requiring clock control
-	 * for low power mode entry
-	 */
-	struct clk			*transceiver_clk[OMAP3_HS_USB_PORTS];
 };
 
 struct ohci_hcd_omap_platform_data {
@@ -110,12 +100,14 @@ extern void usb_musb_init(struct omap_musb_board_data *board_data);
 
 extern void usbhs_init(const struct usbhs_omap_board_data *pdata);
 
+extern int omap_usbhs_enable(struct device *dev);
+extern void omap_usbhs_disable(struct device *dev);
+
 extern int omap4430_phy_power(struct device *dev, int ID, int on);
 extern int omap4430_phy_set_clk(struct device *dev, int on);
 extern int omap4430_phy_init(struct device *dev);
 extern int omap4430_phy_exit(struct device *dev);
 extern int omap4430_phy_suspend(struct device *dev, int suspend);
-extern int omap4430_phy_is_active(struct device *dev);
 #endif
 
 extern void am35x_musb_reset(void);
@@ -300,10 +292,5 @@ static inline u32 omap1_usb2_init(unsigned nwires, unsigned alt_pingroup)
 	return 0;
 }
 #endif
-
-extern void usbhs_wakeup(void);
-extern void omap4_trigger_ioctrl(void);
-
-#define USBHS_EHCI_HWMODNAME	"usbhs_ehci"
 
 #endif	/* __ASM_ARCH_OMAP_USB_H */

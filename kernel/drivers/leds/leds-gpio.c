@@ -231,7 +231,6 @@ static struct gpio_leds_priv * __devinit gpio_leds_create_of(struct platform_dev
 #define of_gpio_leds_match NULL
 #endif
 
-
 static int __devinit gpio_led_probe(struct platform_device *pdev)
 {
 	struct gpio_led_platform_data *pdata = pdev->dev.platform_data;
@@ -294,14 +293,17 @@ static struct platform_driver gpio_led_driver = {
 
 MODULE_ALIAS("platform:leds-gpio");
 
+
 static int __init gpio_led_init(void)
 {
 	return platform_driver_register(&gpio_led_driver);
+
 }
 
 static void __exit gpio_led_exit(void)
 {
 	platform_driver_unregister(&gpio_led_driver);
+
 }
 
 module_init(gpio_led_init);

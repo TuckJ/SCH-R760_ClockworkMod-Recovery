@@ -185,9 +185,6 @@ struct wm8994_pdata {
         unsigned int jd_scthr:2;
         unsigned int jd_thr:2;
 
-	/* Configure WM1811 jack detection for use with external capacitor */
-	unsigned int jd_ext_cap:1;
-
 	/* WM8958 microphone bias configuration */
 	int micbias[2];
 
@@ -202,14 +199,15 @@ struct wm8994_pdata {
 	bool ldo_ena_always_driven;
 
 	/*
+	 * LDO enable delay time
+	 */
+	int ldo_ena_delay;
+
+	/*
 	 * SPKMODE must be pulled internally by the device on this
 	 * system.
 	 */
 	bool spkmode_pu;
-
-	/*
-	 * WM8994 externel MCLK control pin */
-	int mclk_pin;
 };
 
 #endif

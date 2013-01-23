@@ -84,7 +84,6 @@ int spi_xmit(struct lte_modem_bootloader *loader,
 	return ret;
 }
 
-
 static
 int bootloader_write(struct lte_modem_bootloader *loader,
 		const char *addr, const int len)
@@ -97,8 +96,8 @@ int bootloader_write(struct lte_modem_bootloader *loader,
 		memcpy(lenbuf, &len, ARRAY_SIZE(lenbuf));
 		ret = spi_xmit(loader, lenbuf,
 				ARRAY_SIZE(lenbuf));
-		if (ret < 0)
-			return ret;
+			if (ret < 0)
+				return ret;
 		msleep(LEN_XMIT_DELEY);
 	}
 
@@ -156,7 +155,7 @@ long bootloader_ioctl(struct file *flip,
 		} else {
 			if (loader->xmit_status == XMIT_BOOT_READY)
 				loader->xmit_status = XMIT_LOADER_READY;
-			else
+		else
 				loader->xmit_status = XMIT_BOOT_READY;
 		}
 
@@ -241,7 +240,8 @@ int __devinit lte_modem_bootloader_probe(struct spi_device *spi)
 		ret = -EINVAL;
 		goto err_setup;
 	}
-	pdata = (struct lte_modem_bootloader_platform_data *)spi->dev.platform_data;
+	pdata = (struct lte_modem_bootloader_platform_data *) \
+			spi->dev.platform_data;
 	loader->gpio_lte2ap_status = pdata->gpio_lte2ap_status;
 
 	ret = bootloader_gpio_setup(loader);

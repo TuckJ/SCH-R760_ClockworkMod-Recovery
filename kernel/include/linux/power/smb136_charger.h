@@ -11,19 +11,18 @@
 #define __SMB136_CHARGER_H_
 
 struct smb_charger_callbacks {
-	void (*set_charging_state) (struct smb_charger_callbacks *ptr,
-		int cable_status);
-	int (*get_status_reg) (struct smb_charger_callbacks *prt);
+	void (*set_charging_state) (int, int);
+	int (*get_charging_state) (void);
+	void (*set_charging_current) (int);
+	int (*get_charging_current) (void);
 };
 
 struct smb_charger_data {
-	void (*register_callbacks)(struct smb_charger_callbacks *ptr);
+	void (*register_callbacks)(struct smb_charger_callbacks *);
 	void (*unregister_callbacks)(void);
-	void (*set_charge)(int state);
 	int enable;
 	int stat;
 	int ta_nconnected;
-	int hw_revision;
 };
 
 #endif

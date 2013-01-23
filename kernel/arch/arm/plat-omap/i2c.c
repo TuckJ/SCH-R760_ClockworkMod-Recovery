@@ -74,22 +74,6 @@ static struct omap_i2c_bus_platform_data i2c_pdata[OMAP_I2C_MAX_CONTROLLERS];
 static struct platform_device omap_i2c_devices[] = {
 	I2C_DEV_BUILDER(1, i2c_resources[0], &i2c_pdata[0]),
 };
-/**
- * omap2_i2c_reset - reset the omap i2c module.
- * @dev: struct device*
- */
-
-static int omap2_i2c_reset(struct device *dev)
-{
-	int r = 0;
-	struct platform_device *pdev = to_platform_device(dev);
-	struct omap_device *odev = to_omap_device(pdev);
-	struct omap_hwmod *oh;
-
-	oh = odev->hwmods[0];
-	r = omap_hwmod_reset(oh);
-	return r;
-}
 
 #define OMAP_I2C_CMDLINE_SETUP	(BIT(31))
 
@@ -129,6 +113,16 @@ static inline int omap1_i2c_add_bus(int bus_id)
 
 
 #ifdef CONFIG_ARCH_OMAP2PLUS
+/*
+ * XXX This function is a temporary compatibility wrapper - only
+ * needed until the I2C driver can be converted to call
+ * omap_pm_set_max_dev_wakeup_lat() and handle a return code.
+ */
+static void omap_pm_set_max_mpu_wakeup_lat_compat(struct device *dev, long t)
+{
+	omap_pm_set_max_mpu_wakeup_lat(dev, t);
+}
+
 static struct omap_device_pm_latency omap_i2c_latency[] = {
 	[0] = {
 		.deactivate_func	= omap_device_idle_hwmods,
@@ -164,11 +158,8 @@ static inline int omap2_i2c_add_bus(int bus_id)
 	 * completes.
 	 * Only omap3 has support for constraints
 	 */
-	if (cpu_is_omap34xx() ||  cpu_is_omap44xx())
-		pdata->needs_wakeup_latency = true;
-
-	pdata->device_reset = omap2_i2c_reset;
-
+	if (cpu_is_omap34xx())
+		pdata->set_mpu_wkup_lat = omap_pm_set_max_mpu_wakeup_lat_compat;
 	od = omap_device_build(name, bus_id, oh, pdata,
 			sizeof(struct omap_i2c_bus_platform_data),
 			omap_i2c_latency, ARRAY_SIZE(omap_i2c_latency), 0);

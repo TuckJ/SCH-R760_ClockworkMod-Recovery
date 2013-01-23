@@ -1,13 +1,13 @@
 /*
 * Customer code to add GPIO control during WLAN start/stop
 * Copyright (C) 1999-2012, Broadcom Corporation
-*
+* 
 *      Unless you and Broadcom execute a separate written software license
 * agreement governing use of this software, this software is licensed to you
 * under the terms of the GNU General Public License version 2 (the "GPL"),
 * available at http://www.broadcom.com/licenses/GPLv2.php, with the
 * following added to such license:
-*
+* 
 *      As a special exception, the copyright holders of this software give you
 * permission to link this software with independent modules, and to copy and
 * distribute the resulting executable under terms of your choice, provided that
@@ -15,7 +15,7 @@
 * the license of that module.  An independent module is a module which is not
 * derived from this software.  The special exception does not apply to any
 * modifications of the software.
-*
+* 
 *      Notwithstanding the above, under no circumstances may you combine this
 * software in any way with any other Broadcom software provided under a license
 * other than the GPL, without Broadcom's express prior written consent.
@@ -98,7 +98,7 @@ int dhd_customer_oob_irq_map(unsigned long *irq_flags_ptr)
 
 	if (dhd_oob_gpio_num < 0) {
 		WL_ERROR(("%s: ERROR customer specific Host GPIO is NOT defined \n",
-			__FUNCTION__));
+		__FUNCTION__));
 		return (dhd_oob_gpio_num);
 	}
 
@@ -210,7 +210,6 @@ const struct cntry_locales_custom translate_custom_table[] = {
 	{"BN", "BN", 1},
 	{"CA", "CA", 2},
 	{"CH", "CH", 1},
-	{"CN", "CN", 0},
 	{"CY", "CY", 1},
 	{"CZ", "CZ", 1},
 	{"DE", "DE", 3},
@@ -252,7 +251,7 @@ const struct cntry_locales_custom translate_custom_table[] = {
 	{"SD", "XZ", 11},	/* Universal if Country code is SUDAN */
 	{"SY", "XZ", 11},	/* Universal if Country code is SYRIAN ARAB REPUBLIC */
 	{"GL", "XZ", 11},	/* Universal if Country code is GREENLAND */
-	{"PS", "XZ", 11},	/* Universal if Country code is PALESTINIAN TERRITORY, OCCUPIED */
+	{"PS", "XZ", 11},	/* Universal if Country code is PALESTINIAN TERRITORY, OCCUPIED */        
 	{"TL", "XZ", 11},	/* Universal if Country code is TIMOR-LESTE (EAST TIMOR) */
 	{"MH", "XZ", 11},	/* Universal if Country code is MARSHALL ISLANDS */
 #endif

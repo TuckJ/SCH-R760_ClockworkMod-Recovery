@@ -145,6 +145,8 @@ static int dm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	dm->port.out_desc = ep_choose(cdev->gadget,
 			dm->hs.out, dm->fs.out);
 	status = gserial_connect(&dm->port, dm->port_num);
+	printk(KERN_DEBUG "usb: %s run generic_connect(%d)", __func__,
+			dm->port_num);
 
 	if (status < 0) {
 		printk(KERN_ERR "fail to activate generic ttyGS%d\n",
@@ -159,9 +161,9 @@ static int dm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 static void dm_disable(struct usb_function *f)
 {
 	struct f_dm	*dm = func_to_dm(f);
-	struct usb_composite_dev *cdev = f->config->cdev;
 
-	DBG(cdev, "generic ttyGS%d deactivated\n", dm->port_num);
+	printk(KERN_DEBUG "usb: %s generic ttyGS%d deactivated\n", __func__,
+			dm->port_num);
 	gserial_disconnect(&dm->port);
 }
 
@@ -198,7 +200,7 @@ dm_bind(struct usb_configuration *c, struct usb_function *f)
 		goto fail;
 	dm->port.out = ep;
 	ep->driver_data = cdev;	/* claim */
-	printk(KERN_INFO "[%s]   in =0x%x , out =0x%x\n", __func__,
+	printk(KERN_INFO "[%s]   in =0x%p , out =0x%p\n", __func__,
 				dm->port.in, dm->port.out);
 
 	/* copy descriptors, and track endpoint copies */
@@ -229,7 +231,8 @@ dm_bind(struct usb_configuration *c, struct usb_function *f)
 				f->hs_descriptors, &dm_hs_out_desc);
 	}
 
-	DBG(cdev, "generic ttyGS%d: %s speed IN/%s OUT/%s\n",
+	printk(KERN_DEBUG "usb: %s generic ttyGS%d: %s speed IN/%s OUT/%s\n",
+			__func__,
 			dm->port_num,
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
 			dm->port.in->name, dm->port.out->name);
@@ -254,6 +257,7 @@ dm_unbind(struct usb_configuration *c, struct usb_function *f)
 		usb_free_descriptors(f->hs_descriptors);
 	usb_free_descriptors(f->descriptors);
 	kfree(func_to_dm(f));
+	printk(KERN_DEBUG "usb: %s\n", __func__);
 }
 
 /*

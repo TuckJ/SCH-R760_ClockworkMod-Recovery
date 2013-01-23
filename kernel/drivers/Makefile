@@ -22,7 +22,6 @@ obj-$(CONFIG_ARM_AMBA)		+= amba/
 obj-$(CONFIG_DMA_ENGINE)	+= dma/
 
 obj-$(CONFIG_VIRTIO)		+= virtio/
-obj-$(CONFIG_RPMSG)		+= rpmsg/
 obj-$(CONFIG_XEN)		+= xen/
 
 # regulators early, since some subsystems rely on them to initialize
@@ -65,7 +64,7 @@ obj-$(CONFIG_SBUS)		+= sbus/
 obj-$(CONFIG_ZORRO)		+= zorro/
 obj-$(CONFIG_MAC)		+= macintosh/
 obj-$(CONFIG_ATA_OVER_ETH)	+= block/aoe/
-obj-$(CONFIG_PARIDE) 		+= block/paride/
+obj-$(CONFIG_PARIDE)		+= block/paride/
 obj-$(CONFIG_TC)		+= tc/
 obj-$(CONFIG_UWB)		+= uwb/
 obj-$(CONFIG_USB_OTG_UTILS)	+= usb/
@@ -81,6 +80,7 @@ obj-y				+= i2c/ media/
 obj-$(CONFIG_PPS)		+= pps/
 obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
 obj-$(CONFIG_W1)		+= w1/
+obj-$(CONFIG_POWER_SUPPLY)	+= battery/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
 obj-$(CONFIG_HWMON)		+= hwmon/
 obj-$(CONFIG_THERMAL)		+= thermal/
@@ -122,15 +122,17 @@ obj-y				+= platform/
 obj-y				+= ieee802154/
 #common clk code
 obj-y				+= clk/
-
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
-obj-$(CONFIG_REMOTE_PROC)	+= remoteproc/
-
-obj-$(CONFIG_DMM_OMAP)		+= media/
-obj-$(CONFIG_TILER_OMAP)	+= media/
-obj-$(CONFIG_OMAP_HSI)		+= omap_hsi/
-obj-$(CONFIG_INPUT_YAS_SENSORS)		+= sensors/
+obj-$(CONFIG_VIBETONZ)		+= motor/
+obj-$(CONFIG_SENSORS_CORE)	+= sensor/
 obj-$(CONFIG_SAMSUNG_MODULES)   += samsung/
-obj-$(CONFIG_SAMSUNG_PHONE_SVNET) += modemctl/
+obj-$(CONFIG_PM_DEVFREQ)	+= devfreq/
+obj-$(CONFIG_SAMSUNG_PHONE_TTY) += dpram/
+obj-$(CONFIG_ACCESSORY)		+= accessory/
+obj-$(CONFIG_SAMSUNG_PHONE_SVNET) += svnet/
 obj-$(CONFIG_PHONE_IPC_SPI) += phone_svn/
-
+obj-$(CONFIG_ACCESSORY)		+= accessory/
+obj-$(CONFIG_IR_REMOCON)		+= irda/
+obj-$(CONFIG_EXTCON)		+= extcon/
+# Secure OS Mobicore
+obj-$(CONFIG_MOBICORE_SUPPORT)	+= gud/

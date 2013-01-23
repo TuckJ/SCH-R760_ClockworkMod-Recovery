@@ -109,6 +109,14 @@ enum omap_parallel_interface_mode {
 	OMAP_DSS_PARALLELMODE_DSI,
 };
 
+enum dss_clock {
+	DSS_CLK_ICK	= 1 << 0,	/* DSS_L3_ICLK and DSS_L4_ICLK */
+	DSS_CLK_FCK	= 1 << 1,	/* DSS1_ALWON_FCLK */
+	DSS_CLK_SYSCK	= 1 << 2,	/* DSS2_ALWON_FCLK */
+	DSS_CLK_TVFCK	= 1 << 3,	/* DSS_TV_FCLK */
+	DSS_CLK_VIDFCK	= 1 << 4,	/* DSS_96M_FCLK*/
+};
+
 enum dss_hdmi_venc_clk_source_select {
 	DSS_VENC_TV_CLK = 0,
 	DSS_HDMI_M_PCLK = 1,
@@ -156,28 +164,14 @@ struct dsi_clock_info {
 	bool use_sys_clk;
 };
 
-struct dispc_config {
-	u32 sizex, sizey;
-	u32 burstsize;
-	u32 pixelinc;
-	u32 rowinc;
-	u32 bursttype;
-	u32 antiflicker;
-	u32 doublestride;
-	u32 ba;
-	u32 bacbcr;
-	u32 format;
-	u32 rotation;
-	u32 gfx_top_buffer;
-	u32 gfx_bottom_buffer;
-	u32 vid1_top_buffer;
-	u32 vid1_bottom_buffer;
-	u32 vid2_top_buffer;
-	u32 vid2_bottom_buffer;
-	u32 vid3_top_buffer;
-	u32 vid3_bottom_buffer;
-	u32 wb_top_buffer;
-	u32 wb_bottom_buffer;
+/* HDMI PLL structure */
+struct hdmi_pll_info {
+	u16 regn;
+	u16 regm;
+	u32 regmf;
+	u16 regm2;
+	u16 regsd;
+	u16 dcofreq;
 };
 
 struct seq_file;
@@ -226,10 +220,13 @@ void dss_recheck_connections(struct omap_dss_device *dssdev, bool force);
 int dss_init_platform_driver(void);
 void dss_uninit_platform_driver(void);
 
-int dss_runtime_get(void);
-void dss_runtime_put(void);
-
 void dss_select_hdmi_venc_clk_source(enum dss_hdmi_venc_clk_source_select);
+void dss_save_context(void);
+void dss_restore_context(void);
+void dss_clk_enable(enum dss_clock clks);
+void dss_clk_disable(enum dss_clock clks);
+unsigned long dss_clk_get_rate(enum dss_clock clk);
+int dss_need_ctx_restore(void);
 const char *dss_get_generic_clk_source_name(enum omap_dss_clk_source clk_src);
 void dss_dump_clocks(struct seq_file *s);
 
@@ -286,14 +283,14 @@ struct file_operations;
 int dsi_init_platform_driver(void);
 void dsi_uninit_platform_driver(void);
 
-int dsi_runtime_get(struct platform_device *dsidev);
-void dsi_runtime_put(struct platform_device *dsidev);
-
 void dsi_dump_clocks(struct seq_file *s);
 void dsi_create_debugfs_files_irq(struct dentry *debugfs_dir,
 		const struct file_operations *debug_fops);
 void dsi_create_debugfs_files_reg(struct dentry *debugfs_dir,
 		const struct file_operations *debug_fops);
+
+void dsi_save_context(void);
+void dsi_restore_context(void);
 
 int dsi_init_display(struct omap_dss_device *display);
 void dsi_irq_handler(void);
@@ -318,13 +315,6 @@ static inline int dsi_init_platform_driver(void)
 	return 0;
 }
 static inline void dsi_uninit_platform_driver(void)
-{
-}
-static inline int dsi_runtime_get(struct platform_device *dsidev)
-{
-	return 0;
-}
-static inline void dsi_runtime_put(struct platform_device *dsidev)
 {
 }
 static inline unsigned long dsi_get_pll_hsdiv_dispc_rate(struct platform_device *dsidev)
@@ -394,8 +384,8 @@ void dispc_dump_regs(struct seq_file *s);
 void dispc_irq_handler(void);
 void dispc_fake_vsync_irq(void);
 
-int dispc_runtime_get(void);
-void dispc_runtime_put(void);
+void dispc_save_context(void);
+void dispc_restore_context(void);
 
 void dispc_enable_sidle(void);
 void dispc_disable_sidle(void);
@@ -412,14 +402,6 @@ void dispc_setup_plane_fifo(enum omap_plane plane, u32 low, u32 high);
 void dispc_enable_fifomerge(bool enable);
 void dispc_set_burst_size(enum omap_plane plane,
 		enum omap_burst_size burst_size);
-void dispc_set_zorder(enum omap_plane plane,
-			enum omap_overlay_zorder zorder);
-void dispc_enable_zorder(enum omap_plane plane, bool enable);
-void dispc_enable_cpr(enum omap_channel channel, bool enable);
-void dispc_set_cpr_coef(enum omap_channel channel,
-		struct omap_dss_cpr_coefs *coefs);
-void _dispc_setup_color_conv_coef(enum omap_plane plane,
-	const struct omap_dss_cconv_coefs *ct);
 
 void dispc_set_plane_ba0(enum omap_plane plane, u32 paddr);
 void dispc_set_plane_ba1(enum omap_plane plane, u32 paddr);
@@ -436,26 +418,15 @@ int dispc_setup_plane(enum omap_plane plane,
 		      u16 out_width, u16 out_height,
 		      enum omap_color_mode color_mode,
 		      bool ilace,
-		      int x_decim, int y_decim, bool five_taps,
 		      enum omap_dss_rotation_type rotation_type,
 		      u8 rotation, bool mirror,
 		      u8 global_alpha, u8 pre_mult_alpha,
 		      enum omap_channel channel,
 		      u32 puv_addr);
-int dispc_scaling_decision(u16 width, u16 height,
-		u16 out_width, u16 out_height,
-		enum omap_plane plane,
-		enum omap_color_mode color_mode,
-		enum omap_channel channel, u8 rotation,
-		enum omap_dss_rotation_type type,
-		u16 min_x_decim, u16 max_x_decim,
-		u16 min_y_decim, u16 max_y_decim,
-		u16 *x_decim, u16 *y_decim, bool *three_tap);
 
 bool dispc_go_busy(enum omap_channel channel);
 void dispc_go(enum omap_channel channel);
-void dispc_enable_channel(enum omap_channel channel,
-		enum omap_display_type type, bool enable);
+void dispc_enable_channel(enum omap_channel channel, bool enable);
 bool dispc_is_channel_enabled(enum omap_channel channel);
 int dispc_enable_plane(enum omap_plane plane, bool enable);
 void dispc_enable_replication(enum omap_plane plane, bool enable);
@@ -496,7 +467,7 @@ int dispc_set_clock_div(enum omap_channel channel,
 		struct dispc_clock_info *cinfo);
 int dispc_get_clock_div(enum omap_channel channel,
 		struct dispc_clock_info *cinfo);
-u32 sa_calc_wrap(struct dispc_config *dispc_reg_config, u32 channel_no);
+
 
 /* VENC */
 #ifdef CONFIG_OMAP2_DSS_VENC
@@ -537,29 +508,8 @@ void omapdss_hdmi_display_disable(struct omap_dss_device *dssdev);
 void omapdss_hdmi_display_set_timing(struct omap_dss_device *dssdev);
 int omapdss_hdmi_display_check_timing(struct omap_dss_device *dssdev,
 					struct omap_video_timings *timings);
-int omapdss_hdmi_display_set_mode(struct omap_dss_device *dssdev,
-					struct fb_videomode *mode);
-void omapdss_hdmi_restart(void);
-int hdmi_panel_hpd_handler(int hpd);
-int omapdss_hdmi_get_pixel_clock(void);
-int omapdss_hdmi_get_mode(void);
-int omapdss_hdmi_get_deepcolor(void);
-void omapdss_hdmi_set_deepcolor(int val);
-int hdmi_get_current_hpd(void);
-void hdmi_get_monspecs(struct fb_monspecs *specs);
-#ifdef CONFIG_OMAP_HDMI_AUDIO_CH_EVENT
-void hdmi_send_audio_info(int onoff);
-#endif
-u8 *hdmi_read_edid(struct omap_video_timings *);
-
 int hdmi_panel_init(void);
 void hdmi_panel_exit(void);
-void hdmi_dump_regs(struct seq_file *s);
-int omapdss_hdmi_register_hdcp_callbacks(void (*hdmi_start_frame_cb)(void),
-					 void (*hdmi_irq_cb)(int status),
-					 bool (*hdmi_power_on_cb)(void));
-int omap_dss_ovl_set_info(struct omap_overlay *ovl,
-		struct omap_overlay_info *info);
 
 /* RFBI */
 #ifdef CONFIG_OMAP2_DSS_RFBI
@@ -587,11 +537,6 @@ static inline void dss_collect_irq_stats(u32 irqstatus, unsigned *irq_arr)
 			irq_arr[b]++;
 	}
 }
-#endif
-
-#ifdef CONFIG_OMAP2_HDMI_FORCED_TIMING
-void hdmi_set_forced_timing(int timing);
-int hdmi_get_forced_timing(void);
 #endif
 
 #endif

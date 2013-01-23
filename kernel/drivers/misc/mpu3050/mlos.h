@@ -55,14 +55,14 @@ extern "C" {
 	/* --------------------- */
 
 	void *MLOSMalloc(unsigned int numBytes);
-	unsigned char MLOSFree(void *ptr);
-	unsigned char MLOSCreateMutex(unsigned int *mutex);
-	unsigned char MLOSLockMutex(unsigned int mutex);
-	unsigned char MLOSUnlockMutex(unsigned int mutex);
-	unsigned int *MLOSFOpen(char *filename);
-	void MLOSFClose(unsigned int *fp);
+	tMLError MLOSFree(void *ptr);
+	tMLError MLOSCreateMutex(HANDLE *mutex);
+	tMLError MLOSLockMutex(HANDLE mutex);
+	tMLError MLOSUnlockMutex(HANDLE mutex);
+	FILE *MLOSFOpen(char *filename);
+	void MLOSFClose(FILE *fp);
 
-	unsigned char MLOSDestroyMutex(unsigned int handle);
+	tMLError MLOSDestroyMutex(HANDLE handle);
 
 	void MLOSSleep(int mSecs);
 	unsigned long MLOSGetTickCount(void);

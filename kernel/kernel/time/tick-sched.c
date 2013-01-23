@@ -640,8 +640,9 @@ static void tick_nohz_switch_to_nohz(void)
 		next = ktime_add(next, tick_period);
 	}
 	local_irq_enable();
-
+    #ifndef PRODUCT_SHIP
 	printk(KERN_INFO "Switched to NOHz mode on CPU #%d\n", smp_processor_id());
+	#endif
 }
 
 /*
@@ -795,7 +796,9 @@ void tick_setup_sched_timer(void)
 #ifdef CONFIG_NO_HZ
 	if (tick_nohz_enabled) {
 		ts->nohz_mode = NOHZ_MODE_HIGHRES;
+        #ifndef PRODUCT_SHIP 		
 		printk(KERN_INFO "Switched to NOHz mode on CPU #%d\n", smp_processor_id());
+        #endif		
 	}
 #endif
 }

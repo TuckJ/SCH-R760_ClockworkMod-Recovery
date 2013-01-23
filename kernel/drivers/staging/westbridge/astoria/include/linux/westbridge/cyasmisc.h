@@ -255,6 +255,8 @@ typedef enum cy_as_funct_c_b_type {
 	CY_FUNCT_CB_STOR_GETTRANSFERAMOUNT,
 	/* Data from a CyAsStorageErase call. */
 	CY_FUNCT_CB_STOR_ERASE,
+        /* Data from a CyAsStorageStorChangeSDFrequency call. */
+        CY_FUNCT_CB_STOR_CHANGE_SD_FREQ,
 	/* Data from a CyAsStorageCancelAsync call. */
 	CY_FUNCT_CB_ABORT_P2S_XFER,
 	/* Data from a CyAsUsbStart call. */

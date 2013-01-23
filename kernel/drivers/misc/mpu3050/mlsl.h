@@ -21,7 +21,7 @@
 #define __MSSL_H__
 
 #include "mltypes.h"
-#include "mpu_v333.h"
+#include "mpu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,52 +53,52 @@ struct acc_data {
 /* - Function p-types. - */
 /* --------------------- */
 
-	unsigned char MLSLSerialOpen(char const *port,
+	tMLError MLSLSerialOpen(char const *port,
 				void **sl_handle);
-	unsigned char MLSLSerialReset(void *sl_handle);
-	unsigned char MLSLSerialClose(void *sl_handle);
+	tMLError MLSLSerialReset(void *sl_handle);
+	tMLError MLSLSerialClose(void *sl_handle);
 
-	unsigned char MLSLSerialWriteSingle(void *sl_handle,
+	tMLError MLSLSerialWriteSingle(void *sl_handle,
 				       unsigned char slaveAddr,
 				       unsigned char registerAddr,
 				       unsigned char data);
 
-	unsigned char MLSLSerialRead(void *sl_handle,
+	tMLError MLSLSerialRead(void *sl_handle,
 				unsigned char slaveAddr,
 				unsigned char registerAddr,
 				unsigned short length,
 				unsigned char *data);
 
-	unsigned char MLSLSerialWrite(void *sl_handle,
+	tMLError MLSLSerialWrite(void *sl_handle,
 				 unsigned char slaveAddr,
 				 unsigned short length,
 				 unsigned char const *data);
 
-	unsigned char MLSLSerialReadMem(void *sl_handle,
+	tMLError MLSLSerialReadMem(void *sl_handle,
 				   unsigned char slaveAddr,
 				   unsigned short memAddr,
 				   unsigned short length,
 				   unsigned char *data);
 
-	unsigned char MLSLSerialWriteMem(void *sl_handle,
+	tMLError MLSLSerialWriteMem(void *sl_handle,
 				    unsigned char slaveAddr,
 				    unsigned short memAddr,
 				    unsigned short length,
 				    unsigned char const *data);
 
-	unsigned char MLSLSerialReadFifo(void *sl_handle,
+	tMLError MLSLSerialReadFifo(void *sl_handle,
 				    unsigned char slaveAddr,
 				    unsigned short length,
 				    unsigned char *data);
 
-	unsigned char MLSLSerialWriteFifo(void *sl_handle,
+	tMLError MLSLSerialWriteFifo(void *sl_handle,
 				     unsigned char slaveAddr,
 				     unsigned short length,
 				     unsigned char const *data);
 
-	unsigned char MLSLWriteCal(unsigned char *cal, unsigned int len);
-	unsigned char MLSLReadCal(unsigned char *cal, unsigned int len);
-	unsigned char MLSLGetCalLength(unsigned int *len);
+	tMLError MLSLWriteCal(unsigned char *cal, unsigned int len);
+	tMLError MLSLReadCal(unsigned char *cal, unsigned int len);
+	tMLError MLSLGetCalLength(unsigned int *len);
 
 #ifdef __cplusplus
 }

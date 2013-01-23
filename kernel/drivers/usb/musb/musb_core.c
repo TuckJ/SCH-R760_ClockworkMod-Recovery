@@ -915,7 +915,6 @@ void musb_start(struct musb *musb)
 {
 	void __iomem	*regs = musb->mregs;
 	u8		devctl = musb_readb(regs, MUSB_DEVCTL);
-	u8		temp;
 
 	dev_dbg(musb->controller, "<== devctl %02x\n", devctl);
 
@@ -927,11 +926,12 @@ void musb_start(struct musb *musb)
 	musb_writeb(regs, MUSB_TESTMODE, 0);
 
 	/* put into basic highspeed mode and start session */
-	temp = MUSB_POWER_ISOUPDATE | MUSB_POWER_HSENAB;
-					/* MUSB_POWER_ENSUSPEND wedges tusb */
-	if (musb->softconnect)
-		temp |= MUSB_POWER_SOFTCONN;
-	musb_writeb(regs, MUSB_POWER, temp);
+	musb_writeb(regs, MUSB_POWER, MUSB_POWER_ISOUPDATE
+						| MUSB_POWER_SOFTCONN
+						| MUSB_POWER_HSENAB
+						/* ENSUSPEND wedges tusb */
+						/* | MUSB_POWER_ENSUSPEND */
+						);
 
 	musb->is_active = 0;
 	devctl = musb_readb(regs, MUSB_DEVCTL);
@@ -945,7 +945,7 @@ void musb_start(struct musb *musb)
 		 */
 		if ((devctl & MUSB_DEVCTL_VBUS) == MUSB_DEVCTL_VBUS)
 			musb->is_active = 1;
-		else if (musb->xceiv->state == OTG_STATE_A_HOST)
+		else
 			devctl |= MUSB_DEVCTL_SESSION;
 
 	} else if (is_host_enabled(musb)) {
@@ -1010,11 +1010,7 @@ static void musb_shutdown(struct platform_device *pdev)
 	struct musb	*musb = dev_to_musb(&pdev->dev);
 	unsigned long	flags;
 
-	mutex_lock(&musb->musb_lock);
 	pm_runtime_get_sync(musb->controller);
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
-	musb_gadget_cleanup(musb);
-#endif
 	spin_lock_irqsave(&musb->lock, flags);
 	musb_platform_disable(musb);
 	musb_generic_disable(musb);
@@ -1024,7 +1020,6 @@ static void musb_shutdown(struct platform_device *pdev)
 		usb_remove_hcd(musb_to_hcd(musb));
 	musb_writeb(musb->mregs, MUSB_DEVCTL, 0);
 	musb_platform_exit(musb);
-	mutex_unlock(&musb->musb_lock);
 
 	pm_runtime_put(musb->controller);
 	/* FIXME power down */
@@ -1890,6 +1885,10 @@ static void musb_free(struct musb *musb)
 	sysfs_remove_group(&musb->controller->kobj, &musb_attr_group);
 #endif
 
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
+	musb_gadget_cleanup(musb);
+#endif
+
 	if (musb->nIrq >= 0) {
 		if (musb->irq_wake)
 			disable_irq_wake(musb->nIrq);
@@ -1939,8 +1938,6 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 		status = -ENOMEM;
 		goto fail0;
 	}
-	printk(KERN_INFO "%s: mutex init\n", __func__);
-	mutex_init(&musb->musb_lock);
 
 	pm_runtime_use_autosuspend(musb->controller);
 	pm_runtime_set_autosuspend_delay(musb->controller, 200);
@@ -1970,15 +1967,13 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 
 	if (!musb->isr) {
 		status = -ENODEV;
-		goto fail2;
+		goto fail3;
 	}
 
 	if (!musb->xceiv->io_ops) {
 		musb->xceiv->io_priv = musb->mregs;
 		musb->xceiv->io_ops = &musb_ulpi_access;
 	}
-
-	pm_runtime_get_sync(musb->controller);
 
 #ifndef CONFIG_MUSB_PIO_ONLY
 	if (use_dma && dev->dma_mask) {
@@ -2053,6 +2048,10 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	if (!is_otg_enabled(musb) && is_host_enabled(musb)) {
 		struct usb_hcd	*hcd = musb_to_hcd(musb);
 
+		MUSB_HST_MODE(musb);
+		musb->xceiv->default_a = 1;
+		musb->xceiv->state = OTG_STATE_A_IDLE;
+
 		status = usb_add_hcd(musb_to_hcd(musb), -1, 0);
 
 		hcd->self.uses_pio_for_control = 1;
@@ -2064,6 +2063,9 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 				? 'B' : 'A'));
 
 	} else /* peripheral is enabled */ {
+		MUSB_DEV_MODE(musb);
+		musb->xceiv->default_a = 0;
+		musb->xceiv->state = OTG_STATE_B_IDLE;
 
 		status = musb_gadget_setup(musb);
 
@@ -2076,9 +2078,7 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	if (status < 0)
 		goto fail3;
 
-	if (is_otg_enabled(musb) || is_host_enabled(musb))
-		wake_lock_init(&musb->musb_wakelock, WAKE_LOCK_SUSPEND,
-						"musb_autosuspend_wake_lock");
+	pm_runtime_put(musb->controller);
 
 	status = musb_init_debugfs(musb);
 	if (status < 0)
@@ -2089,8 +2089,6 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	if (status)
 		goto fail5;
 #endif
-
-	pm_runtime_put(musb->controller);
 
 	dev_info(dev, "USB %s mode controller at %p using %s, IRQ %d\n",
 			({char *s;
@@ -2115,13 +2113,7 @@ fail4:
 	else
 		musb_gadget_cleanup(musb);
 
-	if (is_otg_enabled(musb) || is_host_enabled(musb))
-		wake_lock_destroy(&musb->musb_wakelock);
-
 fail3:
-	pm_runtime_put_sync(musb->controller);
-
-fail2:
 	if (musb->irq_wake)
 		device_init_wakeup(dev, 0);
 	musb_platform_exit(musb);
@@ -2198,9 +2190,6 @@ static int __exit musb_remove(struct platform_device *pdev)
 #ifndef CONFIG_MUSB_PIO_ONLY
 	pdev->dev.dma_mask = orig_dma_mask;
 #endif
-	if (is_otg_enabled(musb) || is_host_enabled(musb))
-		wake_lock_destroy(&musb->musb_wakelock);
-
 	return 0;
 }
 
@@ -2225,7 +2214,6 @@ static void musb_save_context(struct musb *musb)
 	musb->context.devctl = musb_readb(musb_base, MUSB_DEVCTL);
 
 	for (i = 0; i < musb->config->num_eps; ++i) {
-		musb_writeb(musb_base, MUSB_INDEX, i);
 		epio = musb->endpoints[i].regs;
 		musb->context.index_regs[i].txmaxp =
 			musb_readw(epio, MUSB_TXMAXP);
@@ -2292,7 +2280,6 @@ static void musb_restore_context(struct musb *musb)
 	musb_writeb(musb_base, MUSB_DEVCTL, musb->context.devctl);
 
 	for (i = 0; i < musb->config->num_eps; ++i) {
-		musb_writeb(musb_base, MUSB_INDEX, i);
 		epio = musb->endpoints[i].regs;
 		musb_writew(epio, MUSB_TXMAXP,
 			musb->context.index_regs[i].txmaxp);
@@ -2350,8 +2337,7 @@ static int musb_suspend(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	unsigned long	flags;
 	struct musb	*musb = dev_to_musb(&pdev->dev);
-	if (pm_runtime_suspended(dev))
-		return 0;
+
 	spin_lock_irqsave(&musb->lock, flags);
 
 	if (is_peripheral_active(musb)) {
@@ -2363,6 +2349,7 @@ static int musb_suspend(struct device *dev)
 		 * they will even be wakeup-enabled.
 		 */
 	}
+
 	musb_save_context(musb);
 
 	spin_unlock_irqrestore(&musb->lock, flags);
@@ -2373,8 +2360,7 @@ static int musb_resume_noirq(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct musb	*musb = dev_to_musb(&pdev->dev);
-	if (pm_runtime_suspended(dev))
-		return 0;
+
 	musb_restore_context(musb);
 
 	/* for static cmos like DaVinci, register values were preserved

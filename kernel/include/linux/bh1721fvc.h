@@ -22,7 +22,7 @@
 
 struct bh1721fvc_platform_data {
 	int (*reset)(void);
-	int (*output)(int);
+	int (*output)(int);	
 };
 
 #endif

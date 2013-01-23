@@ -18,6 +18,8 @@
  * 02110-1301 USA
  */
 
+/* #define DEBUG */
+
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <net/sock.h>
@@ -41,6 +43,8 @@ static int vnet_stop(struct net_device *ndev)
 static struct net_device_ops vnet_ops = {
 	.ndo_open = vnet_open,
 	.ndo_stop = vnet_stop,
+/*	.ndo_tx_timeout = vnet_tx_timeout,
+	.ndo_start_xmit = vnet_start_xmit,*/
 };
 
 static void vnet_setup(struct net_device *ndev)
@@ -50,11 +54,11 @@ static void vnet_setup(struct net_device *ndev)
 	ndev->netdev_ops = &vnet_ops;
 	ndev->type = ARPHRD_PPP;
 	ndev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
-	ndev->hard_header_len = PDP_HARD_HEADER_LEN;
-	ndev->addr_len = PDP_ADDR_LEN;
-	ndev->tx_queue_len = PDP_TX_QUEUE_LEN;
+	ndev->hard_header_len = 0;
+	ndev->addr_len = 0;
+	ndev->tx_queue_len = 1000;
 	ndev->mtu = ETH_DATA_LEN;
-	ndev->watchdog_timeo = PDP_WATCHDOG_TIMEO;
+	ndev->watchdog_timeo = 5 * HZ;
 }
 
 struct net_device *create_pdp(int channel, struct net_device *parent)

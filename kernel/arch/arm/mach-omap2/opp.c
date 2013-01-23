@@ -18,13 +18,10 @@
  */
 #include <linux/module.h>
 #include <linux/opp.h>
-#include <linux/clk.h>
 
 #include <plat/omap_device.h>
-#include <plat/clock.h>
 
 #include "omap_opp_data.h"
-#include "dvfs.h"
 
 /* Temp variable to allow multiple calls */
 static u8 __initdata omap_table_init;
@@ -41,8 +38,6 @@ int __init omap_init_opp_table(struct omap_opp_def *opp_def,
 		u32 opp_def_size)
 {
 	int i, r;
-	struct clk *clk;
-	long round_rate;
 
 	if (!opp_def || !opp_def_size) {
 		pr_err("%s: invalid params!\n", __func__);
@@ -63,34 +58,19 @@ int __init omap_init_opp_table(struct omap_opp_def *opp_def,
 		struct device *dev;
 
 		if (!opp_def->hwmod_name) {
-			WARN(1, "%s: NULL name of omap_hwmod, failing"
-				" [%d].\n", __func__, i);
-			goto next;
+			pr_err("%s: NULL name of omap_hwmod, failing [%d].\n",
+				__func__, i);
+			return -EINVAL;
 		}
 		oh = omap_hwmod_lookup(opp_def->hwmod_name);
 		if (!oh || !oh->od) {
-			WARN(1, "%s: no hwmod or odev for %s, [%d] "
+			pr_warn("%s: no hwmod or odev for %s, [%d] "
 				"cannot add OPPs.\n", __func__,
 				opp_def->hwmod_name, i);
-			goto next;
+			return -EINVAL;
 		}
 		dev = &oh->od->pdev.dev;
 
-		clk = omap_clk_get_by_name(opp_def->clk_name);
-		if (clk) {
-			round_rate = clk_round_rate(clk, opp_def->freq);
-			if (round_rate > 0) {
-				opp_def->freq = round_rate;
-			} else {
-				WARN(1, "%s: round_rate for clock %s failed\n",
-					__func__, opp_def->clk_name);
-				goto next; /* skip Bad OPP */
-			}
-		} else {
-			WARN(1, "%s: No clock by name %s found\n", __func__,
-				opp_def->clk_name);
-			goto next; /* skip Bad OPP */
-		}
 		r = opp_add(dev, opp_def->freq, opp_def->u_volt);
 		if (r) {
 			dev_err(dev, "%s: add OPP %ld failed for %s [%d] "
@@ -105,14 +85,7 @@ int __init omap_init_opp_table(struct omap_opp_def *opp_def,
 					"[%d] result=%d\n",
 					__func__, opp_def->freq,
 					opp_def->hwmod_name, i, r);
-
-			r  = omap_dvfs_register_device(dev,
-				opp_def->voltdm_name, opp_def->clk_name);
-			if (r)
-				dev_err(dev, "%s:%s:err dvfs register %d %d\n",
-					__func__, opp_def->hwmod_name, r, i);
 		}
-next:
 		opp_def++;
 	}
 

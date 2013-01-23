@@ -33,9 +33,10 @@ unsigned set_config_number(unsigned num)
 {
 	if (num != 0)
 		USB_DBG_ESS("multi config_num=%d(zero base)\n", num);
+#ifndef PRODUCT_SHIP	
 	else
 		USB_DBG_ESS("single config\n");
-
+#endif
 	multi = num;	/* save config number from Host request */
 	return 0;	/* always return 0 config */
 }
@@ -68,8 +69,7 @@ int check_config(unsigned num)
 	}
 }
 
-/* Description  : Search number of configuration including virtual
- *		  configuration
+/* Description  : Search number of configuration including virtual configuration
  * Parameter    : usb_configuration *c (referenced configuration)
 		  unsigned count (real number of configuration)
  * Return value : virtual or real number of configuration
@@ -159,6 +159,7 @@ int change_conf(struct usb_function *f,
 	struct usb_interface_descriptor *intf;
 	int index_intf = 0;
 	int change_intf = 0;
+	struct usb_interface_assoc_descriptor *iad = NULL;
 	struct usb_descriptor_header **descriptors;
 
 	USB_DBG("f->%s process multi\n", f->name);
@@ -203,6 +204,11 @@ int change_conf(struct usb_function *f,
 						intf->bInterfaceNumber,
 						index_intf++);
 			}
+			if (iad) {
+				iad->bFirstInterface =
+					intf->bInterfaceNumber;
+				iad = NULL;
+			}
 		}
 		dest += intf->bLength;
 	}
@@ -235,7 +241,9 @@ int change_conf(struct usb_function *f,
 void set_interface_count(struct usb_configuration *config,
 	struct usb_config_descriptor *c)
 {
+#ifndef PRODUCT_SHIP
 	USB_DBG_ESS("next_interface_id=%d\n", interfaceCount);
+#endif	
 	config->next_interface_id = interfaceCount;
 	config->interface[interfaceCount] = 0;
 	c->bNumInterfaces = interfaceCount;

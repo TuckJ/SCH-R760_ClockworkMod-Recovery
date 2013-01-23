@@ -192,8 +192,9 @@ check_partition(struct gendisk *hd, struct block_device *bdev)
 
 	}
 	if (res > 0) {
+		#ifndef PRODUCT_SHIP
 		printk(KERN_INFO "%s", state->pp_buf);
-
+		#endif
 		free_page((unsigned long)state->pp_buf);
 		return state;
 	}

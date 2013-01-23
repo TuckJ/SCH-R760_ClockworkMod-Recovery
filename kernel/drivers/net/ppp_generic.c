@@ -898,9 +898,9 @@ static struct pernet_operations ppp_net_ops = {
 static int __init ppp_init(void)
 {
 	int err;
-
+#ifndef PRODUCT_SHIP
 	pr_info("PPP generic driver version " PPP_VERSION "\n");
-
+#endif
 	err = register_pernet_device(&ppp_net_ops);
 	if (err) {
 		pr_err("failed to register PPP pernet device (%d)\n", err);

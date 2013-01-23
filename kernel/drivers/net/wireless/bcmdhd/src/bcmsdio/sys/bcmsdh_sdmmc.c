@@ -64,7 +64,7 @@ extern PBCMSDH_SDMMC_INSTANCE gInstance;
 
 uint sd_sdmode = SDIOH_MODE_SD4;	/* Use SD4 mode by default */
 #if defined(SDIO_F2_BLKSIZE)
-unit sd_f2_blocksize = SDIO_F2_BLKSIZE;
+uint sd_f2_blocksize = SDIO_F2_BLKSIZE;
 #else
 uint sd_f2_blocksize = 512;		/* Default blocksize */
 #endif
@@ -173,7 +173,7 @@ sdioh_attach(osl_t *osh, void *bar0, uint irq)
 		MFREE(sd->osh, sd, sizeof(sdioh_info_t));
 		return NULL;
 	}
-
+	
 	if (gInstance->func[2]) {
 		/* Claim host controller F2 */
 		sdio_claim_host(gInstance->func[2]);
@@ -404,17 +404,17 @@ const bcm_iovar_t sdioh_iovars[] = {
 	{"sd_blockmode", IOV_BLOCKMODE, 0,	IOVT_BOOL,	0 },
 	{"sd_blocksize", IOV_BLOCKSIZE, 0,	IOVT_UINT32,	0 }, /* ((fn << 16) | size) */
 	{"sd_dma",	IOV_DMA,	0,	IOVT_BOOL,	0 },
-	{"sd_ints",	IOV_USEINTS,	0,	IOVT_BOOL,	0 },
+	{"sd_ints", 	IOV_USEINTS,	0,	IOVT_BOOL,	0 },
 	{"sd_numints",	IOV_NUMINTS,	0,	IOVT_UINT32,	0 },
 	{"sd_numlocalints", IOV_NUMLOCALINTS, 0, IOVT_UINT32,	0 },
 	{"sd_hostreg",	IOV_HOSTREG,	0,	IOVT_BUFFER,	sizeof(sdreg_t) },
-	{"sd_devreg",	IOV_DEVREG,	0,	IOVT_BUFFER,	sizeof(sdreg_t) },
+	{"sd_devreg",	IOV_DEVREG, 	0,	IOVT_BUFFER,	sizeof(sdreg_t) },
 	{"sd_divisor",	IOV_DIVISOR,	0,	IOVT_UINT32,	0 },
 	{"sd_power",	IOV_POWER,	0,	IOVT_UINT32,	0 },
 	{"sd_clock",	IOV_CLOCK,	0,	IOVT_UINT32,	0 },
-	{"sd_mode",	IOV_SDMODE,	0,	IOVT_UINT32,	100},
+	{"sd_mode", 	IOV_SDMODE, 	0,	IOVT_UINT32,	100},
 	{"sd_highspeed", IOV_HISPEED,	0,	IOVT_UINT32,	0 },
-	{"sd_rxchain",  IOV_RXCHAIN,    0,	IOVT_BOOL,	0 },
+	{"sd_rxchain",  IOV_RXCHAIN,    0, 	IOVT_BOOL,	0 },
 	{NULL, 0, 0, 0, 0 }
 };
 
@@ -522,6 +522,19 @@ sdioh_iovar_op(sdioh_info_t *si, const char *name,
 		/* Now set it */
 		si->client_block_size[func] = blksize;
 
+#ifdef VSDB_DYNAMIC_F2_BLKSIZE
+		if (gInstance == NULL || gInstance->func[func] == NULL) {
+			sd_err(("%s: SDIO Device not present\n", __FUNCTION__));
+			bcmerror = BCME_NORESOURCE;
+			break;
+		}
+		sdio_claim_host(gInstance->func[func]);
+		bcmerror = sdio_set_block_size(gInstance->func[func], blksize);
+		if (bcmerror) {
+			sd_err(("%s: Failed to set F%d blocksize to %d\n", __FUNCTION__, func, blksize));
+		}
+		sdio_release_host(gInstance->func[func]);
+#endif
 		break;
 	}
 
@@ -699,7 +712,7 @@ sdioh_enable_hw_oob_intr(sdioh_info_t *sd, bool enable)
 
 #if 1 && LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
 	/* Needed for Android Linux Kernel 2.6.35 */
-	data |= SDIO_SEPINT_ACT_HI;		/* Active HIGH */
+	data |= SDIO_SEPINT_ACT_HI; 		/* Active HIGH */
 #endif /* OEM_ANDROID */
 
 	status = sdioh_request_byte(sd, SDIOH_WRITE, 0, SDIOD_CCCR_BRCM_SEPINT, &data);
@@ -1044,6 +1057,10 @@ sdioh_request_packet(sdioh_info_t *sd, uint fix_inc, uint write, uint func,
 			else if(pkt_len % DHD_SDALIGN) // write
 				pkt_len += DHD_SDALIGN - (pkt_len % DHD_SDALIGN);
 
+#ifdef VSDB_DYNAMIC_F2_BLKSIZE
+			if (write && pkt_len > 64 && (pkt_len % 64) == 32)
+				pkt_len += 32;
+#endif
 #ifdef CONFIG_MMC_MSM7X00A
 			if ((pkt_len % 64) == 32) {
 				sd_trace(("%s: Rounding up TX packet +=32\n", __FUNCTION__));

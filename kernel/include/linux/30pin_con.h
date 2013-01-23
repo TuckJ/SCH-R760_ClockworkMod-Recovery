@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Samsung Electronics, Inc.
+ * Copyright (C) 2008 Samsung Electronics, Inc.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -15,39 +15,34 @@
 #ifndef __ASM_ARCH_ACC_CONN_H
 #define __ASM_ARCH_ACC_CONN_H
 
-/*
- *	ACCESSORY		DETECTION
- *	-----------------------------------------------
- *	OTG			DOCK_INT gpio
- *	EARJACK with DESKDOCK	DOCK_INT gpio
- *	CARDOCK			DOCK_INT gpio
- *	TV OUTPUT LINE		DOCK_INT gpio
- *	KEYBOARD-DOCK		ACCESSORY_INT_1.8V gpio
- *	DESK-DOCK		ACCESSORY_INT_1.8V gpio
- *	JIG			JIG_ON_18 gpio
- *	USB			TA_nCONNECTED gpio
- *	TA			TA_nCONNECTED gpio
- */
-enum acc_type {
-	P30_OTG = 0,
-	P30_EARJACK_WITH_DOCK,
-	P30_CARDOCK,
-	P30_ANAL_TV_OUT,
-	P30_KEYBOARDDOCK,
-	P30_DESKDOCK,
-	P30_JIG,
-	P30_USB,
-	P30_TA,
+#ifdef CONFIG_SEC_KEYBOARD_DOCK
+struct sec_keyboard_callbacks {
+	int (*check_keyboard_dock)(struct sec_keyboard_callbacks *cb,
+		bool attached);
 };
 
+struct sec_keyboard_platform_data {
+	int accessory_irq_gpio;
+	int (*wakeup_key)(void);
+	void (*check_uart_path)(bool en);
+	void	(*acc_power)(u8 token, bool active);
+	void (*register_cb)(struct sec_keyboard_callbacks *cb);
+};
+#endif
 
 struct acc_con_platform_data {
+	void	(*otg_en) (int active);
+	void	(*acc_power) (u8 token, bool active);
+	void (*usb_ldo_en) (int active);
+	int (*get_acc_state)(void);
+	int (*get_dock_state)(void);
+	int (*check_keyboard)(bool attached);
 	int accessory_irq_gpio;
 	int dock_irq_gpio;
-	int jig_on_gpio;
-	void (*detected) (int device, bool connected);
-	int (*dock_keyboard_cb) (bool connected);
-	s16 (*get_accessory_adc) (void);
+	int mhl_irq_gpio;
+	int hdmi_hpd_gpio;
 };
+
+extern struct device *sec_switch_dev;
 
 #endif

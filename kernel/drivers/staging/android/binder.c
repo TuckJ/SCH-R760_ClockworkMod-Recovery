@@ -38,7 +38,6 @@
 
 static DEFINE_MUTEX(binder_lock);
 static DEFINE_MUTEX(binder_deferred_lock);
-static DEFINE_MUTEX(binder_mmap_lock);
 
 static HLIST_HEAD(binder_procs);
 static HLIST_HEAD(binder_deferred_list);
@@ -633,11 +632,6 @@ static int binder_update_page_range(struct binder_proc *proc, int allocate,
 	if (mm) {
 		down_write(&mm->mmap_sem);
 		vma = proc->vma;
-		if (vma && mm != vma->vm_mm) {
-			pr_err("binder: %d: vma mm and task mm mismatch\n",
-				proc->pid);
-			vma = NULL;
-		}
 	}
 
 	if (allocate == 0)
@@ -1266,12 +1260,13 @@ static void binder_send_failed_reply(struct binder_transaction *t,
 				target_thread->return_error = BR_OK;
 			}
 			if (target_thread->return_error == BR_OK) {
+            #ifndef PRODUCT_SHIP			
 				binder_debug(BINDER_DEBUG_FAILED_TRANSACTION,
 					     "binder: send failed reply for "
 					     "transaction %d to %d:%d\n",
 					      t->debug_id, target_thread->proc->pid,
 					      target_thread->pid);
-
+            #endif
 				binder_pop_transaction(target_thread, t);
 				target_thread->return_error = error_code;
 				wake_up_interruptible(&target_thread->wait);
@@ -1331,9 +1326,11 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 		if (*offp > buffer->data_size - sizeof(*fp) ||
 		    buffer->data_size < sizeof(*fp) ||
 		    !IS_ALIGNED(*offp, sizeof(void *))) {
+#ifndef PRODUCT_SHIP			
 			printk(KERN_ERR "binder: transaction release %d bad"
 					"offset %zd, size %zd\n", debug_id,
 					*offp, buffer->data_size);
+#endif					
 			continue;
 		}
 		fp = (struct flat_binder_object *)(buffer->data + *offp);
@@ -1395,7 +1392,7 @@ static void binder_transaction(struct binder_proc *proc,
 	wait_queue_head_t *target_wait;
 	struct binder_transaction *in_reply_to = NULL;
 	struct binder_transaction_log_entry *e;
-	uint32_t return_error;
+	uint32_t return_error = BR_OK;
 
 	e = binder_transaction_log_add(&binder_transaction_log);
 	e->call_type = reply ? 2 : !!(tr->flags & TF_ONE_WAY);
@@ -1832,9 +1829,11 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 			} else
 				ref = binder_get_ref(proc, target);
 			if (ref == NULL) {
+                #ifndef PRODUCT_SHIP			 
 				binder_user_error("binder: %d:%d refcou"
 					"nt change on invalid ref %d\n",
 					proc->pid, thread->pid, target);
+                #endif					
 				break;
 			}
 			switch (cmd) {
@@ -2569,11 +2568,13 @@ static int binder_free_thread(struct binder_proc *proc,
 		send_reply = t;
 	while (t) {
 		active_transactions++;
+		#ifndef PRODUCT_SHIP
 		binder_debug(BINDER_DEBUG_DEAD_TRANSACTION,
 			     "binder: release %d:%d transaction %d "
 			     "%s, still active\n", proc->pid, thread->pid,
 			     t->debug_id,
 			     (t->to_thread == thread) ? "in" : "out");
+		#endif
 
 		if (t->to_thread == thread) {
 			t->to_proc = NULL;
@@ -2809,7 +2810,6 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	}
 	vma->vm_flags = (vma->vm_flags | VM_DONTCOPY) & ~VM_MAYWRITE;
 
-	mutex_lock(&binder_mmap_lock);
 	if (proc->buffer) {
 		ret = -EBUSY;
 		failure_string = "already mapped";
@@ -2824,7 +2824,6 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	}
 	proc->buffer = area->addr;
 	proc->user_buffer_offset = vma->vm_start - (uintptr_t)proc->buffer;
-	mutex_unlock(&binder_mmap_lock);
 
 #ifdef CONFIG_CPU_CACHE_VIPT
 	if (cache_is_vipt_aliasing()) {
@@ -2857,7 +2856,7 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	binder_insert_free_buffer(proc, buffer);
 	proc->free_async_space = proc->buffer_size / 2;
 	barrier();
-	proc->files = get_files_struct(proc->tsk);
+	proc->files = get_files_struct(current);
 	proc->vma = vma;
 
 	/*printk(KERN_INFO "binder_mmap: %d %lx-%lx maps %p\n",
@@ -2868,12 +2867,10 @@ err_alloc_small_buf_failed:
 	kfree(proc->pages);
 	proc->pages = NULL;
 err_alloc_pages_failed:
-	mutex_lock(&binder_mmap_lock);
 	vfree(proc->buffer);
 	proc->buffer = NULL;
 err_get_vm_area_failed:
 err_already_mapped:
-	mutex_unlock(&binder_mmap_lock);
 err_bad_arg:
 	printk(KERN_ERR "binder_mmap: %d %lx-%lx %s failed %d\n",
 	       proc->pid, vma->vm_start, vma->vm_end, failure_string, ret);
@@ -3030,9 +3027,11 @@ static void binder_deferred_release(struct binder_proc *proc)
 		if (t) {
 			t->buffer = NULL;
 			buffer->transaction = NULL;
+			#ifndef PRODUCT_SHIP
 			printk(KERN_ERR "binder: release proc %d, "
 			       "transaction %d, not freed\n",
 			       proc->pid, t->debug_id);
+			#endif
 			/*BUG();*/
 		}
 		binder_free_buf(proc, buffer);
@@ -3054,13 +3053,7 @@ static void binder_deferred_release(struct binder_proc *proc)
 					     page_addr);
 				unmap_kernel_range((unsigned long)page_addr,
 					PAGE_SIZE);
-				if (IS_ALIGNED((unsigned long)proc->pages[i],
-						4))
-					__free_page(proc->pages[i]);
-				else
-					printk(KERN_ERR "binder_release: %d: "
-						"page %d addr %p is invalid\n",
-						proc->pid, i, proc->pages[i]);
+				__free_page(proc->pages[i]);
 				page_count++;
 			}
 		}

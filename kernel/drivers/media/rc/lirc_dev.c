@@ -805,10 +805,10 @@ static int __init lirc_dev_init(void)
 		goto error;
 	}
 
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "lirc_dev: IR Remote Control driver registered, "
 	       "major %d \n", MAJOR(lirc_base_dev));
-
+#endif
 error:
 	return retval;
 }

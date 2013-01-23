@@ -28,8 +28,7 @@
 #include "logger.h"
 
 #include <asm/ioctls.h>
-
-#include <mach/sec_addon.h>
+#include <mach/sec_debug.h>
 
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
@@ -313,7 +312,19 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 		if (copy_from_user(log->buffer, buf + len, count - len))
 			return -EFAULT;
 
-	sec_logger_update_buffer(log->buffer + log->w_off, count);
+	/* print as kernel log if the log string starts with "!@" */
+	if (count >= 2) {
+		if (log->buffer[log->w_off] == '!'
+		    && log->buffer[logger_offset(log->w_off + 1)] == '@') {
+			char tmp[256];
+			int i;
+			for (i = 0; i < min(count, sizeof(tmp) - 1); i++)
+				tmp[i] =
+				    log->buffer[logger_offset(log->w_off + i)];
+			tmp[i] = '\0';
+			printk("%s\n", tmp);
+		}
+	}
 
 	log->w_off = logger_offset(log->w_off + count);
 
@@ -377,14 +388,10 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		ret += nr;
 	}
 
-	sec_logger_add_log_ram_console(log, orig);
-
 	mutex_unlock(&log->mutex);
 
 	/* wake up any blocked readers */
 	wake_up_interruptible(&log->wq);
-
-	sec_logger_print_buffer();
 
 	return ret;
 }
@@ -436,12 +443,21 @@ static int logger_open(struct inode *inode, struct file *file)
  *
  * Note this is a total no-op in the write-only case. Keep it that way!
  */
-static int logger_release(struct inode *ignored, struct file *file)
+static int logger_release(struct inode *inode, struct file *file)
 {
 	if (file->f_mode & FMODE_READ) {
 		struct logger_reader *reader = file->private_data;
+		struct logger_log *log;
+		unsigned long start = jiffies;
+		log = get_log_from_minor(MINOR(inode->i_rdev));
+		mutex_lock(&log->mutex);
 		list_del(&reader->list);
+		mutex_unlock(&log->mutex);
 		kfree(reader);
+		#ifndef PRODUCT_SHIP 
+		pr_info("%s: took %d msec\n", __func__,
+			jiffies_to_msecs(jiffies - start));
+		#endif	
 	}
 
 	return 0;
@@ -563,10 +579,11 @@ static struct logger_log VAR = { \
 	.size = SIZE, \
 };
 
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 2048*1024)
 DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 512*1024)
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 256*1024)
 DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 256*1024)
+DEFINE_LOGGER_DEVICE(log_sf, LOGGER_LOG_SF, 256*1024)
 
 static struct logger_log *get_log_from_minor(int minor)
 {
@@ -578,6 +595,8 @@ static struct logger_log *get_log_from_minor(int minor)
 		return &log_radio;
 	if (log_system.misc.minor == minor)
 		return &log_system;
+	if (log_sf.misc.minor == minor)
+		return &log_sf;
 	return NULL;
 }
 
@@ -618,6 +637,12 @@ static int __init logger_init(void)
 	if (unlikely(ret))
 		goto out;
 
+	ret = init_log(&log_sf);
+	if (unlikely(ret))
+		goto out;
+
+	sec_getlog_supply_loggerinfo(_buf_log_main, _buf_log_radio,
+				     _buf_log_events, _buf_log_system);
 out:
 	return ret;
 }

@@ -24,7 +24,7 @@
 #include <linux/i2c-dev.h>
 #endif
 
-#include "mpu_v333.h"
+#include "mpu.h"
 #include "mpuirq.h"
 
 #define SLAVEIRQ_ENABLE_DEBUG          (1)

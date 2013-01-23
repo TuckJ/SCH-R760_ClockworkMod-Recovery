@@ -14,8 +14,8 @@ nod /dev/block/mmcblk0p9 600 0 0 b 179 9
 nod /dev/block/mmcblk0p10 600 0 0 b 179 10
 nod /dev/block/mmcblk0p11 600 0 0 b 179 11
 nod /dev/block/mmcblk0p12 600 0 0 b 179 12
-nod /dev/block/mmcblk1 600 0 0 b 179 16
-nod /dev/block/mmcblk1p1 600 0 0 b 179 17
+nod /dev/block/cyasblkdevblk0 600 0 0 b 179 16
+nod /dev/block/cyasblkdevblk0p1 600 0 0 b 179 17
 slink /init /stage1/init 777 0 0
 dir /proc 755 0 0
 dir /stage1 755 0 0

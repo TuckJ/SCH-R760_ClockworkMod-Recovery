@@ -579,7 +579,7 @@ static int acc_ctrlrequest(struct usb_composite_dev *cdev,
 		if (b_request == ACCESSORY_START) {
 			dev->start_requested = 1;
 			schedule_delayed_work(
-				&dev->work, msecs_to_jiffies(10));
+				&dev->work, msecs_to_jiffies(5));
 			value = 0;
 		} else if (b_request == ACCESSORY_SEND_STRING) {
 			dev->string_index = w_index;

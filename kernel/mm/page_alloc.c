@@ -58,6 +58,8 @@
 #include <linux/memcontrol.h>
 #include <linux/prefetch.h>
 
+#include <linux/slp_lowmem_notify.h>
+
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
@@ -370,8 +372,8 @@ void prep_compound_page(struct page *page, unsigned long order)
 	__SetPageHead(page);
 	for (i = 1; i < nr_pages; i++) {
 		struct page *p = page + i;
-
 		__SetPageTail(p);
+		set_page_count(p, 0);
 		p->first_page = page;
 	}
 }
@@ -2110,7 +2112,9 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 	unsigned long pages_reclaimed = 0;
 	unsigned long did_some_progress;
 	bool sync_migration = false;
-
+#ifdef CONFIG_ANDROID_WIP
+	unsigned long start_tick = jiffies;
+#endif
 	/*
 	 * In the slowpath, we sanity check order to avoid ever trying to
 	 * reclaim >= MAX_ORDER areas which will never succeed. Callers may
@@ -2208,8 +2212,14 @@ rebalance:
 	/*
 	 * If we failed to make any progress reclaiming, then we are
 	 * running out of options and have to consider going OOM
+	 * ANDROID_WIP: If we are looping more than 1 second, consider OOM
 	 */
-	if (!did_some_progress) {
+#ifdef CONFIG_ANDROID_WIP
+#define SHOULD_CONSIDER_OOM !did_some_progress || time_after(jiffies, start_tick + HZ)
+#else
+#define SHOULD_CONSIDER_OOM !did_some_progress
+#endif
+	if (SHOULD_CONSIDER_OOM) {
 		if ((gfp_mask & __GFP_FS) && !(gfp_mask & __GFP_NORETRY)) {
 			if (oom_killer_disabled)
 				goto nopage;
@@ -2320,6 +2330,9 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 		put_mems_allowed();
 		return NULL;
 	}
+
+	/* SLP low memory notifier */
+	memnotify_threshold(gfp_mask);
 
 	/* First allocation attempt */
 	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
@@ -2596,7 +2609,7 @@ void show_free_areas(unsigned int filter)
 			       pageset->pcp.batch, pageset->pcp.count);
 		}
 	}
-
+#ifndef PRODUCT_SHIP
 	printk("active_anon:%lu inactive_anon:%lu isolated_anon:%lu\n"
 		" active_file:%lu inactive_file:%lu isolated_file:%lu\n"
 		" unevictable:%lu"
@@ -2620,7 +2633,7 @@ void show_free_areas(unsigned int filter)
 		global_page_state(NR_SHMEM),
 		global_page_state(NR_PAGETABLE),
 		global_page_state(NR_BOUNCE));
-
+#endif
 	for_each_populated_zone(zone) {
 		int i;
 
@@ -5437,13 +5450,13 @@ void *__init alloc_large_system_hash(const char *tablename,
 
 	if (!table)
 		panic("Failed to allocate %s hash table\n", tablename);
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "%s hash table entries: %ld (order: %d, %lu bytes)\n",
 	       tablename,
 	       (1UL << log2qty),
 	       ilog2(size) - PAGE_SHIFT,
 	       size);
-
+#endif
 	if (_hash_shift)
 		*_hash_shift = log2qty;
 	if (_hash_mask)

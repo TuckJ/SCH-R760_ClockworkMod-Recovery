@@ -85,6 +85,34 @@
 #include "log.h"
 
 /*---------------------------
+    ML Types
+---------------------------*/
+
+/**
+ *  @struct tMLError mltypes.h "mltypes"
+ *  @brief  The MPL Error Code return type.
+ *
+ *  @code
+ *      typedef unsigned char tMLError;
+ *  @endcode
+ */
+typedef unsigned char tMLError;
+
+#if defined(LINUX) || defined(__KERNEL__)
+typedef unsigned int HANDLE;
+#endif
+
+#ifdef __KERNEL__
+typedef HANDLE FILE;
+#endif
+
+#ifndef __cplusplus
+#ifndef __KERNEL__
+typedef int_fast8_t bool;
+#endif
+#endif
+
+/*---------------------------
     ML Defines
 ---------------------------*/
 

@@ -28,9 +28,6 @@
 #include <linux/slab.h>
 
 #include "omap_l3_noc.h"
-#include "board-tuna.h"
-
-#define NUM_OF_L3_MASTERS ARRAY_SIZE(l3_masters)
 
 /*
  * Interrupt Handler for L3 error detection.
@@ -59,10 +56,10 @@ static irqreturn_t l3_interrupt_handler(int irq, void *_l3)
 {
 
 	struct omap4_l3		*l3 = _l3;
-	int inttype, i, j, k;
+	int inttype, i, j;
 	int err_src = 0;
 	u32 std_err_main_addr, std_err_main, err_reg;
-	u32 base, slave_addr, clear, regoffset, masterid;
+	u32 base, slave_addr, clear;
 	char *source_name;
 
 	/* Get the Type of interrupt */
@@ -91,30 +88,11 @@ static irqreturn_t l3_interrupt_handler(int irq, void *_l3)
 			case STANDARD_ERROR:
 				source_name =
 				l3_targ_stderrlog_main_name[i][err_src];
-				regoffset = targ_reg_offset[i][err_src];
 
 				slave_addr = std_err_main_addr +
 						L3_SLAVE_ADDRESS_OFFSET;
-
-				pr_err("L3 standard error: SOURCE:%s at address 0x%x MSTADDR=0x%x hdr=0x%x\n",
-						source_name, readl(slave_addr),
-						readl(base + regoffset + L3_MSTADDR),
-						readl(base + regoffset + L3_HDR));
-				WARN_ONCE(true, "L3 standard error");
-
-#ifdef CONFIG_MACH_TUNA
-				/* Disable ABE L3 Interrupt on LTE boards */
-				if ((readl(base + regoffset + L3_MSTADDR) == 0xc0) &&
-					(readl(base + regoffset + L3_SLVADDR) == 0x3) &&
-					(omap4_tuna_get_type() == TUNA_TYPE_TORO)) {
-					pr_err("** Disabling ABE L3 interrupt for now....\n");
-					writel(0x1, base + regoffset + L3_MAINCTLREG);
-					writel(0x0, base + regoffset + L3_SVRTSTDLVL);
-					writel(0x0, base + regoffset + L3_SVRTCUSTOMLVL);
-					writel(0x0, base + regoffset + L3_MAIN);
-					writel(0x1F, base + regoffset + L3_ADDRSPACESIZELOG);
-				}
-#endif
+				WARN(true, "L3 standard error: SOURCE:%s at address 0x%x\n",
+					source_name, readl(slave_addr));
 				/* clear the std error log*/
 				clear = std_err_main | CLEAR_STDERR_LOG;
 				writel(clear, std_err_main_addr);
@@ -123,31 +101,9 @@ static irqreturn_t l3_interrupt_handler(int irq, void *_l3)
 			case CUSTOM_ERROR:
 				source_name =
 				l3_targ_stderrlog_main_name[i][err_src];
-				regoffset = targ_reg_offset[i][err_src];
 
-				pr_err("L3 CUSTOM SRESP error with SOURCE:%s info=0x%x\n",
-						source_name,
-						readl(base + regoffset + L3_CUSTOMINFO_INFO));
-				WARN_ONCE(true, "L3 custom sresp error");
-
-				masterid = readl(base + regoffset +
-					L3_CUSTOMINFO_MSTADDR);
-
-				for (k = 0;
-				     k < NUM_OF_L3_MASTERS;
-				     k++) {
-					if (masterid == l3_masters[k].id) {
-						pr_err("Master 0x%x %10s\n",
-							masterid,
-							l3_masters[k].name);
-						pr_err("%s OPCODE   0x%08x\n",
-							source_name,
-							readl(base + regoffset +
-							L3_CUSTOMINFO_OPCODE));
-						break;
-					}
-				}
-
+				WARN(true, "CUSTOM SRESP error with SOURCE:%s\n",
+							source_name);
 				/* clear the std error log*/
 				clear = std_err_main | CLEAR_STDERR_LOG;
 				writel(clear, std_err_main_addr);

@@ -36,9 +36,6 @@
 #include "modem_prj.h"
 #include "modem_variation.h"
 
-#define FMT_WAKE_TIME	(HZ/2)
-#define RFS_WAKE_TIME	(HZ*3)
-#define RAW_WAKE_TIME	(HZ*6)
 
 static struct modem_ctl *create_modemctl_device(struct platform_device *pdev)
 {
@@ -61,6 +58,7 @@ static struct modem_ctl *create_modemctl_device(struct platform_device *pdev)
 	/* init modemctl device for getting modemctl operations */
 	ret = call_modem_init_func(modemctl, pdata);
 	if (ret) {
+		printk(KERN_ERR "[MODEM_IF] call_modem_init_func is failed\n");
 		kfree(modemctl);
 		return NULL;
 	}
@@ -86,7 +84,6 @@ static struct io_device *create_io_device(struct modem_io_t *io_t,
 	iod->format = io_t->format;
 	iod->io_typ = io_t->io_type;
 	iod->net_typ = modem_net;
-	atomic_set(&iod->opened, 0);
 
 	/* link between io device and modem control */
 	iod->mc = modemctl;
@@ -103,7 +100,6 @@ static struct io_device *create_io_device(struct modem_io_t *io_t,
 	pr_debug("[MODEM_IF] %s : create_io_device DONE\n", io_t->name);
 	return iod;
 }
-
 static int __devinit modem_probe(struct platform_device *pdev)
 {
 	int i;
@@ -117,17 +113,20 @@ static int __devinit modem_probe(struct platform_device *pdev)
 	memset(iod, 0, sizeof(iod));
 
 	modemctl = create_modemctl_device(pdev);
-	if (!modemctl)
+	if (!modemctl) {
+		printk(KERN_ERR "[MODEM_IF] modemctl is null\n");
 		return -ENOMEM;
-
+	}
 	/* create link device */
 	ld = call_link_init_func(pdev, pdata->link_type);
 		if (!ld)
-			goto err_free_modemctl;
+				goto err_free_modemctl;
 
 	io_raw_devs = kzalloc(sizeof(struct io_raw_devices), GFP_KERNEL);
-	if (!io_raw_devs)
+	if (!io_raw_devs) {
+		printk(KERN_ERR "[MODEM_IF] io_raw_devs is null\n");
 		return -ENOMEM;
+	}
 
 	/* create io deivces and connect to modemctl device */
 	for (i = 0; i < pdata->num_iodevs; i++) {
@@ -146,35 +145,14 @@ static int __devinit modem_probe(struct platform_device *pdev)
 			ld->attach(ld, iod[i]);
 		}
 
-		switch (iod[i]->format) {
-		case IPC_FMT:
-			wake_lock_init(&iod[i]->wakelock, WAKE_LOCK_SUSPEND,
-					iod[i]->name);
-			iod[i]->waketime = FMT_WAKE_TIME;
-			break;
-
-		case IPC_RFS:
-			wake_lock_init(&iod[i]->wakelock, WAKE_LOCK_SUSPEND,
-					iod[i]->name);
-			iod[i]->waketime = RFS_WAKE_TIME;
-			break;
-
-		case IPC_MULTI_RAW:
+		if (iod[i]->format == IPC_MULTI_RAW)
 			iod[i]->private_data = (void *)io_raw_devs;
-
-			wake_lock_init(&iod[i]->wakelock, WAKE_LOCK_SUSPEND,
-					iod[i]->name);
-			iod[i]->waketime = RAW_WAKE_TIME;
-			break;
-
-		default:
-			break;
-		}
 	}
 
 	platform_set_drvdata(pdev, modemctl);
 
 	pr_debug("[MODEM_IF] modem_probe DONE\n");
+	
 	return 0;
 
 err_free_modemctl:
@@ -202,20 +180,20 @@ static void modem_shutdown(struct platform_device *pdev)
 	free_irq(mc->irq_phone_active, mc);
 
 	if (mc->ops.modem_off)
-		mc->ops.modem_off(mc);
+	mc->ops.modem_off(mc);
 }
 
 static int modem_suspend(struct device *pdev)
 {
 	struct modem_ctl *mc = dev_get_drvdata(pdev);
-	gpio_set_value(mc->gpio_pda_active, 0);
+		gpio_set_value(mc->gpio_pda_active, 0);
 	return 0;
 }
 
 static int modem_resume(struct device *pdev)
 {
 	struct modem_ctl *mc = dev_get_drvdata(pdev);
-	gpio_set_value(mc->gpio_pda_active, 1);
+		gpio_set_value(mc->gpio_pda_active, 1);
 	return 0;
 }
 

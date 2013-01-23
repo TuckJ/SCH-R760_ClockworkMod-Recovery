@@ -39,7 +39,7 @@
 #include <linux/wait.h>
 #include <linux/slab.h>
 
-#include "mpu_v333.h"
+#include "mpu.h"
 #include "slaveirq.h"
 #include "mldl_cfg.h"
 #include "mpu-i2c.h"

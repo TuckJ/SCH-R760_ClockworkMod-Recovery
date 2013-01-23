@@ -54,8 +54,8 @@ struct wl_ibss;
 #define WL_DBG_NONE	0
 #define WL_DBG_SCAN2 (1 <<5)
 #define WL_DBG_TRACE	(1 << 4)
-#define WL_DBG_SCAN	(1 << 3)
-#define WL_DBG_DBG	(1 << 2)
+#define WL_DBG_SCAN 	(1 << 3)
+#define WL_DBG_DBG 	(1 << 2)
 #define WL_DBG_INFO	(1 << 1)
 #define WL_DBG_ERR	(1 << 0)
 
@@ -65,9 +65,9 @@ struct wl_ibss;
 #define	WL_ERR(args)									\
 do {										\
 	if (wl_dbg_level & WL_DBG_ERR) {				\
-			printk(KERN_ERR "CFG80211-INF02) %s : ", __func__);	\
+			printk(KERN_INFO "CFG80211-ERROR) %s : ", __func__);	\
 			printk args;						\
-		}								\
+		} 								\
 } while (0)
 #ifdef WL_INFO
 #undef WL_INFO
@@ -75,7 +75,7 @@ do {										\
 #define	WL_INFO(args)									\
 do {										\
 	if (wl_dbg_level & WL_DBG_INFO) {				\
-			printk(KERN_ERR "CFG80211-INFO) %s : ", __func__);	\
+			printk(KERN_INFO "CFG80211-INFO) %s : ", __func__);	\
 			printk args;						\
 		}								\
 } while (0)
@@ -85,7 +85,7 @@ do {										\
 #define	WL_SCAN(args)								\
 do {									\
 	if (wl_dbg_level & WL_DBG_SCAN) {			\
-		printk(KERN_ERR "CFG80211-SCAN) %s :", __func__);	\
+		printk(KERN_INFO "CFG80211-SCAN) %s :", __func__);	\
 		printk args;							\
 	}									\
 } while (0)
@@ -95,7 +95,7 @@ do {									\
 #define	WL_TRACE(args)								\
 do {									\
 	if (wl_dbg_level & WL_DBG_TRACE) {			\
-		printk(KERN_ERR "CFG80211-TRACE) %s :", __func__);	\
+		printk(KERN_INFO "CFG80211-TRACE) %s :", __func__);	\
 		printk args;							\
 	}									\
 } while (0)
@@ -103,7 +103,7 @@ do {									\
 #define	WL_DBG(args)								\
 do {									\
 	if (wl_dbg_level & WL_DBG_DBG) {			\
-		printk(KERN_ERR "CFG80211-DEBUG) %s :", __func__);	\
+		printk(KERN_DEBUG "CFG80211-DEBUG) %s :", __func__);	\
 		printk args;							\
 	}									\
 } while (0)
@@ -116,7 +116,7 @@ do {									\
 #define	WL_SCAN2(args)								\
 do {									\
 	if (wl_dbg_level & WL_DBG_SCAN2) {			\
-		printk(KERN_ERR "CFG80211-SCAN) %s :", __func__);	\
+		printk(KERN_DEBUG "CFG80211-SCAN) %s :", __func__);	\
 		printk args;							\
 	}									\
 } while (0)
@@ -126,8 +126,8 @@ do {									\
 
 #define WL_SCAN_RETRY_MAX	3
 #define WL_NUM_PMKIDS_MAX	MAXPMKID
-#define WL_SCAN_BUF_MAX		(1024 * 8)
-#define WL_TLV_INFO_MAX		1500 /* customer want to large size IE, so increase ie length */
+#define WL_SCAN_BUF_MAX 	(1024 * 8)
+#define WL_TLV_INFO_MAX 	1500 /* customer want to large size IE, so increase ie length */
 #define WL_SCAN_IE_LEN_MAX      2048
 #define WL_BSS_INFO_MAX		2048
 #define WL_ASSOC_INFO_MAX	512
@@ -135,18 +135,18 @@ do {									\
 #define WL_EXTRA_BUF_MAX	2048
 #define WL_ISCAN_BUF_MAX	2048
 #define WL_ISCAN_TIMER_INTERVAL_MS	3000
-#define WL_SCAN_ERSULTS_LAST	(WL_SCAN_RESULTS_NO_MEM+1)
+#define WL_SCAN_ERSULTS_LAST 	(WL_SCAN_RESULTS_NO_MEM+1)
 #define WL_AP_MAX		256
 #define WL_FILE_NAME_MAX	256
-#define WL_DWELL_TIME	200
-#define WL_MED_DWELL_TIME	400
-#define WL_LONG_DWELL_TIME 1000
-#define IFACE_MAX_CNT 2
+#define WL_DWELL_TIME 		200
+#define WL_MED_DWELL_TIME       400
+#define WL_LONG_DWELL_TIME 	1000
+#define IFACE_MAX_CNT 		2
 #define WL_SCAN_CONNECT_DWELL_TIME_MS 100
 
 #define WL_SCAN_TIMER_INTERVAL_MS	8000 /* Scan timeout */
-#define WL_CHANNEL_SYNC_RETRY	5
-#define WL_INVALID -1
+#define WL_CHANNEL_SYNC_RETRY 	5
+#define WL_INVALID 		-1
 
 /* driver status */
 enum wl_status {
@@ -193,6 +193,7 @@ enum wl_prof_list {
 	WL_PROF_SEC,
 	WL_PROF_IBSS,
 	WL_PROF_BAND,
+	WL_PROF_CHAN,
 	WL_PROF_BSSID,
 	WL_PROF_ACT,
 	WL_PROF_BEACONINT,
@@ -292,6 +293,7 @@ struct wl_ibss {
 struct wl_profile {
 	u32 mode;
 	s32 band;
+	u32 channel;
 	struct wlc_ssid ssid;
 	struct wl_security sec;
 	struct wl_ibss ibss;
@@ -449,7 +451,7 @@ struct wl_priv {
 	struct wl_connect_info *conn_info;
 
 	struct wl_pmk_list *pmk_list;	/* wpa2 pmk list */
-	tsk_ctl_t event_tsk;		/* task of main event handler thread */
+	tsk_ctl_t event_tsk;  		/* task of main event handler thread */
 	void *pub;
 	u32 iface_cnt;
 	u32 channel;		/* current channel */
@@ -487,7 +489,7 @@ struct wl_priv {
 	u64 send_action_id;
 	u64 last_roc_id;
 	wait_queue_head_t netif_change_event;
-	wait_queue_head_t send_af_done_event;
+	struct completion send_af_done;
 	struct afx_hdl *afx_hdl;
 	struct ap_info *ap_info;
 	struct sta_info *sta_info;
@@ -797,4 +799,5 @@ extern s32 wl_update_wiphybands(struct wl_priv *wl);
 extern s32 wl_cfg80211_scan_abort(struct wl_priv *wl, struct net_device *ndev);
 
 extern s32 wl_cfg80211_if_is_group_owner(void);
+extern s32 wl_add_remove_eventmsg(struct net_device *ndev, u16 event, bool add);
 #endif				/* _wl_cfg80211_h_ */

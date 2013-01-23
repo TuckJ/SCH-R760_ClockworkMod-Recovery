@@ -1,17 +1,3 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 /**************************************************************
 	spi_os.c
 
@@ -54,11 +40,10 @@ Return value	0		: fail
 ***********************************************************/
 void *spi_os_malloc(unsigned int length)
 {
-	if (length == 0) {
-		pr_err("[SPI] ERROR : spi_os_malloc fail : len 0\n");
+	if (length <= 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_malloc fail : len 0\n"));
 		return 0;
-	} else if (length > PAGE_SIZE * 32)
-		return 0;
+	}
 
 	return kmalloc(length, GFP_ATOMIC);
 }
@@ -78,8 +63,8 @@ Return value	0		: fail
 ====================================*/
 void *spi_os_vmalloc(unsigned int length)
 {
-	if (length == 0) {
-		pr_err("spi_os_malloc fail : length is 0\n");
+	if (length <= 0) {
+		SPI_OS_ERROR(("spi_os_malloc fail : length is 0\n"));
 		return 0;
 	}
 	return vmalloc(length);
@@ -101,7 +86,7 @@ Return value	0	: fail
 int spi_os_free(void *addr)
 {
 	if (addr == 0) {
-		pr_err("[SPI] ERROR : spi_os_free fail : addr is 0\n");
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_free fail : addr is 0\n"));
 		return 0;
 	}
 
@@ -125,11 +110,15 @@ Return value	0	: fail
 int spi_os_vfree(void *addr)
 {
 	if (addr == 0) {
-		pr_err("spi_os_free fail : addr is 0\n");
+		SPI_OS_ERROR(("spi_os_free fail : addr is 0\n"));
 		return 0;
 	}
 
+#ifdef SPI_FEATURE_OMAP4430
 	vfree(addr);
+#elif defined SPI_FEATURE_SC8800G
+	SCI_FREE(addr);
+#endif
 
 	return 1;
 }
@@ -151,8 +140,8 @@ Return value	0	: fail
 ***********************************************************/
 int spi_os_memcpy(void *dest, void *src, unsigned int length)
 {
-	if (dest == 0 || src == 0 || length == 0) {
-		pr_err("[SPI] ERROR : spi_os_memcpy fail\n");
+	if (dest == 0 || src == 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_memcpy fail\n"));
 		return 0;
 	}
 
@@ -177,12 +166,168 @@ Return value	(none)
 ***********************************************************/
 void *spi_os_memset(void *addr, int value, unsigned int length)
 {
-	if (addr == 0 || length == 0) {
-		pr_err("[SPI] ERROR : spi_os_memset fail\n");
+	if (addr == 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_memcpy fail\n"));
 		return 0;
 	}
 
 	return memset(addr, value, length);
+}
+
+
+/**********************************************************
+Prototype		int spi_os_create_mutex( char * name, unsigned int priority_inherit )
+
+Type		function
+
+Description	create mutex
+
+Param input	name	: name of mutex
+			priority_inherit	: mutex inheritance
+
+Return value	id of mutex created
+***********************************************************/
+int spi_os_create_mutex(char *name, unsigned int priority_inherit)
+{
+	if (name == 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_memcpy fail\n"));
+		return 0;
+	}
+
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_delete_mutex ( int pmutex )
+
+Type		function
+
+Description	delete mutex
+
+Param input	pmutex	: id of mutex
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_delete_mutex(int pmutex)
+{
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int  spi_os_acquire_mutex ( int pmutex, unsigned int wait  )
+
+Type		function
+
+Description	acquire mutex
+
+Param input	pmutex	: id of mutex to acquire
+			wait		: mutex waiting time
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_acquire_mutex(int pmutex, unsigned int wait)
+{
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_release_mutex (int pmutex )
+
+Type		function
+
+Description	release mutex
+
+Param input	pmutex	: id of mutex to release
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_release_mutex(int pmutex)
+{
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_create_sem ( char * name, unsigned int init_count)
+
+Type		function
+
+Description	create semaphore
+
+Param input	name	: name of semaphore
+			init_count : semaphore count
+
+Return value	id of semaphore created
+***********************************************************/
+int spi_os_create_sem(char *name, unsigned int init_count)
+{
+	if (name == 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_memcpy fail\n"));
+		return 0;
+	}
+
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_delete_sem ( int sem )
+
+Type		function
+
+Description	delete semaphore
+
+Param input	sem	: id of semaphore to delete
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_delete_sem(int sem)
+{
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_acquire_sem (int sem, unsigned int wait )
+
+Type		function
+
+Description	acquire semaphore
+
+Param input	sem	: id of semaphore to acquire
+			wait	: mutex waiting time
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_acquire_sem(int sem, unsigned int wait)
+{
+	return 0;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_release_sem (int sem )
+
+Type		function
+
+Description	release semaphore
+
+Param input	sem	: id of semaphore to release
+
+Return value	0 : success
+			1 : fail
+***********************************************************/
+int spi_os_release_sem(int sem)
+{
+	return 0;
 }
 
 
@@ -199,13 +344,12 @@ Return value	(none)
 ***********************************************************/
 void spi_os_sleep(unsigned long msec)
 {
-	if (msec == 0) {
-		pr_err("[SPI] ERROR : spi_os_sleep fail\n");
+	if (msec <= 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_sleep fail\n"));
 		return;
-	} else if (msec < 20)
-		usleep_range(msec * 1000, msec * 1000);
-	else
-		msleep(msec);
+	}
+
+	msleep(msec);
 }
 
 
@@ -230,6 +374,104 @@ void spi_os_loop_delay(unsigned long cnt)
 
 
 /**********************************************************
+Prototype		void * spi_os_create_timer
+
+Type		function
+
+Description	create timer
+
+Param input	name : timer name
+			callback : timer callback function
+			param : timer param
+			duration : timer expire duration
+
+Return value	timer ptr
+***********************************************************/
+int spi_os_create_timer(void *timer, char *name,
+		SPI_OS_TIMER_T callback, int param, unsigned long duration)
+{
+	struct timer_list *tm = timer;
+
+
+	if (name == 0 || callback == 0 || param <= 0 || duration <= 0) {
+		SPI_OS_ERROR(("[SPI] ERROR : spi_os_create_timer fail\n"));
+		return 0;
+	}
+
+	init_timer(tm);
+
+	tm->expires = jiffies + ((duration * HZ) / 1000);
+	tm->data = (unsigned long) param;
+	tm->function = callback;
+
+	return 1;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_start_timer
+
+Type		function
+
+Description	start timer
+
+Param input	timer : timer ptr
+			callback : timer callback function
+			param : timer param
+			duration : timer expire duration
+
+Return value	1 : success
+			0 : fail
+***********************************************************/
+int spi_os_start_timer(void *timer, SPI_OS_TIMER_T callback,
+		int param, unsigned long duration)
+{
+	add_timer((struct timer_list *) timer);
+	return 1;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_stop_timer (void * timer)
+
+Type		function
+
+Description	stop timer
+
+Param input	timer : timer ptr
+
+Return value	1 : success
+			0 : fail
+***********************************************************/
+int spi_os_stop_timer(void *timer)
+{
+	int value = 0;
+
+	value = del_timer((struct timer_list *) timer);
+
+	return value;
+}
+
+
+/**********************************************************
+Prototype		int spi_os_delete_timer (void * timer)
+
+Type		function
+
+Description	delete timer
+
+Param input	timer : timer ptr
+
+Return value	1 : success
+			0 : fail
+***********************************************************/
+int spi_os_delete_timer(void *timer)
+{
+	return 1;
+}
+
+
+/**********************************************************
 Prototype		unsigned long spi_os_get_tick (void)
 
 Type		function
@@ -243,7 +485,102 @@ Return value	system tick
 ***********************************************************/
 unsigned long spi_os_get_tick(void)
 {
-	return jiffies_to_msecs(jiffies);
+	unsigned long tick = 0;
+
+	tick = jiffies_to_msecs(jiffies);
+	return tick;
+}
+
+
+/**********************************************************
+Prototype		void spi_os_get_tick_by_log (char * name)
+
+Type		function
+
+Description	print tick time to log
+
+Param input	name : print name
+
+Return value	(none)
+***********************************************************/
+void spi_os_get_tick_by_log(char *name)
+{
+	SPI_OS_TRACE(("[SPI] %s tick %lu ms\n", name, spi_os_get_tick()));
+
+}
+
+
+/**********************************************************
+Prototype		void spi_os_trace_dump (char * name, void * data, int length)
+
+Description	print buffer value by hex code
+			if buffer size too big, it change to....
+			and print 64 byte of front and 64 byte of tail
+
+Param input	name	: print name
+			data		: buffer for print
+			length	: print length
+
+Return value	(none)
+***********************************************************/
+void spi_os_trace_dump(char *name, void *data, int length)
+{
+#ifdef SPI_FEATURE_DEBUG
+	#define SPI_OS_TRACE_DUMP_PER_LINE	16
+	#define SPI_OS_TRACE_MAX_LINE			8
+	#define SPI_OS_TRACE_HALF_LINE
+		(SPI_OS_TRACE_MAX_LINE / 2)
+	#define SPI_OS_TRACE_MAX_DUMP_SIZE
+		(SPI_OS_TRACE_DUMP_PER_LINE*SPI_OS_TRACE_MAX_LINE)
+
+	int i = 0, lines = 0, halflinemode = 0;
+
+	char buf[SPI_OS_TRACE_DUMP_PER_LINE * 3 + 1];
+	char *pdata = NULL;
+
+	char ch = 0;
+
+	SPI_OS_TRACE_MID(("[SPI] spi_os_trace_dump (%s length[%d])\n",
+		name, length));
+
+	spi_os_memset(buf, 0x00, sizeof(buf));
+
+	if (length > SPI_OS_TRACE_MAX_DUMP_SIZE)
+		halflinemode = 1;
+
+	pdata = data;
+	for (i = 0 ; i < length ; i++) {
+		if ((i != 0) && ((i % SPI_OS_TRACE_DUMP_PER_LINE) == 0)) {
+			buf[SPI_OS_TRACE_DUMP_PER_LINE*3] = 0;
+			SPI_OS_TRACE_MID(("%s\n", buf));
+			spi_os_memset(buf, 0x00, sizeof(buf));
+			lines++;
+			if (SPI_OS_TRACE_HALF_LINE == lines
+				&& halflinemode == 1) {
+				SPI_OS_TRACE_MID((" ......\n"));
+				pdata += (length - SPI_OS_TRACE_MAX_DUMP_SIZE);
+				i += (length - SPI_OS_TRACE_MAX_DUMP_SIZE);
+			}
+		}
+
+		ch = (*pdata&0xF0)>>4;
+		buf[(i%SPI_OS_TRACE_DUMP_PER_LINE)*3] =
+			((ch > 9) ? (ch-10 + 'A') : (ch +  '0'));
+		ch = (*pdata&0x0F);
+		buf[(i%SPI_OS_TRACE_DUMP_PER_LINE)*3+1] =
+			((ch > 9) ? (ch-10 + 'A') : (ch +  '0'));
+		buf[(i%SPI_OS_TRACE_DUMP_PER_LINE)*3+2] = 0x20;
+		pdata++;
+	}
+
+	if (buf[0] != '\0')
+		SPI_OS_TRACE_MID(("%s\n", buf));
+
+	#undef SPI_OS_TRACE_DUMP_PER_LINE
+	#undef SPI_OS_TRACE_MAX_LINE
+	#undef SPI_OS_TRACE_HALF_LINE
+	#undef SPI_OS_TRACE_MAX_DUMP_SIZE
+#endif
 }
 
 
@@ -263,13 +600,15 @@ Return value	(none)
 
 void spi_os_trace_dump_low(char *name, void *data, int length)
 {
-	int i;
+	#define SPI_OS_TRACE_DUMP_PER_LINE 16
+
+	int i = 0;
 	char buf[SPI_OS_TRACE_DUMP_PER_LINE * 3 + 1] = {0,};
 	char *pdata = NULL;
-	char ch;
+	char ch = 0;
 
-	pr_info("[SPI] spi_os_trace_dump_low (%s length[%d])\n",
-		name, length);
+	SPI_OS_ERROR(("[SPI] spi_os_trace_dump_low (%s length[%d])\n",
+		name, length));
 
 	spi_os_memset(buf, 0x00, sizeof(buf));
 
@@ -289,5 +628,7 @@ void spi_os_trace_dump_low(char *name, void *data, int length)
 	}
 
 	if (buf[0] != '\0')
-		pr_err("%s\n", buf);
+		SPI_OS_ERROR(("%s\n", buf));
+
+	#undef SPI_OS_TRACE_DUMP_PER_LINE
 }

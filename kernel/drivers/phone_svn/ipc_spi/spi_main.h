@@ -1,26 +1,27 @@
-/**
- * Samsung Virtual Network driver using IpcSpi device
- *
- * Copyright (C) 2012 Samsung Electronics
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
-
 #ifndef __SPI_MAIN_H__
 #define __SPI_MAIN_H__
-
-#include "spi_os.h"
 
 #define SPI_FEATURE_S5PC210
 #define SPI_FEATURE_MASTER
 
+#define SPI_FEATURE_NOLOG
+/* #define SPI_FEATURE_DEBUG */
 #define SPI_GUARANTEE_MRDY_GAP
+
+/*
+#define SPI_FEATURE_TEST_SCENARIO		SPI_TEST_SCENARIO_MASTER_SENDING
+#define SPI_FEATURE_TEST_SCENARIO		SPI_TEST_SCENARIO_SLAVE_SENDING
+#define SPI_FEATURE_TEST_SCENARIO		SPI_TEST_SCENARIO_PHYSICAL
+#define SPI_FEATURE_TEST_SCENARIO		SPI_TEST_SCENARIO_NONE
+#define SPI_FEATURE_TEST_DURATION		1000
+*/
+
+#define SPI_SLAVE_TX 0
+#define SPI_SLAVE_RX 0
+#define SPI_MASTER_TX 0
+#define SPI_MASTER_RX 0
+
+#include "spi_os.h"
 
 enum SPI_MAIN_MSG_T {
 	SPI_MAIN_MSG_BASE,
@@ -75,3 +76,4 @@ extern void spi_main_send_signalfront(enum SPI_MAIN_MSG_T  spi_sigs);
 extern void spi_set_restart(void);
 
 #endif
+

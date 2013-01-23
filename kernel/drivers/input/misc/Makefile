@@ -47,4 +47,6 @@ obj-$(CONFIG_INPUT_WISTRON_BTNS)	+= wistron_btns.o
 obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
 obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
 obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
+obj-$(CONFIG_SENSORS_BH1721FVC)		+= bh1721fvc.o
+obj-$(CONFIG_MPU_SENSORS_AK8975)	+= ak8975.o
 obj-$(CONFIG_OPTICAL_GP2A)		+= gp2a.o

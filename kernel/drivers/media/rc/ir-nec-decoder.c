@@ -207,8 +207,9 @@ static struct ir_raw_handler nec_handler = {
 static int __init ir_nec_decode_init(void)
 {
 	ir_raw_handler_register(&nec_handler);
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "IR NEC protocol handler initialized\n");
+#endif	
 	return 0;
 }
 

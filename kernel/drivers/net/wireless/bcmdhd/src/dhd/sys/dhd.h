@@ -80,9 +80,14 @@ enum dhd_bus_state {
 #define HOSTAPD_MASK			0x0002
 #define WFD_MASK			0x0004
 #define SOFTAP_FW_MASK			0x0008
+#define CONCURRENT_MASK			(STA_MASK | WFD_MASK)
 
 /* max sequential rxcntl timeouts to set HANG event */
+#ifdef BCM4334_CHIP
+#define MAX_CNTL_TIMEOUT  1
+#else
 #define MAX_CNTL_TIMEOUT  2
+#endif
 
 #define DHD_SCAN_ACTIVE_TIME	 40 /* ms : Embedded default Active setting from DHD Driver */
 #define DHD_SCAN_PASSIVE_TIME	130 /* ms: Embedded default Passive setting from DHD Driver */
@@ -241,8 +246,8 @@ typedef struct dhd_pub {
 	struct wake_lock wakelock[WAKE_LOCK_MAX];
 #endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)) && defined (CONFIG_HAS_WAKELOCK) */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25)) && 1
-	struct mutex	wl_start_stop_lock; /* lock/unlock for Android start/stop */
-	struct mutex	wl_softap_lock;		 /* lock/unlock for any SoftAP/STA settings */
+	struct mutex 	wl_start_stop_lock; /* lock/unlock for Android start/stop */
+	struct mutex 	wl_softap_lock;		 /* lock/unlock for any SoftAP/STA settings */
 #endif
 
 #ifdef WLBTAMP
@@ -252,6 +257,7 @@ typedef struct dhd_pub {
 	int   wlfc_enabled;
 	void* wlfc_state;
 #endif
+	bool	roam_env_detection;
 	bool	dongle_isolation;
 	bool	dongle_trap_occured;	/* flag for forcible sending HANG event whenever trap occured */
 	int   hang_was_sent;
@@ -262,7 +268,7 @@ typedef struct dhd_pub {
 #endif
 	struct reorder_info *reorder_bufs[WLHOST_REORDERDATA_MAXFLOWS];
 #if defined(PNO_SUPPORT) && defined(CONFIG_HAS_WAKELOCK)
-	struct wake_lock	pno_wakelock;
+	struct wake_lock 	pno_wakelock;
 #endif
 } dhd_pub_t;
 
@@ -276,10 +282,20 @@ typedef struct dhd_pub {
 				SMP_RD_BARRIER_DEPENDS(); \
 				wait_event_interruptible_timeout(a, !dhd_mmc_suspend, HZ/100); \
 			} \
-		}	while (0)
-	#define DHD_PM_RESUME_WAIT(a)		_DHD_PM_RESUME_WAIT(a, 200)
-	#define DHD_PM_RESUME_WAIT_FOREVER(a)	_DHD_PM_RESUME_WAIT(a, ~0)
-	#define DHD_PM_RESUME_RETURN_ERROR(a)	do { if (dhd_mmc_suspend) return a; } while (0)
+		} 	while (0)
+#ifdef CUSTOMER_HW_SAMSUNG
+	#define DHD_PM_RESUME_WAIT(a) 		_DHD_PM_RESUME_WAIT(a, 500)
+#else
+	#define DHD_PM_RESUME_WAIT(a) 		_DHD_PM_RESUME_WAIT(a, 200)
+#endif /* CUSTOMER_HW_SAMSUNG */
+	#define DHD_PM_RESUME_WAIT_FOREVER(a) 	_DHD_PM_RESUME_WAIT(a, ~0)
+	#define DHD_PM_RESUME_RETURN_ERROR(a)	do { \
+		if (dhd_mmc_suspend) { \
+			printf("mmc in suspend yet!!!: %s %d\n", \
+					__FUNCTION__, __LINE__); \
+			return a; \
+		} \
+	} while (0)
 	#define DHD_PM_RESUME_RETURN		do { if (dhd_mmc_suspend) return; } while (0)
 
 	#define DHD_SPINWAIT_SLEEP_INIT(a) DECLARE_WAIT_QUEUE_HEAD(a);
@@ -371,8 +387,8 @@ inline static void MUTEX_UNLOCK_SOFTAP_SET(dhd_pub_t * dhdp)
 		dhd_os_wake_lock_timeout_enable(pub, val); \
 	} while (0)
 #else
-#define DHD_OS_WAKE_LOCK(pub)			dhd_os_wake_lock(pub)
-#define DHD_OS_WAKE_UNLOCK(pub)			dhd_os_wake_unlock(pub)
+#define DHD_OS_WAKE_LOCK(pub) 			dhd_os_wake_lock(pub)
+#define DHD_OS_WAKE_UNLOCK(pub) 		dhd_os_wake_unlock(pub)
 #define DHD_OS_WAKE_LOCK_TIMEOUT(pub)		dhd_os_wake_lock_timeout(pub)
 #define DHD_OS_WAKE_LOCK_TIMEOUT_ENABLE(pub, val)	dhd_os_wake_lock_timeout_enable(pub, val)
 #endif /* DHD_DEBUG_WAKE_LOCK */
@@ -409,7 +425,7 @@ typedef enum dhd_attach_states
 } dhd_attach_states_t;
 
 /* Value -1 means we are unsuccessful in creating the kthread. */
-#define DHD_PID_KT_INVALID	-1
+#define DHD_PID_KT_INVALID 	-1
 /* Value -2 means we are unsuccessful in both creating the kthread and tasklet */
 #define DHD_PID_KT_TL_INVALID	-2
 
@@ -624,7 +640,11 @@ extern uint dhd_radio_up;
 
 /* Initial idletime ticks (may be -1 for immediate idle, 0 for no idle) */
 extern int dhd_idletime;
+#ifdef DHD_USE_IDLECOUNT
+#define DHD_IDLETIME_TICKS 5
+#else
 #define DHD_IDLETIME_TICKS 1
+#endif /* DHD_USE_IDLECOUNT */
 
 /* SDIO Drive Strength */
 extern uint dhd_sdiod_drive_strength;
@@ -680,6 +700,8 @@ extern char fw_down_path[MOD_PARAM_PATHLEN];
 #define DHD_MAX_IFS	16
 #define DHD_DEL_IF	-0xe
 #define DHD_BAD_IF	-0xf
+
+#define WL_AUTO_ROAM_TRIGGER -75
 
 #ifdef PROP_TXSTATUS
 /* Please be mindful that total pkttag space is 32 octets only */

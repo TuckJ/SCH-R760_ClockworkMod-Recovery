@@ -178,24 +178,40 @@ static int hci_sock_release(struct socket *sock)
 	return 0;
 }
 
+/* sync from bluez git */
 static int hci_sock_blacklist_add(struct hci_dev *hdev, void __user *arg)
 {
 	bdaddr_t bdaddr;
+	int err;
 
 	if (copy_from_user(&bdaddr, arg, sizeof(bdaddr)))
 		return -EFAULT;
 
-	return hci_blacklist_add(hdev, &bdaddr);
+	hci_dev_lock(hdev);
+
+	err = hci_blacklist_add(hdev, &bdaddr, 0);
+
+	hci_dev_unlock(hdev);
+
+	return err;
 }
 
+/* sync from bluez git */
 static int hci_sock_blacklist_del(struct hci_dev *hdev, void __user *arg)
 {
 	bdaddr_t bdaddr;
+	int err;
 
 	if (copy_from_user(&bdaddr, arg, sizeof(bdaddr)))
 		return -EFAULT;
 
-	return hci_blacklist_del(hdev, &bdaddr);
+	hci_dev_lock(hdev);
+
+	err = hci_blacklist_del(hdev, &bdaddr, 0);
+
+	hci_dev_unlock(hdev);
+
+	return err;
 }
 
 /* Ioctls that require bound socket */
@@ -313,20 +329,23 @@ static int hci_sock_bind(struct socket *sock, struct sockaddr *addr, int addr_le
 	int len, err = 0;
 
 	BT_DBG("sock %p sk %p", sock, sk);
-
-	if (!addr)
+        printk(" bluetooth_mgmt hci_sock.c hci_sock_bind");
+	if (!addr){
+		printk(" bluetooth_mgmt hci_sock.c !addr");
 		return -EINVAL;
-
+		}
 	memset(&haddr, 0, sizeof(haddr));
 	len = min_t(unsigned int, sizeof(haddr), addr_len);
 	memcpy(&haddr, addr, len);
 
-	if (haddr.hci_family != AF_BLUETOOTH)
+	if (haddr.hci_family != AF_BLUETOOTH){
+		 printk(" bluetooth_mgmt hci_sock.c hci_family != AF_BLUETOOTH)");
 		return -EINVAL;
-
-	if (haddr.hci_channel > HCI_CHANNEL_CONTROL)
+		}
+	if (haddr.hci_channel > HCI_CHANNEL_CONTROL){
+		printk(" bluetooth_mgmt hci_sock.c hci_channel > HCI_CHANNEL_CONTROL");
 		return -EINVAL;
-
+		}
 	if (haddr.hci_channel == HCI_CHANNEL_CONTROL) {
 		set_bit(HCI_PI_MGMT_INIT, &hci_pi(sk)->flags);
 	}

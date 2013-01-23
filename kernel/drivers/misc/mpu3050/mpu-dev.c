@@ -1,26 +1,27 @@
 /*
-    mpu-dev.c - mpu3050 char device interface
+	mpu-dev.c - mpu3050 char device interface
 
-    Copyright (C) 1995-97 Simon G. Vogl
-    Copyright (C) 1998-99 Frodo Looijaard <frodol@dds.nl>
-    Copyright (C) 2003 Greg Kroah-Hartman <greg@kroah.com>
-    Copyright (C) 2010 InvenSense Corporation, All Rights Reserved.
+	Copyright (C) 1995-97 Simon G. Vogl
+	Copyright (C) 1998-99 Frodo Looijaard <frodol@dds.nl>
+	Copyright (C) 2003 Greg Kroah-Hartman <greg@kroah.com>
+	Copyright (C) 2010 InvenSense Corporation, All Rights Reserved.
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 /* Code inside mpudev_ioctl_rdrw is copied from i2c-dev.c
  */
+
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 #include <linux/interrupt.h>
@@ -48,9 +49,6 @@
 #include <linux/wait.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
-#include <linux/delay.h>
-#include <linux/regulator/consumer.h>
-#include <linux/sensors_core.h>
 
 #include "mpuirq.h"
 #include "slaveirq.h"
@@ -60,92 +58,139 @@
 #include "mldl_cfg.h"
 #include "mpu-accel.h"
 
-#include "mpu_v333.h"
+#include "mpu.h"
+
+#define MPU3050_EARLY_SUSPEND_IN_DRIVER 1
+
+#define CALIBRATION_FILE_PATH	"/efs/calibration_data"
+#define CALIBRATION_DATA_AMOUNT	100
+
+struct acc_data cal_data;
 
 /* Platform data for the MPU */
 struct mpu_private_data {
 	struct mldl_cfg mldl_cfg;
-	struct mutex power_lock;
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
 #endif
-	struct i2c_client *this_client;
-	struct acc_data cal_data;
-	int pid;
 };
 
-static struct mpu_private_data *mpu_private_data;
+static int is_lis3dh;
 
-int read_accel_raw_xyz(struct mpu_private_data *mpu, struct acc_data *acc)
+#define IDEAL_X	0
+#define IDEAL_Y	0
+#define IDEAL_Z	1024
+
+static int pid;
+
+static struct i2c_client *this_client;
+
+int read_accel_raw_xyz(struct acc_data *acc)
 {
 	unsigned char acc_data[6];
 	s32 temp;
+	struct mldl_cfg *mldl_cfg;
 
-	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
+	struct mpu_private_data *mpu =
+	    (struct mpu_private_data *)i2c_get_clientdata(this_client);
+
+	if (!mpu) {
+		pr_info("%s : mpu data is NULL, mpu3050 Init error", __func__);
+		return 0;
+	}
+
+	mldl_cfg = &mpu->mldl_cfg;
 
 	if (mldl_cfg->accel_is_suspended == 1 ||
 	    (mldl_cfg->dmp_is_running == 0
 	     && mldl_cfg->accel_is_suspended == 0)) {
-		if (sensor_i2c_read
-		    (mpu->this_client->adapter, 0x0F, 0x06, 6, acc_data) != 0) {
-			return -1;
-		}
+		if (is_lis3dh) {
+			if (mldl_cfg->accel_is_suspended == 1) {
+				sensor_i2c_write_register(this_client->adapter,
+							  0x19, 0x20, 0x67);
+				MLOSSleep(1);
+			}
+			sensor_i2c_read(this_client->adapter,
+					0x19, 0x28 | 0x80, 6, acc_data);
+			if (mldl_cfg->accel_is_suspended == 1) {
+				sensor_i2c_write_register(this_client->adapter,
+							  0x19, 0x20, 0x18);
+				MLOSSleep(1);
+			}
+		} else
+			sensor_i2c_read(this_client->adapter,
+					0x0F, 0x06, 6, acc_data);
 	} else if (mldl_cfg->dmp_is_running &&
 		   mldl_cfg->accel_is_suspended == 0) {
-
-		if (sensor_i2c_read
-		    (mpu->this_client->adapter, DEFAULT_MPU_SLAVEADDR, 0x23, 6,
-		     acc_data) != 0) {
+		if (sensor_i2c_read(this_client->adapter,
+				    DEFAULT_MPU_SLAVEADDR,
+				    0x23, 6, acc_data) != 0)
 			return -1;
-		}
 	} else
 		return -1;
 
-	temp = ((acc_data[1] << 4) | (acc_data[0] >> 4));
-	if (temp < 2048)
-		acc->x = (s16) (-temp);
-	else
-		acc->x = (s16) (4096 - temp);
+	if (is_lis3dh) {
+		acc->x = ((acc_data[0] << 8) | acc_data[1]);
+		acc->x = (acc->x >> 4);
+		acc->y = ((acc_data[2] << 8) | acc_data[3]);
+		acc->y = (acc->y >> 4);
+		acc->z = ((acc_data[4] << 8) | acc_data[5]);
+		acc->z = (acc->z >> 4);
+	} else {
+		temp = ((acc_data[1] << 4) | (acc_data[0] >> 4));
+		if (temp < 2048)
+			acc->x = (s16) (-temp);
+		else
+			acc->x = (s16) (4096 - temp);
 
-	temp = ((acc_data[3] << 4) | (acc_data[2] >> 4));
-	if (temp < 2048)
-		acc->y = (s16) (-temp);
-	else
-		acc->y = (s16) (4096 - temp);
+		temp = ((acc_data[3] << 4) | (acc_data[2] >> 4));
+		if (temp < 2048)
+			acc->y = (s16) (-temp);
+		else
+			acc->y = (s16) (4096 - temp);
 
-	temp = ((acc_data[5] << 4) | (acc_data[4] >> 4));
-	acc->z = (s16) (3072 - temp);
-
+		temp = ((acc_data[5] << 4) | (acc_data[4] >> 4));
+		if (temp < 2048)
+			acc->z = (s16) (1024 - temp);
+		else
+			acc->z = (s16) (3072 - temp);
+	}
 	return 0;
 }
 
-static int accel_open_calibration(struct mpu_private_data *mpu)
+static int accel_open_calibration(void)
 {
-	struct file *cal_filp;
-	int err;
+	struct file *cal_filp = NULL;
+	int err = 0;
 	mm_segment_t old_fs;
 
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 
-	cal_filp = filp_open("/efs/calibration_data", O_RDONLY, 0666);
+	cal_filp = filp_open(CALIBRATION_FILE_PATH, O_RDONLY, 0666);
 	if (IS_ERR(cal_filp)) {
 		pr_err("%s: Can't open calibration file\n", __func__);
 		set_fs(old_fs);
 		err = PTR_ERR(cal_filp);
+
+		cal_data.x = 0;
+		cal_data.y = 0;
+		cal_data.z = 0;
+
 		return err;
 	}
 
 	err = cal_filp->f_op->read(cal_filp,
-				   (char *)&mpu->cal_data, 3 * sizeof(s16),
+				   (char *)&cal_data, 3 * sizeof(s16),
 				   &cal_filp->f_pos);
 	if (err != 3 * sizeof(s16)) {
 		pr_err("%s: Can't read the cal data from file\n", __func__);
 		err = -EIO;
 	}
 
-	pr_info("%s: (%u,%u,%u)\n", __func__,
-	       mpu->cal_data.x, mpu->cal_data.y, mpu->cal_data.z);
+	pr_info("%s : (%u,%u,%u)\n", __func__,
+		cal_data.x, cal_data.y, cal_data.z);
 
 	filp_close(cal_filp, current->files);
 	set_fs(old_fs);
@@ -153,46 +198,53 @@ static int accel_open_calibration(struct mpu_private_data *mpu)
 	return err;
 }
 
-static int accel_do_calibrate(struct mpu_private_data *mpu,
-	unsigned long enable)
+static int accel_do_calibrate(bool do_calib)
 {
-	struct acc_data data;
-	struct file *cal_filp;
+	struct acc_data data = { 0, };
+	struct file *cal_filp = NULL;
 	int sum[3] = { 0, };
-	int err;
+	int err = 0;
 	int i;
 	mm_segment_t old_fs;
 
-	for (i = 0; i < 100; i++) {
-		err = read_accel_raw_xyz(mpu, &data);
-		if (err < 0) {
-			pr_err("%s: accel_read_accel_raw_xyz() "
-			       "failed in the %dth loop\n", __func__, i);
-			return err;
+	if (do_calib) {
+		for (i = 0; i < CALIBRATION_DATA_AMOUNT; i++) {
+			err = read_accel_raw_xyz(&data);
+			if (err < 0) {
+				pr_err("%s: accel_read_accel_raw_xyz() "
+				       "failed in the %dth loop\n",
+				       __func__, i);
+				return err;
+			}
+
+			sum[0] += data.x;
+			sum[1] += data.y;
+			sum[2] += data.z;
 		}
 
-		sum[0] += data.x;
-		sum[1] += data.y;
-		sum[2] += data.z;
-	}
 
-	if (enable) {
-		mpu->cal_data.x = sum[0] / 100;
-		mpu->cal_data.y = sum[1] / 100;
-		mpu->cal_data.z = sum[2] / 100;
+		if (is_lis3dh) {
+			cal_data.x = IDEAL_X - cal_data.x;
+			cal_data.y = IDEAL_Y - cal_data.y;
+			cal_data.z = IDEAL_Z - cal_data.z;
+		} else {
+			cal_data.x = sum[0] / CALIBRATION_DATA_AMOUNT;
+			cal_data.y = sum[1] / CALIBRATION_DATA_AMOUNT;
+			cal_data.z = sum[2] / CALIBRATION_DATA_AMOUNT;
+		}
 	} else {
-		mpu->cal_data.x = 0;
-		mpu->cal_data.y = 0;
-		mpu->cal_data.z = 0;
+		cal_data.x = 0;
+		cal_data.y = 0;
+		cal_data.z = 0;
 	}
 
 	pr_info("%s: cal data (%d,%d,%d)\n", __func__,
-	       mpu->cal_data.x, mpu->cal_data.y, mpu->cal_data.z);
+		cal_data.x, cal_data.y, cal_data.z);
 
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
 
-	cal_filp = filp_open("/efs/calibration_data",
+	cal_filp = filp_open(CALIBRATION_FILE_PATH,
 			     O_CREAT | O_TRUNC | O_WRONLY, 0666);
 	if (IS_ERR(cal_filp)) {
 		pr_err("%s: Can't open calibration file\n", __func__);
@@ -202,7 +254,7 @@ static int accel_do_calibrate(struct mpu_private_data *mpu,
 	}
 
 	err = cal_filp->f_op->write(cal_filp,
-				    (char *)&mpu->cal_data, 3 * sizeof(s16),
+				    (char *)&cal_data, 3 * sizeof(s16),
 				    &cal_filp->f_pos);
 	if (err != 3 * sizeof(s16)) {
 		pr_err("%s: Can't write the cal data to file\n", __func__);
@@ -217,14 +269,18 @@ static int accel_do_calibrate(struct mpu_private_data *mpu,
 
 static int mpu_open(struct inode *inode, struct file *file)
 {
-	struct mldl_cfg *mldl_cfg = &mpu_private_data->mldl_cfg;
-	accel_open_calibration(mpu_private_data);
+	struct mpu_private_data *mpu =
+	    (struct mpu_private_data *)i2c_get_clientdata(this_client);
+	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 
-	dev_dbg(&mpu_private_data->this_client->adapter->dev, "mpu_open\n");
-	dev_dbg(&mpu_private_data->this_client->adapter->dev,
-		"current->pid %d\n", current->pid);
-	mpu_private_data->pid = current->pid;
-	file->private_data = mpu_private_data->this_client;
+	accel_open_calibration();
+
+	pr_info("%s", __func__);
+	dev_dbg(&this_client->adapter->dev, "mpu_open\n");
+	dev_dbg(&this_client->adapter->dev, "current->pid %d\n", current->pid);
+	pid = current->pid;
+	file->private_data = this_client;
+
 	/* we could do some checking on the flags supplied by "open" */
 	/* i.e. O_NONBLOCK */
 	/* -> set some flag to disable interruptible_sleep_on in mpu_read */
@@ -243,7 +299,7 @@ static int mpu_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-/* close function - called when the "file" /dev/mpu is closed in userspace   */
+/* close function - called when the "file" /dev/mpu is closed in userspace */
 static int mpu_release(struct inode *inode, struct file *file)
 {
 	struct i2c_client *client = (struct i2c_client *)file->private_data;
@@ -255,7 +311,7 @@ static int mpu_release(struct inode *inode, struct file *file)
 	struct i2c_adapter *pressure_adapter;
 	int result = 0;
 
-	mpu->pid = 0;
+	pid = 0;
 
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
@@ -263,8 +319,8 @@ static int mpu_release(struct inode *inode, struct file *file)
 	result = mpu3050_suspend(mldl_cfg, client->adapter,
 				 accel_adapter, compass_adapter,
 				 pressure_adapter, TRUE, TRUE, TRUE, TRUE);
-
-	dev_dbg(&mpu->this_client->adapter->dev, "mpu_release\n");
+	pr_info("%s", __func__);
+	dev_dbg(&this_client->adapter->dev, "mpu_release\n");
 	return result;
 }
 
@@ -275,9 +331,6 @@ static noinline int mpudev_ioctl_rdrw(struct i2c_client *client,
 	struct i2c_msg *rdwr_pa;
 	u8 __user **data_ptrs;
 	int i, res;
-
-	struct mpu_private_data *mpu =
-	    (struct mpu_private_data *)i2c_get_clientdata(client);
 
 	if (copy_from_user(&rdwr_arg,
 			   (struct i2c_rdwr_ioctl_data __user *)arg,
@@ -367,8 +420,8 @@ static ssize_t mpu_read(struct file *file,
 	if (tmp == NULL)
 		return -ENOMEM;
 
-	pr_debug("i2c-dev: i2c-%d reading %zu bytes.\n",
-		 iminor(file->f_path.dentry->d_inode), count);
+	pr_info("%s: i2c-dev: i2c-%d reading %zu bytes.\n", __func__,
+		iminor(file->f_path.dentry->d_inode), count);
 
 /* @todo fix this to do a i2c trasnfer from the FIFO */
 	ret = i2c_master_recv(client, tmp, count);
@@ -428,7 +481,7 @@ mpu_ioctl_set_mpu_config(struct i2c_client *client, unsigned long arg)
 	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 	struct mldl_cfg *temp_mldl_cfg;
 
-	dev_dbg(&mpu->this_client->adapter->dev, "%s\n", __func__);
+	dev_dbg(&this_client->adapter->dev, "%s\n", __func__);
 
 	temp_mldl_cfg = kzalloc(sizeof(struct mldl_cfg), GFP_KERNEL);
 	if (NULL == temp_mldl_cfg)
@@ -523,7 +576,7 @@ mpu_ioctl_get_mpu_config(struct i2c_client *client, unsigned long arg)
 	    copy_from_user(local_mldl_cfg, (struct mldl_cfg __user *)arg,
 			   sizeof(struct mldl_cfg));
 	if (retval) {
-		dev_err(&mpu->this_client->adapter->dev,
+		dev_err(&this_client->adapter->dev,
 			"%s|%s:%d: EFAULT on arg\n",
 			__FILE__, __func__, __LINE__);
 		retval = -EFAULT;
@@ -536,7 +589,7 @@ mpu_ioctl_get_mpu_config(struct i2c_client *client, unsigned long arg)
 				      mldl_cfg->accel,
 				      sizeof(*mldl_cfg->accel));
 		if (retval) {
-			dev_err(&mpu->this_client->adapter->dev,
+			dev_err(&this_client->adapter->dev,
 				"%s|%s:%d: EFAULT on accel\n",
 				__FILE__, __func__, __LINE__);
 			retval = -EFAULT;
@@ -549,7 +602,7 @@ mpu_ioctl_get_mpu_config(struct i2c_client *client, unsigned long arg)
 				      mldl_cfg->compass,
 				      sizeof(*mldl_cfg->compass));
 		if (retval) {
-			dev_err(&mpu->this_client->adapter->dev,
+			dev_err(&this_client->adapter->dev,
 				"%s|%s:%d: EFAULT on compass\n",
 				__FILE__, __func__, __LINE__);
 			retval = -EFAULT;
@@ -562,7 +615,7 @@ mpu_ioctl_get_mpu_config(struct i2c_client *client, unsigned long arg)
 				      mldl_cfg->pressure,
 				      sizeof(*mldl_cfg->pressure));
 		if (retval) {
-			dev_err(&mpu->this_client->adapter->dev,
+			dev_err(&this_client->adapter->dev,
 				"%s|%s:%d: EFAULT on pressure\n",
 				__FILE__, __func__, __LINE__);
 			retval = -EFAULT;
@@ -575,7 +628,7 @@ mpu_ioctl_get_mpu_config(struct i2c_client *client, unsigned long arg)
 				      mldl_cfg->pdata,
 				      sizeof(*mldl_cfg->pdata));
 		if (retval) {
-			dev_err(&mpu->this_client->adapter->dev,
+			dev_err(&this_client->adapter->dev,
 				"%s|%s:%d: EFAULT on pdata\n",
 				__FILE__, __func__, __LINE__);
 			retval = -EFAULT;
@@ -715,7 +768,7 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case I2C_SLAVE:
 		if ((arg & 0x7E) != (client->addr & 0x7E)) {
-			dev_err(&mpu->this_client->adapter->dev,
+			dev_err(&this_client->adapter->dev,
 				"%s: Invalid I2C_SLAVE arg %lu\n",
 				__func__, arg);
 		}
@@ -762,7 +815,6 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 					sizeof(mldl_cfg->offset_tc));
 		if (retval)
 			retval = -EFAULT;
-
 		break;
 	case MPU_SET_RAM:
 		retval = copy_from_user(mldl_cfg->ram,
@@ -907,26 +959,8 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case MPU_READ_ACCEL:
 		{
 			unsigned char data[6];
-			int x;
-			int y;
-			int z;
-
 			retval = mpu3050_read_accel(mldl_cfg, client->adapter,
 						    data);
-
-			x = (s16)((data[1] << 4) | (data[0] >> 4))
-				+ mpu->cal_data.x;
-			y = (s16)((data[3] << 4) | (data[2] >> 4))
-				+ mpu->cal_data.y;
-			z = (s16)((data[5] << 4) | (data[4] >> 4))
-				+ mpu->cal_data.z;
-
-			data[0] = (x & 0xf) << 4;
-			data[1] = (x & 0xff0) >> 4;
-			data[2] = (y & 0xf) << 4;
-			data[3] = (y & 0xff0) >> 4;
-			data[4] = (z & 0xf) << 4;
-			data[5] = (z & 0xff0) >> 4;
 
 			if ((ML_SUCCESS == retval) &&
 			    (copy_to_user((unsigned char __user *)arg,
@@ -936,7 +970,7 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case MPU_READ_COMPASS:
 		{
-			unsigned char data[7];
+			unsigned char data[6];
 			struct i2c_adapter *compass_adapt =
 			    i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 			retval = mpu3050_read_compass(mldl_cfg, compass_adapt,
@@ -966,7 +1000,7 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case MPU_READ_MEMORY:
 	case MPU_WRITE_MEMORY:
 	default:
-		dev_err(&mpu->this_client->adapter->dev,
+		dev_err(&this_client->adapter->dev,
 			"%s: Unknown cmd %d, arg %lu\n", __func__, cmd, arg);
 		retval = -EINVAL;
 	}
@@ -978,23 +1012,22 @@ static long mpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 void mpu3050_early_suspend(struct early_suspend *h)
 {
 	struct mpu_private_data *mpu = container_of(h,
-						    struct
-						    mpu_private_data,
+						    struct mpu_private_data,
 						    early_suspend);
 	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 	struct i2c_adapter *accel_adapter;
 	struct i2c_adapter *compass_adapter;
 	struct i2c_adapter *pressure_adapter;
-
-	pr_info("@@@@@ mpu3050_early_suspend @@@@@\n");
+	pr_info("%s", __func__);
 
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
-	dev_dbg(&mpu->this_client->adapter->dev, "%s: %d, %d\n", __func__,
+	dev_dbg(&this_client->adapter->dev, "%s: %d, %d\n", __func__,
 		h->level, mpu->mldl_cfg.gyro_is_suspended);
-		(void)mpu3050_suspend(mldl_cfg, mpu->this_client->adapter,
+	if (MPU3050_EARLY_SUSPEND_IN_DRIVER)
+		(void)mpu3050_suspend(mldl_cfg, this_client->adapter,
 				      accel_adapter, compass_adapter,
 				      pressure_adapter, TRUE, TRUE, TRUE, TRUE);
 }
@@ -1002,8 +1035,7 @@ void mpu3050_early_suspend(struct early_suspend *h)
 void mpu3050_early_resume(struct early_suspend *h)
 {
 	struct mpu_private_data *mpu = container_of(h,
-						    struct
-						    mpu_private_data,
+						    struct mpu_private_data,
 						    early_suspend);
 	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 	struct i2c_adapter *accel_adapter;
@@ -1014,10 +1046,11 @@ void mpu3050_early_resume(struct early_suspend *h)
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
-		if (mpu->pid) {
+	if (MPU3050_EARLY_SUSPEND_IN_DRIVER) {
+		if (pid) {
 			unsigned long sensors = mldl_cfg->requested_sensors;
 			(void)mpu3050_resume(mldl_cfg,
-					     mpu->this_client->adapter,
+					     this_client->adapter,
 					     accel_adapter,
 					     compass_adapter,
 					     pressure_adapter,
@@ -1025,11 +1058,12 @@ void mpu3050_early_resume(struct early_suspend *h)
 					     sensors & ML_THREE_AXIS_ACCEL,
 					     sensors & ML_THREE_AXIS_COMPASS,
 					     sensors & ML_THREE_AXIS_PRESSURE);
-			dev_dbg(&mpu->this_client->adapter->dev,
-				"%s for pid %d\n", __func__, mpu->pid);
+			dev_dbg(&this_client->adapter->dev,
+				"%s for pid %d\n", __func__, pid);
 		}
-	dev_dbg(&mpu->this_client->adapter->dev,
-		"%s: %d\n", __func__, h->level);
+	}
+	dev_dbg(&this_client->adapter->dev, "%s: %d\n", __func__, h->level);
+	pr_info("%s: h->level = %d\n", __func__, h->level);
 }
 #endif
 
@@ -1041,15 +1075,15 @@ void mpu_shutdown(struct i2c_client *client)
 	struct i2c_adapter *accel_adapter;
 	struct i2c_adapter *compass_adapter;
 	struct i2c_adapter *pressure_adapter;
-
+	pr_info("%s", __func__);
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
-	(void)mpu3050_suspend(mldl_cfg, mpu->this_client->adapter,
+	(void)mpu3050_suspend(mldl_cfg, this_client->adapter,
 			      accel_adapter, compass_adapter, pressure_adapter,
 			      TRUE, TRUE, TRUE, TRUE);
-	dev_dbg(&mpu->this_client->adapter->dev, "%s\n", __func__);
+	dev_dbg(&this_client->adapter->dev, "%s\n", __func__);
 }
 
 int mpu_suspend(struct i2c_client *client, pm_message_t mesg)
@@ -1064,15 +1098,15 @@ int mpu_suspend(struct i2c_client *client, pm_message_t mesg)
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
-
+	pr_info("%s", __func__);
 	if (!mpu->mldl_cfg.gyro_is_suspended) {
-		dev_dbg(&mpu->this_client->adapter->dev,
+		dev_dbg(&this_client->adapter->dev,
 			"%s: suspending on event %d\n", __func__, mesg.event);
-		(void)mpu3050_suspend(mldl_cfg, mpu->this_client->adapter,
+		(void)mpu3050_suspend(mldl_cfg, this_client->adapter,
 				      accel_adapter, compass_adapter,
 				      pressure_adapter, TRUE, TRUE, TRUE, TRUE);
 	} else {
-		dev_dbg(&mpu->this_client->adapter->dev,
+		dev_dbg(&this_client->adapter->dev,
 			"%s: Already suspended %d\n", __func__, mesg.event);
 	}
 	return 0;
@@ -1088,12 +1122,14 @@ int mpu_resume(struct i2c_client *client)
 	struct i2c_adapter *pressure_adapter;
 
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
+	pr_info("%s: accel_adapter = %p\n", __func__, accel_adapter);
+
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
-	if (mpu->pid) {
+	if (pid) {
 		unsigned long sensors = mldl_cfg->requested_sensors;
-		(void)mpu3050_resume(mldl_cfg, mpu->this_client->adapter,
+		(void)mpu3050_resume(mldl_cfg, this_client->adapter,
 				     accel_adapter,
 				     compass_adapter,
 				     pressure_adapter,
@@ -1101,9 +1137,11 @@ int mpu_resume(struct i2c_client *client)
 				     sensors & ML_THREE_AXIS_ACCEL,
 				     sensors & ML_THREE_AXIS_COMPASS,
 				     sensors & ML_THREE_AXIS_PRESSURE);
-		dev_dbg(&mpu->this_client->adapter->dev,
-			"%s for pid %d\n", __func__, mpu->pid);
+		dev_dbg(&this_client->adapter->dev,
+			"%s for pid %d\n", __func__, pid);
 	}
+
+	pr_info("%s: pid = %d\n", __func__, pid);
 	return 0;
 }
 
@@ -1131,63 +1169,65 @@ static struct miscdevice i2c_mpu_device = {
 
 #define FACTORY_TEST
 #ifdef FACTORY_TEST
+
 static ssize_t mpu3050_power_on(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	int count = 0;
 
-	dev_dbg(dev, "this_client = %d\n", (int)mpu_private_data->this_client);
-	count = sprintf(buf, "%d\n",
-		(mpu_private_data->this_client != NULL ? 1 : 0));
+	pr_info("%s : this_client = %d\n", __func__, (int)this_client);
+	count = sprintf(buf, "%d\n", (this_client != NULL ? 1 : 0));
 
 	return count;
 }
 
 static int mpu3050_factory_on(struct i2c_client *client)
 {
-	struct mldl_cfg *mldl_cfg = &mpu_private_data->mldl_cfg;
+	struct mpu_private_data *mpu = i2c_get_clientdata(client);
+	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 	struct i2c_adapter *accel_adapter;
 	struct i2c_adapter *compass_adapter;
 	struct i2c_adapter *pressure_adapter;
 	int prev_gyro_suspended;
-
+	pr_info("%s", __func__);
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
 	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
 	prev_gyro_suspended = mldl_cfg->gyro_is_suspended;
-
-
-	unsigned long sensors = mldl_cfg->requested_sensors;
-	(void)mpu3050_resume(mldl_cfg, mpu_private_data->this_client->adapter,
-			     accel_adapter,
-			     compass_adapter,
-			     pressure_adapter,
-			     sensors & ML_THREE_AXIS_GYRO,
-			     sensors & ML_THREE_AXIS_ACCEL,
-			     sensors & ML_THREE_AXIS_COMPASS,
-			     sensors & ML_THREE_AXIS_PRESSURE);
-
-	pr_info("%s prev_gyro_suspended ", __func__);
+	if (prev_gyro_suspended) {
+		unsigned long sensors = mldl_cfg->requested_sensors;
+		(void)mpu3050_resume(mldl_cfg,
+				     client->adapter,
+				     accel_adapter,
+				     compass_adapter,
+				     pressure_adapter,
+				     sensors & ML_THREE_AXIS_GYRO,
+				     sensors & ML_THREE_AXIS_ACCEL,
+				     sensors & ML_THREE_AXIS_COMPASS,
+				     sensors & ML_THREE_AXIS_PRESSURE);
+	}
 
 	return prev_gyro_suspended;
 }
 
 static void mpu3050_factory_off(struct i2c_client *client)
 {
-	struct mldl_cfg *mldl_cfg = &mpu_private_data->mldl_cfg;
+	struct mpu_private_data *mpu = i2c_get_clientdata(client);
+	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 	struct i2c_adapter *accel_adapter;
 	struct i2c_adapter *compass_adapter;
 	struct i2c_adapter *pressure_adapter;
-
+	pr_info("%s", __func__);
 	accel_adapter = i2c_get_adapter(mldl_cfg->pdata->accel.adapt_num);
 	compass_adapter = i2c_get_adapter(mldl_cfg->pdata->compass.adapt_num);
+	pressure_adapter = i2c_get_adapter(mldl_cfg->pdata->pressure.adapt_num);
 
-	pr_info("%s: suspending on event\n", __func__);
-	(void)mpu3050_suspend(mldl_cfg, mpu_private_data->this_client->adapter,
-			      accel_adapter, compass_adapter,
+	(void)mpu3050_suspend(mldl_cfg,
+			      client->adapter,
+			      accel_adapter,
+			      compass_adapter,
 			      pressure_adapter, TRUE, TRUE, TRUE, TRUE);
-	return;
 }
 
 static ssize_t mpu3050_get_temp(struct device *dev,
@@ -1197,59 +1237,69 @@ static ssize_t mpu3050_get_temp(struct device *dev,
 	short int temperature = 0;
 	unsigned char data[2];
 	int prev_gyro_suspended;
+	pr_info("%s", __func__);
+	prev_gyro_suspended = mpu3050_factory_on(this_client);
 
-	prev_gyro_suspended = mpu3050_factory_on(mpu_private_data->this_client);
-
-	sensor_i2c_read(mpu_private_data->this_client->adapter,
-		DEFAULT_MPU_SLAVEADDR, MPUREG_TEMP_OUT_H, 2, data);
-
-	temperature = (short) (((data[0]) << 8) | data[1]);
-	temperature = (((temperature + 521) / 340) + 35);
-
-	pr_info("read temperature = %d\n", temperature);
+	/*MPUREG_TEMP_OUT_H, 27 0x1b */
+	/*MPUREG_TEMP_OUT_L, 28 0x1c */
+	/* TEMP_OUT_H/L: 16-bit temperature data (2's complement data format) */
+	sensor_i2c_read(this_client->adapter, DEFAULT_MPU_SLAVEADDR,
+			MPUREG_TEMP_OUT_H, 2, data);
+	temperature = (short)(((data[0]) << 8) | data[1]);
+	temperature = (((temperature + 13200) / 280) + 35);
+	pr_info("%s :read temperature = %d\n", __func__, temperature);
 
 	count = sprintf(buf, "%d\n", temperature);
+
+	if (prev_gyro_suspended)
+		mpu3050_factory_off(this_client);
 
 	return count;
 }
 
 /*
-    Defines
+	Defines
 */
 
 #define DEBUG_OUT 1
 
-#define DEF_GYRO_FULLSCALE       (2000)	/* gyro full scale dps        */
-#define DEF_GYRO_SENS            (32768.f/DEF_GYRO_FULLSCALE)
-					       /* gyro sensitivity LSB/dps   */
-#define DEF_PACKET_THRESH        (75)	/* 600 ms / 8ms / sample      */
-#define DEF_TIMING_TOL           (.05f)	/* 5%                         */
-#define DEF_BIAS_THRESH          (40*DEF_GYRO_SENS)
-					       /* 40 dps in LSBs             */
-#define DEF_RMS_THRESH_SQ        (0.4f*0.4f*DEF_GYRO_SENS*DEF_GYRO_SENS)
-					       /* (.2 dps in LSBs ) ^ 2      */
-#define DEF_TEST_TIME_PER_AXIS   (600)	/* ms of time spent collecting
+#define DEF_GYRO_FULLSCALE	(2000)	/* gyro full scale dps */
+#define DEF_GYRO_SENS		(32768.f/DEF_GYRO_FULLSCALE)
+					/* gyro sensitivity LSB/dps */
+#define DEF_PACKET_THRESH	(75)	/* 600 ms / 8ms / sample */
+#define DEF_TIMING_TOL		(.05f)	/* 5% */
+#define DEF_BIAS_THRESH		(40*DEF_GYRO_SENS)
+					/* 40 dps in LSBs */
+#define DEF_RMS_THRESH_SQ	(0.4f*0.4f*DEF_GYRO_SENS*DEF_GYRO_SENS)
+					/* (.2 dps in LSBs ) ^ 2 */
+#define DEF_TEST_TIME_PER_AXIS	(600)	/* ms of time spent collecting
 					   data for each axis,
-					   multiple of 600ms          */
+					   multiple of 600ms */
 
 /*
-    Macros
+	Macros
 */
 
-#define CHECK_TEST_ERROR(x)    \
-	if (x) {                                \
-		pr_info("error %d @ %s|%d\n",      \
-		x, __func__, __LINE__);                \
-		return -1;                             \
+#define CHECK_TEST_ERROR(x)						\
+	if (x) {							\
+		pr_info("error %d @ %s|%d\n", x, __func__, __LINE__);	\
+		return -1;						\
 	}
 
-#define SHORT_TO_TEMP_C(shrt)         (((shrt+13200)/280)+35)
-#define CHARS_TO_SHORT(d)             ((((short)(d)[0]) << 8)+(d)[1])
-#define fabs(x)      (((x) < 0) ? -(x) : (x))
+#define SHORT_TO_TEMP_C(shrt)	(((shrt+13200)/280)+35)
+#define CHARS_TO_SHORT(d)	((((short)(d)[0])<<8)+(d)[1])
+#define fabs(x)			(((x) < 0) ? -(x) : (x))
 
-#define X   (0)
-#define Y   (1)
-#define Z   (2)
+void mpu3050_usleep(unsigned long t)
+{
+	unsigned long start = MLOSGetTickCount();
+	while (MLOSGetTickCount() - start < t / 1000) {
+	}
+}
+
+#define X	(0)
+#define Y	(1)
+#define Z	(2)
 
 static short mpu3050_selftest_gyro_avg[3];
 static int mpu3050_selftest_result;
@@ -1261,7 +1311,7 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 {
 	void *mlsl_handle = client->adapter;
 	int retVal = 0;
-	unsigned char result;
+	tMLError result;
 
 	int total_count = 0;
 	int total_count_axis[3] = { 0, 0, 0 };
@@ -1313,7 +1363,8 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 	/* 1st, timing test */
 	for (j = 0; j < 3; j++) {
 
-		pr_info("Collecting gyro data from %s gyro PLL\n", a_name[j]);
+		pr_info("%s :Collecting gyro data from %s gyro PLL\n",
+			__func__, a_name[j]);
 
 		/* turn on all gyros, use gyro X for clocking
 		   Set to Y and Z for 2nd and 3rd iteration */
@@ -1322,7 +1373,7 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 		CHECK_TEST_ERROR(result);
 
 		/* wait for 2 ms after switching clock source */
-		mdelay(2);
+		mpu3050_usleep(2000);
 
 		/* we will enable XYZ gyro in FIFO and nothing else */
 		result = MLSLSerialWriteSingle(mlsl_handle, client->addr,
@@ -1333,6 +1384,7 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 					       MPUREG_USER_CTRL, 0x42);
 
 		tmp = (int)(DEF_TEST_TIME_PER_AXIS / 600);
+
 		while (tmp-- > 0) {
 			/* enable XYZ gyro in FIFO and nothing else */
 			result =
@@ -1341,7 +1393,7 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 			CHECK_TEST_ERROR(result);
 
 			/* wait for 600 ms for data */
-			msleep(600);
+			mpu3050_usleep(600000);
 
 			/* stop storing gyro in the FIFO */
 			result =
@@ -1355,7 +1407,8 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 			CHECK_TEST_ERROR(result);
 			/* number of 6 B packets in the FIFO */
 			packet_count = CHARS_TO_SHORT(dataout) / 6;
-			pr_info("Packet Count: %d - ", packet_count);
+			pr_info("%s :Packet Count: %d - ",
+				__func__, packet_count);
 
 			if (abs(packet_count - DEF_PACKET_THRESH)
 			    <=	/* Within +-5% range */
@@ -1364,8 +1417,8 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 					/* getting FIFO data */
 					result =
 					    MLSLSerialReadFifo(mlsl_handle,
-							       client->addr, 6,
-							       dataout);
+							client->addr, 6,
+							dataout);
 					CHECK_TEST_ERROR(result);
 					x[total_count + i] =
 					    CHARS_TO_SHORT(&dataout[0]);
@@ -1373,13 +1426,22 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 					    CHARS_TO_SHORT(&dataout[2]);
 					z[total_count + i] =
 					    CHARS_TO_SHORT(&dataout[4]);
+					if (DEBUG_OUT && 0) {
+						pr_info("%s :Gyros %-4d    " \
+						": %+13d %+13d %+13d\n",
+						__func__, total_count + i,
+						x[total_count + i],
+						y[total_count + i],
+						z[total_count + i]);
+					}
 				}
 				total_count += packet_count;
 				total_count_axis[j] += packet_count;
-				pr_info("OK\n");
+				pr_info("%s :OK\n", __func__);
 			} else {
 				retVal |= 1 << j;
-				pr_info("NOK - samples ignored\n");
+				pr_info("%s :NOK - samples ignored\n",
+					__func__);
 			}
 		}
 
@@ -1394,12 +1456,12 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 		temperature += (short)CHARS_TO_SHORT(dataout);
 	}
 
-	pr_info("\n Total %d samples\n\n", total_count);
+	pr_info("%s :\nTotal %d samples\n\n", __func__, total_count);
 
 	/* 2nd, check bias from X and Y PLL clock source */
 	tmp = total_count != 0 ? total_count : 1;
-	for (i = 0,
-	     Avg[X] = .0f, Avg[Y] = .0f, Avg[Z] = .0f; i < total_count; i++) {
+	for (i = 0, Avg[X] = .0f, Avg[Y] = .0f, Avg[Z] = .0f;
+	     i < total_count; i++) {
 		Avg[X] += x[i];
 		Avg[Y] += y[i];
 		Avg[Z] += z[i];
@@ -1409,33 +1471,43 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 	Avg[Y] /= tmp;
 	Avg[Z] /= tmp;
 
-	pr_info("\n bias          : %+13d %+13d %+13d (LSB)\n",
-	       Avg[X], Avg[Y], Avg[Z]);
+	pr_info("%s :bias          : %+13d %+13d %+13d (LSB)\n",
+		__func__, Avg[X], Avg[Y], Avg[Z]);
 	if (DEBUG_OUT) {
-		pr_info("              : %+13d %+13d %+13d (dps)\n",
-		       Avg[X] / 131, Avg[Y] / 131, Avg[Z] / 131);
+		pr_info("%s :              : %+13d %+13d %+13d (dps)\n",
+			__func__, Avg[X] / 131, Avg[Y] / 131, Avg[Z] / 131);
+	}
+	for (j = 0; j < 3; j++) {
+		if (abs(Avg[j]) > (int)DEF_BIAS_THRESH) {
+			pr_info("%s :%s-Gyro bias (%.0d) exceeded threshold "
+				"(threshold = %f)\n", __func__,
+				a_name[j], Avg[j], DEF_BIAS_THRESH);
+			retVal |= 1 << (3 + j);
+		}
 	}
 
 	/* 3rd and finally, check RMS */
-	for (i = 0,
-	     RMS[X] = 0.f, RMS[Y] = 0.f, RMS[Z] = 0.f; i < total_count; i++) {
+	for (i = 0, RMS[X] = 0.f, RMS[Y] = 0.f, RMS[Z] = 0.f;
+	     i < total_count; i++) {
 		RMS[X] += (x[i] - Avg[X]) * (x[i] - Avg[X]);
 		RMS[Y] += (y[i] - Avg[Y]) * (y[i] - Avg[Y]);
 		RMS[Z] += (z[i] - Avg[Z]) * (z[i] - Avg[Z]);
 	}
+
 	for (j = 0; j < 3; j++) {
 		if (RMS[j] > (int)DEF_RMS_THRESH_SQ * total_count) {
 			pr_info
-			    ("\n %s-Gyro RMS (%d) exceeded threshold (%.4f)\n",
-			     a_name[j], RMS[j] / total_count,
+			    ("%s :%s-Gyro RMS (%d) exceeded threshold (%.4f)\n",
+			     __func__, a_name[j], RMS[j] / total_count,
 			     DEF_RMS_THRESH_SQ);
 			retVal |= 1 << (6 + j);
 		}
-
 	}
-	pr_info("\n RMS^2           : %+13d %+13d %+13d (LSB-rms)\n",
-	       (RMS[X] / total_count),
-	       (RMS[Y] / total_count), (RMS[Z] / total_count));
+
+	pr_info("%s :RMS^2           : %+13d %+13d %+13d (LSB-rms)\n",
+		__func__,
+		(RMS[X] / total_count),
+		(RMS[Y] / total_count), (RMS[Z] / total_count));
 	if (RMS[X] == 0 || RMS[Y] == 0 || RMS[Z] == 0) {
 		/*If any of the RMS noise value returns zero,
 		   then we might have dead gyro or FIFO/register failure,
@@ -1445,8 +1517,8 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 
 	temperature /= 3;
 	if (DEBUG_OUT)
-		pr_info("\n Temperature   : %+13d %13s %13s (deg. C)\n",
-		       SHORT_TO_TEMP_C(temperature), "", "");
+		pr_info("%s :Temperature   : %+13d %13s %13s (deg. C)\n",
+			__func__, SHORT_TO_TEMP_C(temperature), "", "");
 
 	/* load into final storage */
 	*temp_avg = (short)temperature;
@@ -1462,6 +1534,10 @@ int mpu3050_test_gyro(struct i2c_client *client, short gyro_biases[3],
 	mpu3050_selftest_rms[Y] = RMS[Y] / total_count;
 	mpu3050_selftest_rms[Z] = RMS[Z] / total_count;
 
+	kfree(x);
+	kfree(y);
+	kfree(z);
+
 	return retVal;
 }
 
@@ -1473,9 +1549,10 @@ int mpu3050_self_test_once(struct i2c_client *client)
 	short temp_avg;
 
 	unsigned char regs[5];
+	unsigned long testStart = MLOSGetTickCount();
 
-	pr_info("\n Collecting %d groups of 600 ms samples for each axis\n\n",
-	       DEF_TEST_TIME_PER_AXIS / 600);
+	pr_info("%s :Collecting %d groups of 600 ms samples for each axis\n\n",
+		__func__, DEF_TEST_TIME_PER_AXIS / 600);
 
 	result = MLSLSerialRead(mlsl_handle, client->addr,
 				MPUREG_PWR_MGM, 1, regs);
@@ -1484,20 +1561,22 @@ int mpu3050_self_test_once(struct i2c_client *client)
 	result = MLSLSerialWriteSingle(mlsl_handle, client->addr,
 				       MPUREG_PWR_MGM, regs[0] | 0x80);
 	CHECK_TEST_ERROR(result);
-	mdelay(5);
+	MLOSSleep(5);
 	/* wake up */
 	if (regs[0] & 0x40) {
 		result = MLSLSerialWriteSingle(mlsl_handle, client->addr,
 					       MPUREG_PWR_MGM, 0x00);
 		CHECK_TEST_ERROR(result);
-
 	}
-	msleep(60);
+	MLOSSleep(60);
 
 	/* collect gyro and temperature data */
 	mpu3050_selftest_result = mpu3050_test_gyro(client,
 						    mpu3050_selftest_gyro_avg,
 						    &temp_avg);
+
+	pr_info("%s :\nTest time : %ld ms\n",
+		__func__, MLOSGetTickCount() - testStart);
 
 	return mpu3050_selftest_result;
 }
@@ -1511,246 +1590,208 @@ static ssize_t mpu3050_self_test(struct device *dev,
 	int res = 0;
 	int prev_gyro_suspended;
 
-	prev_gyro_suspended = mpu3050_factory_on(mpu_private_data->this_client);
+/*MPUREG_GYRO_XOUT_H, 29 0x1d */
+/*MPUREG_GYRO_XOUT_L, 30 0x1e */
+/*MPUREG_GYRO_YOUT_H, 31 0x1f */
+/*MPUREG_GYRO_YOUT_L, 32 0x20 */
+/*MPUREG_GYRO_ZOUT_H, 33 0x21 */
+/*MPUREG_GYRO_ZOUT_L, 34 0x22 */
 
-	mpu3050_self_test_once(mpu_private_data->this_client);
+/* GYRO_XOUT_H/L: 16-bit X gyro output data (2's complement data format) */
+/* GYRO_YOUT_H/L: 16-bit Y gyro output data (2's complement data format) */
+/* GYRO_ZOUT_H/L: 16-bit Z gyro output data (2's complement data format) */
 
-	res = sensor_i2c_read(mpu_private_data->this_client->adapter,
-		DEFAULT_MPU_SLAVEADDR, MPUREG_GYRO_XOUT_H, 6, gyro_data);
+	prev_gyro_suspended = mpu3050_factory_on(this_client);
+
+	mpu3050_self_test_once(this_client);
+
+	res = sensor_i2c_read(this_client->adapter, DEFAULT_MPU_SLAVEADDR,
+			      MPUREG_GYRO_XOUT_H, 6, gyro_data);
 
 	if (res)
 		return 0;
+
 	raw[0] = (short)(((gyro_data[0]) << 8) | gyro_data[1]);
 	raw[1] = (short)(((gyro_data[2]) << 8) | gyro_data[3]);
 	raw[2] = (short)(((gyro_data[4]) << 8) | gyro_data[5]);
 
-	pr_info("\n [mpu3050_self_test] %s: %s, %d, %d, %d, %d, %d, %d\n",
-	       __func__,
-	       (!mpu3050_selftest_result ? "OK" : "NG"),
-	       raw[0], raw[1], raw[2],
-	       mpu3050_selftest_gyro_avg[0],
-	       mpu3050_selftest_gyro_avg[1], mpu3050_selftest_gyro_avg[2]);
+	pr_info("%s: %s %s, %d, %d, %d, %d, %d, %d\n", __func__, buf,
+		(!mpu3050_selftest_result ? "OK" : "NG"),
+		raw[0], raw[1], raw[2],
+		mpu3050_selftest_gyro_avg[0],
+		mpu3050_selftest_gyro_avg[1], mpu3050_selftest_gyro_avg[2]);
 
 	count = sprintf(buf, "%s, %d, %d, %d, %d, %d, %d\n",
 			(!mpu3050_selftest_result ? "OK" : "NG"),
 			mpu3050_selftest_bias[0], mpu3050_selftest_bias[1],
-			mpu3050_selftest_bias[2], mpu3050_selftest_rms[0],
+			mpu3050_selftest_bias[2],
+			mpu3050_selftest_rms[0],
 			mpu3050_selftest_rms[1], mpu3050_selftest_rms[2]);
 
-	mpu3050_factory_off(mpu_private_data->this_client);
-	mpu3050_factory_on(mpu_private_data->this_client);
+	if (prev_gyro_suspended)
+		mpu3050_factory_off(this_client);
 
 	return count;
-}
-
-int Convert(int data)
-{
-	int temp;
-
-	if (data < 2048)
-		temp = data + 2048;
-	else
-		temp = 2048 - (4096 - data);
-	return temp;
 }
 
 static ssize_t mpu3050_acc_read(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	unsigned char acc_data[6];
-	unsigned char acc_ori[9];
 	s16 x, y, z;
-	int count;
 	s32 temp;
-	int i = 0;
 
-	struct mldl_cfg *mldl_cfg = &mpu_private_data->mldl_cfg;
+	struct mpu_private_data *mpu =
+	    (struct mpu_private_data *)i2c_get_clientdata(this_client);
+	struct mldl_cfg *mldl_cfg = &mpu->mldl_cfg;
 
 	if (mldl_cfg->accel_is_suspended == 1 ||
 	    (mldl_cfg->dmp_is_running == 0
 	     && mldl_cfg->accel_is_suspended == 0)) {
-		sensor_i2c_read(mpu_private_data->this_client->adapter,
-			0x0F, 0x06, 6, acc_data);
+		if (is_lis3dh) {
+			if (mldl_cfg->accel_is_suspended == 1) {
+				sensor_i2c_write_register(this_client->adapter,
+							  0x19, 0x20, 0x67);
+				MLOSSleep(1);
+			}
+			sensor_i2c_read(this_client->adapter,
+					0x19, 0x28 | 0x80, 6, acc_data);
+
+			if (mldl_cfg->accel_is_suspended == 1) {
+				sensor_i2c_write_register(this_client->adapter,
+							  0x19, 0x20, 0x18);
+				MLOSSleep(1);
+			}
+		} else
+			sensor_i2c_read(this_client->adapter,
+					0x0F, 0x06, 6, acc_data);
 	} else if (mldl_cfg->dmp_is_running &&
 		   mldl_cfg->accel_is_suspended == 0) {
-
-		sensor_i2c_read(mpu_private_data->this_client->adapter,
-			DEFAULT_MPU_SLAVEADDR, 0x23, 6, acc_data);
+		sensor_i2c_read(this_client->adapter,
+				DEFAULT_MPU_SLAVEADDR, 0x23, 6, acc_data);
 	}
 
-	temp = (s16) ((acc_data[1] << 4) | (acc_data[0] >> 4))
-		+ mpu_private_data->cal_data.x;
-	if (temp < 2048)
-		x = (s16) (temp);
-	else
-		x = (s16) ((4096 - temp)) * (-1);
-
-	temp = (s16) ((acc_data[3] << 4) | (acc_data[2] >> 4))
-		+ mpu_private_data->cal_data.y;
-	if (temp < 2048)
-		y = (s16) (temp);
-	else
-		y = (s16) ((4096 - temp)) * (-1);
-
-	temp = (s16) ((acc_data[5] << 4) | (acc_data[4] >> 4))
-		+ mpu_private_data->cal_data.z;
-	if (temp < 2048)
-		z = (s16) (temp);
-	else
-		z = (s16) ((4096 - temp)) * (-1);
-
-	for (i = 0; i < 9; i++)
-		acc_ori[i] = mldl_cfg->pdata->accel.orientation[i];
-
-	if (acc_ori[0] == 0) {
-		if (acc_ori[1] == 1) {
-			if (acc_ori[3] == 1) {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -y, -x,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -y, -x,
-						    z);
-				}
-			} else {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", y, -x,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", y, -x,
-						    z);
-				}
-			}
-		} else {
-			if (acc_ori[3] == 1) {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", y, -x,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -y, x,
-						    z);
-				}
-			} else {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", y, x,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", y, x,
-						    z);
-				}
-			}
-		}
+	if (is_lis3dh) {
+		x = ((acc_data[0] << 8) | acc_data[1]);
+		x = (x >> 4) + cal_data.x;
+		y = ((acc_data[2] << 8) | acc_data[3]);
+		y = (y >> 4) + cal_data.y;
+		z = ((acc_data[4] << 8) | acc_data[5]);
+		z = (z >> 4) + cal_data.z;
 	} else {
-		if (acc_ori[0] == 1) {
-			if (acc_ori[4] == 1) {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -x, -y,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -x, -y,
-						    z);
-				}
-			} else {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -x, y,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", -x, y,
-						    z);
-				}
-			}
-		} else {
-			if (acc_ori[4] == 1) {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", x, -y,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", x, -y,
-						    z);
-				}
-			} else {
-				if (acc_ori[8] == 1) {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", x, y,
-						    -z);
-				} else {
-					count =
-					    sprintf(buf, "%d, %d, %d\n", x, y,
-						    z);
-				}
-			}
-		}
+		temp = (s16) ((acc_data[1] << 4) | (acc_data[0] >> 4))
+		    + cal_data.x;
+		if (temp < 2048)
+			x = (s16) (temp);
+		else
+			x = (s16) ((4096 - temp)) * (-1);
+
+		temp = (s16) ((acc_data[3] << 4) | (acc_data[2] >> 4))
+		    + cal_data.y;
+		if (temp < 2048)
+			y = (s16) (temp);
+		else
+			y = (s16) ((4096 - temp)) * (-1);
+
+		temp = (s16) ((acc_data[5] << 4) | (acc_data[4] >> 4))
+		    + cal_data.z;
+		if (temp < 2048)
+			z = (s16) (temp);
+		else
+			z = (s16) ((4096 - temp)) * (-1);
 	}
-	return count;
+
+#if defined(CONFIG_MACH_P8)
+	/* x *= (-1); */
+	/* y *= (-1); */
+	z *= (-1);
+	return sprintf(buf, "%d, %d, %d\n", y, x, z);
+
+#elif defined(CONFIG_MACH_P8LTE)
+	x *= (-1);
+	/* y *= (-1); */
+	/* z *= (-1); */
+	return sprintf(buf, "%d, %d, %d\n", y, x, z);
+
+#elif defined(CONFIG_MACH_P2)
+	/* x *= (-1); */
+	/* y *= (-1); */
+	z *= (-1);
+	return sprintf(buf, "%d, %d, %d\n", y, x, z);
+
+#else
+	x *= (-1);
+	y *= (-1);
+	z *= (-1);
+	return sprintf(buf, "%d, %d, %d\n", y, x, z);
+
+#endif
+
 }
 
 static ssize_t accel_calibration_show(struct device *dev,
 				      struct device_attribute *attr, char *buf)
 {
-	int count;
-	pr_info(" accel_calibration_show %d %d %d\n",
-		mpu_private_data->cal_data.x,
-		mpu_private_data->cal_data.y,
-		mpu_private_data->cal_data.z);
-	count = sprintf(buf, "%d %d %d\n",
-		mpu_private_data->cal_data.x,
-		mpu_private_data->cal_data.y,
-		mpu_private_data->cal_data.z);
-	return count;
-
-}
-static ssize_t accel_calibration_store(struct device *dev,
-	struct device_attribute *attr,
-	const char *buf, size_t size)
-{
 	int err;
-	int count;
-	unsigned long enable = 0;
-	if (strict_strtoul(buf, 10, &enable))
-		return -EINVAL;
 
-	err = accel_do_calibrate(mpu_private_data, enable);
+	err = accel_open_calibration();
+	if (err < 0)
+		pr_err("%s: accel_open_calibration() failed\n", __func__);
+
+	pr_info("accel_calibration_show :%d %d %d\n",
+		cal_data.x, cal_data.y, cal_data.z);
+
+	if (err < 0)
+		err = 0;
+	else
+		err = 1;
+
+	if (cal_data.x == 0 && cal_data.y == 0 && cal_data.z == 0)
+		err = 0;
+
+	return sprintf(buf, "%d %d %d %d\n",
+		       err, cal_data.x, cal_data.y, cal_data.z);
+}
+
+static ssize_t accel_calibration_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t size)
+{
+	bool do_calib;
+	int err;
+	int count = 0;
+	char str[11];
+
+	if (sysfs_streq(buf, "1"))
+		do_calib = true;
+	else if (sysfs_streq(buf, "0"))
+		do_calib = false;
+	else {
+		pr_debug("%s: invalid value %d\n", __func__, *buf);
+		return -EINVAL;
+	}
+
+	err = accel_do_calibrate(do_calib);
 	if (err < 0)
 		pr_err("%s: accel_do_calibrate() failed\n", __func__);
 
-	pr_info("%d %d %d\n",
-		mpu_private_data->cal_data.x,
-		mpu_private_data->cal_data.y,
-		mpu_private_data->cal_data.z);
+	pr_info("accel_calibration_show :%d %d %d\n",
+		cal_data.x, cal_data.y, cal_data.z);
 	if (err > 0)
 		err = 0;
-	count = sprintf(buf, "%d\n", err);
+	count = sprintf(str, "%d\n", err);
+
+	strcpy(str, buf);
 	return count;
 }
 
-static DEVICE_ATTR(calibration, 0664, accel_calibration_show,
-	accel_calibration_store);
+static DEVICE_ATTR(calibration, 0664,
+		   accel_calibration_show, accel_calibration_store);
 
-static DEVICE_ATTR(power_on, S_IRUGO, mpu3050_power_on, NULL);
-static DEVICE_ATTR(temperature, S_IRUGO, mpu3050_get_temp, NULL);
-static DEVICE_ATTR(selftest, S_IRUGO, mpu3050_self_test, NULL);
+static DEVICE_ATTR(gyro_power_on, S_IRUGO | S_IWUSR, mpu3050_power_on, NULL);
+static DEVICE_ATTR(gyro_get_temp, S_IRUGO | S_IWUSR, mpu3050_get_temp, NULL);
+static DEVICE_ATTR(gyro_selftest, S_IRUGO | S_IWUSR, mpu3050_self_test, NULL);
 static DEVICE_ATTR(raw_data, S_IRUGO, mpu3050_acc_read, NULL);
-
-static struct device_attribute *gyro_sensor_attrs[] = {
-	&dev_attr_power_on,
-	&dev_attr_temperature,
-	&dev_attr_selftest,
-	NULL,
-};
 
 static struct device_attribute *accel_sensor_attrs[] = {
 	&dev_attr_raw_data,
@@ -1758,8 +1799,48 @@ static struct device_attribute *accel_sensor_attrs[] = {
 	NULL,
 };
 
-static struct device *gyro_sensor_device;
+extern struct class *sec_class;
+extern struct class *sensors_class;
+
+static struct device *sec_mpu3050_dev;
 static struct device *accel_sensor_device;
+
+extern int sensors_register(struct device *dev, void *drvdata,
+			    struct device_attribute *attributes[], char *name);
+#endif
+#define FEATURE_MPU_AUTO_PROBING
+
+#if defined(CONFIG_MPU_SENSORS_KXTF9_LIS3DH)
+
+static int mpu350_auto_probe_accel(struct mpu3050_platform_data *pdata)
+{
+	int ret = ML_SUCCESS;
+	unsigned char reg = 0;
+	struct mpu_private_data *mpu;
+	struct mldl_cfg *mldl_cfg;
+	struct i2c_adapter *accel_adapter = NULL;
+	struct ext_slave_descr *slave_descr = NULL;
+	accel_adapter = i2c_get_adapter(pdata->accel.adapt_num);
+
+	slave_descr = lis3dh_get_slave_descr();
+	ret = MLSLSerialRead(accel_adapter, 0x19, 0x0, 1, &reg);
+	if (ret == 0) {
+		pdata->accel.get_slave_descr = lis3dh_get_slave_descr;
+		pdata->accel.address = 0x19;
+
+		mpu = (struct mpu_private_data *)
+		    i2c_get_clientdata(this_client);
+		mldl_cfg = &mpu->mldl_cfg;
+		mldl_cfg->accel = slave_descr;
+/*
+			printk("auto probe : found %s\n",
+				pdata->accel.get_slave_descr()->name);
+*/
+		is_lis3dh = 1;
+	}
+	return ret;
+}
+
 #endif
 
 int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
@@ -1768,9 +1849,13 @@ int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
 	struct mpu_private_data *mpu;
 	struct mldl_cfg *mldl_cfg;
 	int res = 0;
+	int retry = 5;
+
 	struct i2c_adapter *accel_adapter = NULL;
 	struct i2c_adapter *compass_adapter = NULL;
 	struct i2c_adapter *pressure_adapter = NULL;
+
+	pr_info("================%s===============\n", __func__);
 
 	dev_dbg(&client->adapter->dev, "%s\n", __func__);
 
@@ -1778,42 +1863,49 @@ int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
 		res = -ENODEV;
 		goto out_check_functionality_failed;
 	}
+#ifdef FACTORY_TEST
+	res = sensors_register(accel_sensor_device, NULL, accel_sensor_attrs,
+			       "accelerometer_sensor");
+	if (res)
+		pr_info("%s: cound not register"
+			"accelerometer sensor device(%d).\n", __func__, res);
 
+	sec_mpu3050_dev = device_create(sec_class, NULL, 0, NULL,
+					"sec_mpu3050");
+	if (IS_ERR(sec_mpu3050_dev))
+		pr_info("%s :Failed to create device!", __func__);
+
+	if (device_create_file(sec_mpu3050_dev, &dev_attr_gyro_power_on) < 0) {
+		pr_info("%s :Failed to create device file(%s)!\n", __func__,
+			dev_attr_gyro_power_on.attr.name);
+		return -1;
+	}
+	if (device_create_file(sec_mpu3050_dev, &dev_attr_gyro_get_temp) < 0) {
+		pr_info("%s :Failed to create device file(%s)!\n", __func__,
+			dev_attr_gyro_get_temp.attr.name);
+		device_remove_file(sec_mpu3050_dev, &dev_attr_gyro_power_on);
+		return -1;
+	}
+	if (device_create_file(sec_mpu3050_dev, &dev_attr_gyro_selftest) < 0) {
+		pr_info("%s :Failed to create device file(%s)!\n", __func__,
+			dev_attr_gyro_selftest.attr.name);
+		device_remove_file(sec_mpu3050_dev, &dev_attr_gyro_power_on);
+		device_remove_file(sec_mpu3050_dev, &dev_attr_gyro_get_temp);
+		return -1;
+	}
+#endif
 	mpu = kzalloc(sizeof(struct mpu_private_data), GFP_KERNEL);
 	if (!mpu) {
 		res = -ENOMEM;
 		goto out_alloc_data_failed;
 	}
 
-	mutex_init(&mpu->power_lock);
-	mpu->pid = 0;
-	mpu->this_client = client;
-	mpu_private_data = mpu;
 	i2c_set_clientdata(client, mpu);
-
-
-#ifdef FACTORY_TEST
-	res =
-	    sensors_register(gyro_sensor_device, NULL, gyro_sensor_attrs,
-			     "gyro_sensor");
-	if (res) {
-		pr_info("%s: cound not register gyro sensor device(%d).\n",
-		       __func__, res);
-	}
-
-	res =
-	    sensors_register(accel_sensor_device, NULL, accel_sensor_attrs,
-			     "accelerometer_sensor");
-	if (res) {
-		pr_info("%s: cound not register accelerometer sensor device(%d).\n",
-		       __func__, res);
-	}
-#endif
-
+	this_client = client;
 	mldl_cfg = &mpu->mldl_cfg;
 	pdata = (struct mpu3050_platform_data *)client->dev.platform_data;
 	if (!pdata) {
-		dev_warn(&client->adapter->dev,
+		dev_warn(&this_client->adapter->dev,
 			 "Warning no platform data for mpu3050\n");
 	} else {
 		mldl_cfg->pdata = pdata;
@@ -1822,38 +1914,114 @@ int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
 		pdata->compass.get_slave_descr = get_compass_slave_descr;
 		pdata->pressure.get_slave_descr = get_pressure_slave_descr;
 
-		if (pdata->accel.get_slave_descr) {
+		is_lis3dh = 0;
+#if defined(CONFIG_MPU_SENSORS_KXTF9_LIS3DH)
+		mpu350_auto_probe_accel(pdata);
+		if (pdata->accel.get_slave_descr && !is_lis3dh) {
 			mldl_cfg->accel = pdata->accel.get_slave_descr();
-			dev_info(&client->adapter->dev,
+			dev_info(&this_client->adapter->dev,
 				 "%s: +%s\n", MPU_NAME, mldl_cfg->accel->name);
 			accel_adapter = i2c_get_adapter(pdata->accel.adapt_num);
-		} else {
-			dev_warn(&client->adapter->dev,
+
+			if (!accel_adapter) {
+				pr_info("%s : accel_adapter i2c get fail",
+					__func__);
+				goto out_accel_failed;
+			}
+
+			if (pdata->accel.irq > 0) {
+				dev_info(&this_client->adapter->dev,
+					 "Installing Accel irq using %d\n",
+					 pdata->accel.irq);
+				res = slaveirq_init(accel_adapter,
+						    &pdata->accel, "accelirq");
+				if (res)
+					goto out_accelirq_failed;
+			} else {
+				dev_warn(&this_client->adapter->dev,
+					 "WARNING: Accel irq not assigned\n");
+			}
+		} else
+#else
+		if (pdata->accel.get_slave_descr) {
+			mldl_cfg->accel = pdata->accel.get_slave_descr();
+			dev_info(&this_client->adapter->dev,
+				 "%s: +%s\n", MPU_NAME, mldl_cfg->accel->name);
+			accel_adapter = i2c_get_adapter(pdata->accel.adapt_num);
+
+			if (!accel_adapter) {
+				pr_info("%s : accel_adapter i2c get fail",
+					__func__);
+				goto out_accel_failed;
+			}
+
+			if (pdata->accel.irq > 0) {
+				dev_info(&this_client->adapter->dev,
+					 "Installing Accel irq using %d\n",
+					 pdata->accel.irq);
+				res = slaveirq_init(accel_adapter,
+						    &pdata->accel, "accelirq");
+				if (res)
+					goto out_accelirq_failed;
+			} else {
+				dev_warn(&this_client->adapter->dev,
+					 "WARNING: Accel irq not assigned\n");
+			}
+		} else
+#endif
+		{
+			dev_warn(&this_client->adapter->dev,
 				 "%s: No Accel Present\n", MPU_NAME);
 		}
 
 		if (pdata->compass.get_slave_descr) {
 			mldl_cfg->compass = pdata->compass.get_slave_descr();
-			dev_info(&client->adapter->dev,
+			dev_info(&this_client->adapter->dev,
 				 "%s: +%s\n", MPU_NAME,
 				 mldl_cfg->compass->name);
 			compass_adapter =
 			    i2c_get_adapter(pdata->compass.adapt_num);
+
+			if (!compass_adapter) {
+				pr_info("%s : compass_adapter i2c get fail",
+					__func__);
+				goto out_compass_failed;
+			}
+
+			if (pdata->compass.irq > 0) {
+				dev_info(&this_client->adapter->dev,
+					 "Installing Compass irq using %d\n",
+					 pdata->compass.irq);
+				res = slaveirq_init(compass_adapter,
+						    &pdata->compass,
+						    "compassirq");
+				if (res)
+					goto out_compassirq_failed;
+			} else {
+				dev_warn(&this_client->adapter->dev,
+					 "WARNING: Compass irq not assigned\n");
+			}
 		} else {
-			dev_warn(&client->adapter->dev,
+			dev_warn(&this_client->adapter->dev,
 				 "%s: No Compass Present\n", MPU_NAME);
 		}
 
 		if (pdata->pressure.get_slave_descr) {
 			mldl_cfg->pressure = pdata->pressure.get_slave_descr();
-			dev_info(&client->adapter->dev,
+			dev_info(&this_client->adapter->dev,
 				 "%s: +%s\n", MPU_NAME,
 				 mldl_cfg->pressure->name);
 			pressure_adapter =
 			    i2c_get_adapter(pdata->pressure.adapt_num);
 
+			if (!pressure_adapter) {
+				pr_info("%s : pressure_adapter i2c get fail",
+					__func__);
+				goto out_pressure_failed;
+			}
+
 			if (pdata->pressure.irq > 0) {
-				dev_info(&client->adapter->dev,
+				dev_info(&this_client->adapter->dev,
 					 "Installing Pressure irq using %d\n",
 					 pdata->pressure.irq);
 				res = slaveirq_init(pressure_adapter,
@@ -1862,21 +2030,30 @@ int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
 				if (res)
 					goto out_pressureirq_failed;
 			} else {
-				dev_warn(&client->adapter->dev,
+				dev_warn(&this_client->adapter->dev,
 					 "WARNING: Pressure irq not assigned\n");
 			}
 		} else {
-			dev_warn(&client->adapter->dev,
+			dev_warn(&this_client->adapter->dev,
 				 "%s: No Pressure Present\n", MPU_NAME);
 		}
 	}
 
 	mldl_cfg->addr = client->addr;
-	res = mpu3050_open(&mpu->mldl_cfg, client->adapter,
-			   accel_adapter, compass_adapter, pressure_adapter);
+
+	do {
+		res = mpu3050_open(&mpu->mldl_cfg, client->adapter,
+				   accel_adapter, compass_adapter,
+				   pressure_adapter);
+		if (res) {
+			dev_err(&this_client->adapter->dev,
+				"%s i2c Init Error, ret = %d\n", MPU_NAME, res);
+			mpu3050_usleep(5000);
+		}
+	} while (retry-- && res);
 
 	if (res) {
-		dev_err(&client->adapter->dev,
+		dev_err(&this_client->adapter->dev,
 			"Unable to open %s %d\n", MPU_NAME, res);
 		res = -ENODEV;
 		goto out_whoami_failed;
@@ -1884,26 +2061,26 @@ int mpu3050_probe(struct i2c_client *client, const struct i2c_device_id *devid)
 
 	res = misc_register(&i2c_mpu_device);
 	if (res < 0) {
-		dev_err(&client->adapter->dev,
+		dev_err(&this_client->adapter->dev,
 			"ERROR: misc_register returned %d\n", res);
 		goto out_misc_register_failed;
 	}
 
-	if (client->irq > 0) {
-		dev_info(&client->adapter->dev,
-			 "Installing irq using %d\n", client->irq);
-		res = mpuirq_init(client);
+	if (this_client->irq > 0) {
+		dev_info(&this_client->adapter->dev,
+			 "Installing irq using %d\n", this_client->irq);
+		res = mpuirq_init(this_client);
 		if (res)
 			goto out_mpuirq_failed;
 	} else {
-		dev_warn(&client->adapter->dev,
+		dev_warn(&this_client->adapter->dev,
 			 "WARNING: %s irq not assigned\n", MPU_NAME);
 	}
 
 	mpu_accel_init(&mpu->mldl_cfg, client->adapter);
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
-	mpu->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 1;
+	mpu->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	mpu->early_suspend.suspend = mpu3050_early_suspend;
 	mpu->early_suspend.resume = mpu3050_early_resume;
 	register_early_suspend(&mpu->early_suspend);
@@ -1919,12 +2096,20 @@ out_whoami_failed:
 	if (pdata && pdata->pressure.get_slave_descr && pdata->pressure.irq)
 		slaveirq_exit(&pdata->pressure);
 out_pressureirq_failed:
+out_pressure_failed:
+	if (pdata && pdata->compass.get_slave_descr && pdata->compass.irq)
+		slaveirq_exit(&pdata->compass);
+out_compassirq_failed:
+out_compass_failed:
+	if (pdata && pdata->accel.get_slave_descr && pdata->accel.irq)
+		slaveirq_exit(&pdata->accel);
+out_accelirq_failed:
+out_accel_failed:
 	kfree(mpu);
 out_alloc_data_failed:
 out_check_functionality_failed:
-	dev_err(&client->adapter->dev, "%s failed %d\n", __func__, res);
+	dev_err(&this_client->adapter->dev, "%s failed %d\n", __func__, res);
 	return res;
-
 }
 
 static int mpu3050_remove(struct i2c_client *client)
@@ -1988,21 +2173,22 @@ static struct i2c_driver mpu3050_driver = {
 	.shutdown = mpu_shutdown,	/* optional */
 	.suspend = mpu_suspend,	/* optional */
 	.resume = mpu_resume,	/* optional */
-
 };
 
 static int __init mpu_init(void)
 {
 	int res = i2c_add_driver(&mpu3050_driver);
-	pr_info("%s\n", __func__);
+	pid = 0;
+
+	pr_info("%s res=%d\n", __func__, res);
 	if (res)
-		pr_err("%s failed\n", __func__);
+		dev_err(&this_client->adapter->dev, "%s failed\n", __func__);
 	return res;
 }
 
 static void __exit mpu_exit(void)
 {
-	pr_info("%s\n", __func__);
+	pr_info(KERN_DEBUG "%s\n", __func__);
 	i2c_del_driver(&mpu3050_driver);
 }
 

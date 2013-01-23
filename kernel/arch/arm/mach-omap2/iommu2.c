@@ -19,7 +19,6 @@
 #include <linux/stringify.h>
 
 #include <plat/iommu.h>
-#include <plat/omap_device.h>
 
 /*
  * omap2 architecture specific register bit definitions
@@ -85,25 +84,18 @@ static void __iommu_set_twl(struct iommu *obj, bool on)
 	iommu_write_reg(obj, l, MMU_CNTL);
 }
 
+
 static int omap2_iommu_enable(struct iommu *obj)
 {
 	u32 l, pa;
 	unsigned long timeout;
-	int ret = 0;
 
-	if (!obj->secure_mode) {
-		if (!obj->iopgd || !IS_ALIGNED((u32)obj->iopgd,  SZ_16K))
-			return -EINVAL;
+	if (!obj->iopgd || !IS_ALIGNED((u32)obj->iopgd,  SZ_16K))
+		return -EINVAL;
 
-		pa = virt_to_phys(obj->iopgd);
-		if (!IS_ALIGNED(pa, SZ_16K))
-			return -EINVAL;
-	} else
-		pa = (u32)obj->secure_ttb;
-
-	ret = omap_device_enable(obj->pdev);
-	if (ret)
-		return ret;
+	pa = virt_to_phys(obj->iopgd);
+	if (!IS_ALIGNED(pa, SZ_16K))
+		return -EINVAL;
 
 	iommu_write_reg(obj, MMU_SYS_SOFTRESET, MMU_SYSCONFIG);
 
@@ -132,16 +124,11 @@ static int omap2_iommu_enable(struct iommu *obj)
 
 	__iommu_set_twl(obj, true);
 
-	if (cpu_is_omap44xx())
-		iommu_write_reg(obj, 0x1, MMU_GP_REG);
-
 	return 0;
 }
 
 static void omap2_iommu_disable(struct iommu *obj)
 {
-	int ret = 0;
-
 	u32 l = iommu_read_reg(obj, MMU_CNTL);
 
 	l &= ~MMU_CNTL_MASK;
@@ -149,8 +136,6 @@ static void omap2_iommu_disable(struct iommu *obj)
 	iommu_write_reg(obj, MMU_SYS_IDLE_FORCE, MMU_SYSCONFIG);
 
 	dev_dbg(obj->dev, "%s is shutting down\n", obj->name);
-	if (omap_device_shutdown(obj->pdev))
-		dev_err(obj->dev, "%s err 0x%x\n", __func__, ret);
 }
 
 static void omap2_iommu_set_twl(struct iommu *obj, bool on)
@@ -183,6 +168,7 @@ static u32 omap2_iommu_fault_isr(struct iommu *obj, u32 *ra)
 		errs |= OMAP_IOMMU_ERR_TBLWALK_FAULT;
 	if (stat & MMU_IRQ_MULTIHITFAULT)
 		errs |= OMAP_IOMMU_ERR_MULTIHIT_FAULT;
+	iommu_write_reg(obj, stat, MMU_IRQSTATUS);
 
 	return errs;
 }
@@ -239,8 +225,7 @@ static u32 omap2_get_pte_attr(struct iotlb_entry *e)
 	attr = e->mixed << 5;
 	attr |= e->endian;
 	attr |= e->elsz >> 3;
-	attr <<= (((e->pgsz == MMU_CAM_PGSZ_4K) ||
-			(e->pgsz == MMU_CAM_PGSZ_64K)) ? 0 : 6);
+	attr <<= ((e->pgsz & MMU_CAM_PGSZ_4K) ? 0 : 6);
 
 	return attr;
 }

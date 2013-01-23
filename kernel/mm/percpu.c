@@ -1661,11 +1661,11 @@ int __init pcpu_embed_first_chunk(size_t reserved_size, size_t dyn_size,
 		goto out_free;
 #endif
 	}
-
+#ifndef PRODUCT_SHIP
 	pr_info("PERCPU: Embedded %zu pages/cpu @%p s%zu r%zu d%zu u%zu\n",
 		PFN_DOWN(size_sum), base, ai->static_size, ai->reserved_size,
 		ai->dyn_size, ai->unit_size);
-
+#endif
 	rc = pcpu_setup_first_chunk(ai, base);
 	goto out_free;
 

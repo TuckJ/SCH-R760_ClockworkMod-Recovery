@@ -57,6 +57,7 @@ struct usb_link_device {
 	struct usb_device	*usbdev;
 	struct if_usb_devdata	devdata[IF_USB_DEVNUM_MAX];
 	struct delayed_work	runtime_pm_work;
+	struct delayed_work	post_resume_work;
 	struct delayed_work     wait_enumeration;
 	struct work_struct	disconnect_work;
 
@@ -70,7 +71,6 @@ struct usb_link_device {
 	int if_usb_connected;
 	int flow_suspend;
 	int host_wake_timeout_flag;
-	int wake_status;
 
 	unsigned gpio_slave_wakeup;
 	unsigned gpio_host_wakeup;
@@ -84,6 +84,9 @@ struct usb_link_device {
 	spinlock_t		lock;
 	struct usb_anchor	deferred;
 
+	/* LINK PM DEVICE DATA */
+	struct link_pm_data *link_pm_data;
+
 	/*COMMON LINK DEVICE*/
 	/* maybe -list of io devices for the link device to use */
 	/* to find where to send incoming packets to */
@@ -92,17 +95,21 @@ struct usb_link_device {
 /* converts from struct link_device* to struct xxx_link_device* */
 #define to_usb_link_device(linkdev) \
 			container_of(linkdev, struct usb_link_device, ld)
-#endif
 
 #define SET_SLAVE_WAKEUP(_pdata, _value)			\
 do {								\
 	gpio_set_value(_pdata->gpio_slave_wakeup, _value);	\
-	pr_debug("> S-WUP %s\n", _value ? "1" : "0");	\
+	mif_debug("> S-WUP %s\n", _value ? "1" : "0");	\
 } while (0)
 
 #define SET_HOST_ACTIVE(_pdata, _value)			\
 do {								\
 	gpio_set_value(_pdata->gpio_host_active, _value);	\
-	pr_debug("> H-ACT %s\n", _value ? "1" : "0");	\
+	mif_debug("> H-ACT %s\n", _value ? "1" : "0");	\
 } while (0)
 
+#define has_hub(usb_ld) ((usb_ld)->link_pm_data->has_usbhub)
+
+irqreturn_t usb_resume_irq(int irq, void *data);
+
+#endif

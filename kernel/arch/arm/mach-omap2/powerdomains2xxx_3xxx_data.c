@@ -70,7 +70,6 @@ struct powerdomain gfx_omap2_pwrdm = {
 	.pwrsts_mem_on	  = {
 		[0] = PWRSTS_ON,  /* MEMONSTATE */
 	},
-	.voltdm           = { .name = "core" },
 };
 
 struct powerdomain wkup_omap2_pwrdm = {
@@ -78,5 +77,4 @@ struct powerdomain wkup_omap2_pwrdm = {
 	.prcm_offs	= WKUP_MOD,
 	.omap_chip	= OMAP_CHIP_INIT(CHIP_IS_OMAP24XX | CHIP_IS_OMAP3430),
 	.pwrsts		= PWRSTS_ON,
-	.voltdm         = { .name = "wakeup" },
 };

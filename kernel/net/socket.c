@@ -2476,8 +2476,9 @@ int sock_register(const struct net_proto_family *ops)
 		err = 0;
 	}
 	spin_unlock(&net_family_lock);
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "NET: Registered protocol family %d\n", ops->family);
+#endif	
 	return err;
 }
 EXPORT_SYMBOL(sock_register);

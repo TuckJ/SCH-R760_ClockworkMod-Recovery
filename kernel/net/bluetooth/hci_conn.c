@@ -472,7 +472,7 @@ struct hci_dev *hci_get_route(bdaddr_t *dst, bdaddr_t *src)
 	list_for_each(p, &hci_dev_list) {
 		struct hci_dev *d = list_entry(p, struct hci_dev, list);
 
-	if (!test_bit(HCI_UP, &d->flags) || test_bit(HCI_RAW, &d->flags))
+		if (!test_bit(HCI_UP, &d->flags) || test_bit(HCI_RAW, &d->flags))
 			continue;
 
 		/* Simple routing:
@@ -508,6 +508,7 @@ struct hci_conn *hci_connect(struct hci_dev *hdev, int type,
 	struct hci_conn *acl;
 	struct hci_conn *sco;
 	struct hci_conn *le;
+	struct inquiry_entry *ie;
 
 	BT_DBG("%s dst %s", hdev->name, batostr(dst));
 

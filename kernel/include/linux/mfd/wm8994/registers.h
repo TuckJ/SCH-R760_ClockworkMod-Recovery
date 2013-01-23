@@ -242,7 +242,7 @@
 #define WM8994_GPIO_4                           0x703
 #define WM8994_GPIO_5                           0x704
 #define WM8994_GPIO_6                           0x705
-#define WM1811_JACKDET_CTRL						0x705
+#define WM1811_JACKDET_CTRL			0x705
 #define WM8994_GPIO_7                           0x706
 #define WM8994_GPIO_8                           0x707
 #define WM8994_GPIO_9                           0x708
@@ -2160,9 +2160,6 @@
 /*
  * R256 (0x100) - Chip Revision
  */
-#define WM8994_CUST_ID_MASK                     0xFF00  /* CUST_ID - [15:8] */
-#define WM8994_CUST_ID_SHIFT                         8  /* CUST_ID - [15:8] */
-#define WM8994_CUST_ID_WIDTH                         8  /* CUST_ID - [15:8] */
 #define WM8994_CHIP_REV_MASK                    0x000F  /* CHIP_REV - [3:0] */
 #define WM8994_CHIP_REV_SHIFT                        0  /* CHIP_REV - [3:0] */
 #define WM8994_CHIP_REV_WIDTH                        4  /* CHIP_REV - [3:0] */

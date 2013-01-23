@@ -761,6 +761,35 @@ static int ehci_run (struct usb_hcd *hcd)
 	return 0;
 }
 
+static int __maybe_unused ehci_setup (struct usb_hcd *hcd)
+{
+	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
+	int retval;
+
+	ehci->regs = (void __iomem *)ehci->caps +
+	    HC_LENGTH(ehci, ehci_readl(ehci, &ehci->caps->hc_capbase));
+	dbg_hcs_params(ehci, "reset");
+	dbg_hcc_params(ehci, "reset");
+
+	/* cache this readonly data; minimize chip reads */
+	ehci->hcs_params = ehci_readl(ehci, &ehci->caps->hcs_params);
+
+	ehci->sbrn = HCD_USB2;
+
+	retval = ehci_halt(ehci);
+	if (retval)
+		return retval;
+
+	/* data structure init */
+	retval = ehci_init(hcd);
+	if (retval)
+		return retval;
+
+	ehci_reset(ehci);
+
+	return 0;
+}
+
 /*-------------------------------------------------------------------------*/
 
 static irqreturn_t ehci_irq (struct usb_hcd *hcd)
@@ -855,6 +884,20 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 					(pstatus & PORT_PE) &&
 					ehci->reset_done[i] == 0))
 				continue;
+
+#if defined(CONFIG_LINK_DEVICE_HSIC)
+			/* FIXME: Debugging
+			 * HSIC with XMM6262 don't use the remote wakeup,
+			 * but someitme EHCI got the PCD and we have a doubt
+			 * whether remote wakeup or not. So, we find the irq
+			 * from XMM6262, print out the port status.
+			 */
+			printk(KERN_DEBUG "mif: %s port %d,"
+				"pcd status 0x%x, ehci port status 0x%x, "
+				"suspend_ports %lu, reset_done %lu\n",
+				__func__, i + 1, status, pstatus,
+				ehci->suspended_ports, ehci->reset_done[i]);
+#endif
 
 			/* start 20 msec resume signaling from this port,
 			 * and make khubd collect PORT_STAT_C_SUSPEND to
@@ -1159,8 +1202,7 @@ ehci_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *ep)
 static int ehci_get_frame (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
-	return (ehci_readl(ehci, &ehci->regs->frame_index) >> 3) %
-		ehci->periodic_size;
+	return (ehci_read_frame_index(ehci) >> 3) % ehci->periodic_size;
 }
 
 /*-------------------------------------------------------------------------*/

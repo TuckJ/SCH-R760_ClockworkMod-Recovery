@@ -13,6 +13,8 @@
  *
  */
 
+#define DEBUG
+
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -21,14 +23,20 @@
 #include <linux/poll.h>
 #include <linux/gpio.h>
 #include <linux/if_arp.h>
+#include <linux/platform_device.h>
+#include <linux/suspend.h>
 
 #include <linux/platform_data/modem.h>
 #include "modem_prj.h"
 #include "modem_link_device_usb.h"
+#include "modem_link_pm_usb.h"
+
+#include <mach/regs-gpio.h>
 
 #define URB_COUNT	4
 
-static irqreturn_t usb_resume_irq(int irq, void *data);
+static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
+		struct sk_buff *skb, struct if_usb_devdata *pipe_data);
 
 static int usb_attach_io_dev(struct link_device *ld,
 			struct io_device *iod)
@@ -62,6 +70,7 @@ usb_free_urbs(struct usb_link_device *usb_ld, struct if_usb_devdata *pipe)
 static int usb_init_communication(struct link_device *ld,
 			struct io_device *iod)
 {
+	int err = 0;
 	switch (iod->format) {
 	case IPC_BOOT:
 		ld->com_state = COM_BOOT;
@@ -75,25 +84,24 @@ static int usb_init_communication(struct link_device *ld,
 	case IPC_FMT:
 	case IPC_RFS:
 	case IPC_RAW:
+
 	default:
 		ld->com_state = COM_ONLINE;
 		break;
 	}
 
-	pr_debug("%s: iod = %s, com_state = %d\n", __func__, iod->name,
-				ld->com_state);
-	return 0;
+	mif_debug("com_state = %d\n", ld->com_state);
+	return err;
 }
 
 static void usb_terminate_communication(
 			struct link_device *ld, struct io_device *iod)
 {
-	pr_debug("%s: iod = %s, com_state = %d\n", __func__, iod->name,
-				ld->com_state);
+	mif_debug("com_state = %d\n", ld->com_state);
 }
 
-
-static int usb_rx_submit(struct if_usb_devdata *pipe, struct urb *urb, gfp_t gfp_flags)
+static int usb_rx_submit(struct if_usb_devdata *pipe, struct urb *urb,
+	gfp_t gfp_flags)
 {
 	int ret;
 
@@ -102,7 +110,7 @@ static int usb_rx_submit(struct if_usb_devdata *pipe, struct urb *urb, gfp_t gfp
 	if (ret) {
 		usb_unanchor_urb(urb);
 		usb_anchor_urb(urb, &pipe->urbs);
-		pr_err("%s: submit urb fail with ret (%d)\n", __func__, ret);
+		mif_err("submit urb fail with ret (%d)\n", ret);
 	}
 
 	usb_mark_last_busy(urb->dev);
@@ -117,6 +125,8 @@ static void usb_rx_complete(struct urb *urb)
 	int iod_format = IPC_FMT;
 	int ret;
 
+	usb_mark_last_busy(urb->dev);
+
 	switch (urb->status) {
 	case 0:
 	case -ENOENT:
@@ -127,6 +137,12 @@ static void usb_rx_complete(struct urb *urb)
 		switch (pipe_data->format) {
 		case IF_USB_FMT_EP:
 			iod_format = IPC_FMT;
+			/*
+			print_hex_dump(KERN_INFO, "[FMT-RX] ",
+					DUMP_PREFIX_OFFSET, 16, 1,
+					urb->transfer_buffer,
+					min(urb->actual_length, (u32)64), true);
+			*/
 			break;
 		case IF_USB_RAW_EP:
 			iod_format = IPC_MULTI_RAW;
@@ -155,24 +171,26 @@ static void usb_rx_complete(struct urb *urb)
 						(char *)urb->transfer_buffer,
 						urb->actual_length);
 				if (ret < 0)
-					pr_err("%s: io device recv error :%d\n",
-							__func__, ret);
+					mif_err("io device recv error :%d\n",
+							ret);
 				break;
 			}
 		}
 re_submit:
 		if (urb->status || atomic_read(&usb_ld->suspend_count))
 			break;
+
+		usb_mark_last_busy(urb->dev);
 		usb_rx_submit(pipe_data, urb, GFP_ATOMIC);
 		return;
 	case -ESHUTDOWN:
 	case -EPROTO:
 		break;
 	case -EOVERFLOW:
-		pr_err("%s: RX overflow\n", __func__);
+		mif_err("RX overflow\n");
 		break;
 	default:
-		pr_err("%s: RX complete Status (%d)\n", __func__, urb->status);
+		mif_err("RX complete Status (%d)\n", urb->status);
 		break;
 	}
 
@@ -208,13 +226,13 @@ static void usb_tx_complete(struct urb *urb)
 	case 0:
 		break;
 	default:
-		pr_err("%s:TX error (%d)\n", __func__, urb->status);
+		mif_err("TX error (%d)\n", urb->status);
 	}
 
 	usb_mark_last_busy(urb->dev);
 	ret = pm_runtime_put_autosuspend(&urb->dev->dev);
 	if (ret < 0)
-		pr_debug("%s pm_runtime_put_autosuspend failed : ret(%d)\n", __func__, ret);
+		mif_debug("pm_runtime_put_autosuspend failed : ret(%d)\n", ret);
 	usb_free_urb(urb);
 	dev_kfree_skb_any(skb);
 }
@@ -228,7 +246,7 @@ static void if_usb_force_disconnect(struct work_struct *work)
 	pm_runtime_get_sync(&udev->dev);
 	if (udev->state != USB_STATE_NOTATTACHED) {
 		usb_force_disconnect(udev);
-		pr_info("force disconnect by modem not responding!!\n");
+		mif_info("force disconnect by modem not responding!!\n");
 	}
 	pm_runtime_put_autosuspend(&udev->dev);
 }
@@ -266,19 +284,19 @@ static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
 		SET_SLAVE_WAKEUP(usb_ld->pdata, 1);
 
 		while (!wait_event_interruptible_timeout(usb_ld->l2_wait,
-				usbdev->dev.power.runtime_status == RPM_ACTIVE ||
-				pipe_data->disconnected,
+				usbdev->dev.power.runtime_status == RPM_ACTIVE
+				|| pipe_data->disconnected,
 				HOST_WAKEUP_TIMEOUT_JIFFIES)) {
 
 			if (cnt == MAX_RETRY) {
-				pr_err("host wakeup timeout !!\n");
+				mif_err("host wakeup timeout !!\n");
 				SET_SLAVE_WAKEUP(usb_ld->pdata, 0);
 				pm_runtime_put_autosuspend(&usbdev->dev);
 				schedule_work(&usb_ld->disconnect_work);
 				usb_ld->host_wake_timeout_flag = 1;
 				return -1;
 			}
-			pr_err("host wakeup timeout ! retry..\n");
+			mif_err("host wakeup timeout ! retry..\n");
 			SET_SLAVE_WAKEUP(usb_ld->pdata, 0);
 			udelay(100);
 			SET_SLAVE_WAKEUP(usb_ld->pdata, 1);
@@ -291,15 +309,15 @@ static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
 			return -ENODEV;
 		}
 
-		pr_debug("wait_q done (runtime_status=%d)\n",
+		mif_debug("wait_q done (runtime_status=%d)\n",
 				usbdev->dev.power.runtime_status);
 	}
 
 	urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!urb) {
-		pr_err("%s alloc urb error\n", __func__);
+		mif_err("alloc urb error\n");
 		if (pm_runtime_put_autosuspend(&usbdev->dev) < 0)
-			pr_debug("pm_runtime_put_autosuspend fail\n");
+			mif_debug("pm_runtime_put_autosuspend fail\n");
 		return -ENOMEM;
 	}
 
@@ -312,7 +330,7 @@ static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
 		/* transmission will be done in resume */
 		usb_anchor_urb(urb, &usb_ld->deferred);
 		usb_put_urb(urb);
-		pr_debug("%s: anchor urb (0x%p)\n", __func__, urb);
+		mif_debug("anchor urb (0x%p)\n", urb);
 		spin_unlock_irqrestore(&usb_ld->lock, flags);
 		return 0;
 	}
@@ -320,9 +338,9 @@ static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
 
 	ret = usb_submit_urb(urb, GFP_KERNEL);
 	if (ret < 0) {
-		pr_err("%s usb_submit_urb with ret(%d)\n", __func__, ret);
+		mif_err("usb_submit_urb with ret(%d)\n", ret);
 		if (pm_runtime_put_autosuspend(&usbdev->dev) < 0)
-			pr_debug("pm_runtime_put_autosuspend fail\n");
+			mif_debug("pm_runtime_put_autosuspend fail\n");
 	}
 	return ret;
 }
@@ -336,6 +354,13 @@ static void usb_tx_work(struct work_struct *work)
 	struct io_device *iod;
 	struct sk_buff *skb;
 	struct if_usb_devdata *pipe_data;
+	struct link_pm_data *pm_data = usb_ld->link_pm_data;
+
+	/*TODO: check the PHONE ACTIVE STATES */
+	/* because tx data wait until hub on with wait_for_complettion, it
+	 should queue to single_threaded work queue */
+	if (!link_pm_set_active(usb_ld))
+		return;
 
 	while (ld->sk_fmt_tx_q.qlen || ld->sk_raw_tx_q.qlen) {
 		/* send skb from fmt_txq and raw_txq,
@@ -344,9 +369,15 @@ static void usb_tx_work(struct work_struct *work)
 		if (skb) {
 			iod = *((struct io_device **)skb->cb);
 			switch (iod->format) {
+			case IPC_FMT:
+				/*
+				print_hex_dump(KERN_INFO, "[FMT-TX] ",
+						DUMP_PREFIX_OFFSET, 16, 1,
+						skb->data,
+						min(skb->len, (u32)64), true);
+				*/
 			case IPC_BOOT:
 			case IPC_RAMDUMP:
-			case IPC_FMT:
 				/* boot device uses same intf with fmt*/
 				pipe_data = &usb_ld->devdata[IF_USB_FMT_EP];
 				break;
@@ -361,8 +392,8 @@ static void usb_tx_work(struct work_struct *work)
 
 			ret = usb_tx_urb_with_skb(usb_ld, skb, pipe_data);
 			if (ret < 0) {
-				pr_err("%s usb_tx_urb_with_skb for iod(%d), ret(%d)\n",
-						__func__, iod->format, ret);
+				mif_err("usb_tx_urb_with_skb, ret(%d)\n",
+					ret);
 				skb_queue_head(&ld->sk_fmt_tx_q, skb);
 				return;
 			}
@@ -373,8 +404,9 @@ static void usb_tx_work(struct work_struct *work)
 			pipe_data = &usb_ld->devdata[IF_USB_RAW_EP];
 			ret = usb_tx_urb_with_skb(usb_ld, skb, pipe_data);
 			if (ret < 0) {
-				pr_err("%s usb_tx_urb_with_skb for raw, ret(%d)\n",
-						__func__, ret);
+				mif_err("usb_tx_urb_with_skb "
+						"for raw, ret(%d)\n",
+						ret);
 				skb_queue_head(&ld->sk_raw_tx_q, skb);
 				return;
 			}
@@ -388,10 +420,15 @@ static int if_usb_suspend(struct usb_interface *intf, pm_message_t message)
 	int i;
 
 	if (atomic_inc_return(&usb_ld->suspend_count) == IF_USB_DEVNUM_MAX) {
-		pr_debug("%s\n", __func__);
+		mif_debug("L2\n");
 
 		for (i = 0; i < IF_USB_DEVNUM_MAX; i++)
 			usb_kill_anchored_urbs(&usb_ld->devdata[i].reading);
+
+		/*
+		if (usb_ld->link_pm_data->cpufreq_unlock)
+			usb_ld->link_pm_data->cpufreq_unlock();
+		*/
 
 		wake_unlock(&usb_ld->susplock);
 	}
@@ -401,8 +438,8 @@ static int if_usb_suspend(struct usb_interface *intf, pm_message_t message)
 
 static void runtime_pm_work(struct work_struct *work)
 {
-	struct usb_link_device *usb_ld =
-		container_of(work, struct usb_link_device, runtime_pm_work.work);
+	struct usb_link_device *usb_ld = container_of(work,
+		struct usb_link_device, runtime_pm_work.work);
 	int ret;
 
 	ret = pm_request_autosuspend(&usb_ld->usbdev->dev);
@@ -412,12 +449,24 @@ static void runtime_pm_work(struct work_struct *work)
 							msecs_to_jiffies(50));
 }
 
+static void post_resume_work(struct work_struct *work)
+{
+	struct usb_link_device *usb_ld = container_of(work,
+			struct usb_link_device, post_resume_work.work);
+
+	/* lock cpu frequency when L2->L0 */
+	/*
+	if (usb_ld->link_pm_data->cpufreq_lock)
+		usb_ld->link_pm_data->cpufreq_lock();
+	*/
+}
+
 static void wait_enumeration_work(struct work_struct *work)
 {
-	struct usb_link_device *usb_ld =
-		container_of(work, struct usb_link_device, wait_enumeration.work);
+	struct usb_link_device *usb_ld = container_of(work,
+		struct usb_link_device, wait_enumeration.work);
 	if (usb_ld->if_usb_connected == 0) {
-		pr_err("USB disconnected and not enumerated for long time\n");
+		mif_err("USB disconnected and not enumerated for long time\n");
 		usb_change_modem_state(usb_ld, STATE_CRASH_EXIT);
 	}
 }
@@ -434,7 +483,7 @@ static int if_usb_resume(struct usb_interface *intf)
 	if (!atomic_dec_return(&usb_ld->suspend_count)) {
 		spin_unlock_irq(&usb_ld->lock);
 
-		pr_debug("%s\n", __func__);
+		mif_debug("\n");
 		wake_lock(&usb_ld->susplock);
 
 		/* HACK: Runtime pm does not allow requesting autosuspend from
@@ -448,8 +497,9 @@ static int if_usb_resume(struct usb_interface *intf)
 				ret = usb_rx_submit(pipe, urb, GFP_KERNEL);
 				if (ret < 0) {
 					usb_put_urb(urb);
-					pr_err("%s: usb_rx_submit error with (%d)\n",
-						__func__, ret);
+					mif_err(
+					"usb_rx_submit error with (%d)\n",
+						ret);
 					return ret;
 				}
 				usb_put_urb(urb);
@@ -457,21 +507,31 @@ static int if_usb_resume(struct usb_interface *intf)
 		}
 
 		while ((urb = usb_get_from_anchor(&usb_ld->deferred))) {
-			pr_debug("%s: got urb (0x%p) from anchor & resubmit\n",
-					__func__, urb);
+			mif_debug("got urb (0x%p) from anchor & resubmit\n",
+					urb);
 			ret = usb_submit_urb(urb, GFP_KERNEL);
 			if (ret < 0) {
-				pr_err("%s: resubmit failed\n", __func__);
+				mif_err("resubmit failed\n");
 				skb = urb->context;
 				dev_kfree_skb_any(skb);
 				usb_free_urb(urb);
-				if (pm_runtime_put_autosuspend(&usb_ld->usbdev->dev) < 0)
-					pr_debug("pm_runtime_put_autosuspend fail\n");
+				if (pm_runtime_put_autosuspend(
+					&usb_ld->usbdev->dev) < 0)
+					mif_debug(
+					"pm_runtime_put_autosuspend fail\n");
 			}
 		}
 		SET_SLAVE_WAKEUP(usb_ld->pdata, 1);
 		udelay(100);
 		SET_SLAVE_WAKEUP(usb_ld->pdata, 0);
+
+		/* if_usb_resume() is atomic. post_resume_work is
+		 * a kind of bottom halves
+		 */
+		/*
+		queue_delayed_work(system_nrt_wq, &usb_ld->post_resume_work, 0);
+		*/
+
 		return 0;
 	}
 
@@ -483,7 +543,7 @@ static int if_usb_reset_resume(struct usb_interface *intf)
 {
 	int ret;
 
-	pr_debug("%s\n", __func__);
+	mif_debug("\n");
 	ret = if_usb_resume(intf);
 	return ret;
 }
@@ -511,10 +571,13 @@ static void if_usb_disconnect(struct usb_interface *intf)
 
 	wake_up(&usb_ld->l2_wait);
 
+	/*
 	if (usb_ld->if_usb_connected) {
 		disable_irq_wake(usb_ld->pdata->irq_host_wakeup);
 		free_irq(usb_ld->pdata->irq_host_wakeup, usb_ld);
 	}
+	*/
+
 	usb_ld->if_usb_connected = 0;
 	usb_ld->flow_suspend = 1;
 
@@ -527,6 +590,9 @@ static void if_usb_disconnect(struct usb_interface *intf)
 
 	if (usb_ld->dev_count == 0) {
 		cancel_delayed_work_sync(&usb_ld->runtime_pm_work);
+		/*
+		cancel_delayed_work_sync(&usb_ld->post_resume_work);
+		*/
 		cancel_delayed_work_sync(&usb_ld->ld.tx_delayed_work);
 		usb_put_dev(usbdev);
 		usb_ld->usbdev = NULL;
@@ -568,8 +634,8 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 		goto out;
 	}
 
-	pr_info("%s: probe dev_id=%d usb_device_id(0x%p), usb_ld (0x%p)\n",
-				__func__, dev_id, id, usb_ld);
+	mif_info("probe dev_id=%d usb_device_id(0x%p), usb_ld (0x%p)\n",
+				dev_id, id, usb_ld);
 
 	usb_ld->usbdev = usbdev;
 
@@ -611,8 +677,7 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 			err = usb_driver_claim_interface(&if_usb_driver,
 					data_intf, usb_ld);
 			if (err < 0) {
-				pr_err("%s - failed to cliam usb interface\n",
-						__func__);
+				mif_err("failed to cliam usb interface\n");
 				goto out;
 			}
 		}
@@ -624,16 +689,18 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 		for (j = 0; j < URB_COUNT; j++) {
 			urb = usb_alloc_urb(0, GFP_KERNEL);
 			if (!urb) {
-				pr_err("%s: alloc urb fail\n", __func__);
+				mif_err("alloc urb fail\n");
 				err = -ENOMEM;
 				goto out2;
 			}
 
 			urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 			urb->transfer_buffer = usb_alloc_coherent(usbdev,
-				pipe->rx_buf_size, GFP_KERNEL, &urb->transfer_dma);
+				pipe->rx_buf_size, GFP_KERNEL,
+				&urb->transfer_dma);
 			if (!urb->transfer_buffer) {
-				pr_err("%s: Failed to allocate transfer buffer\n", __func__);
+				mif_err(
+				"Failed to allocate transfer buffer\n");
 				usb_free_urb(urb);
 				err = -ENOMEM;
 				goto out2;
@@ -655,31 +722,22 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 	usb_ld->host_wake_timeout_flag = 0;
 
 	if (gpio_get_value(usb_ld->pdata->gpio_phone_active)) {
-		pm_runtime_set_autosuspend_delay(
-				&usbdev->dev, AUTOSUSPEND_DELAY_MS);
+		int delay = AUTOSUSPEND_DELAY_MS;
+		pm_runtime_set_autosuspend_delay(&usbdev->dev, delay);
 		dev = &usb_ld->usbdev->dev;
 		if (dev->parent) {
 			dev_dbg(&usbdev->dev, "if_usb Runtime PM Start!!\n");
 			usb_enable_autosuspend(usb_ld->usbdev);
 		}
-		usb_ld->if_usb_connected = 1;
-		usb_ld->flow_suspend = 0;
-		err = request_threaded_irq(usb_ld->pdata->irq_host_wakeup,
-			NULL,
-			usb_resume_irq,
-			IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-			"modem_usb_wake",
-			usb_ld);
-		if (err)
-			pr_err("Failed to allocate an interrupt(%d)\n",
-					usb_ld->pdata->irq_host_wakeup);
 
 		enable_irq_wake(usb_ld->pdata->irq_host_wakeup);
 
+		usb_ld->flow_suspend = 0;
 		/* Queue work if skbs were pending before a disconnect/probe */
 		if (ld->sk_fmt_tx_q.qlen || ld->sk_raw_tx_q.qlen)
 			queue_delayed_work(ld->tx_wq, &ld->tx_delayed_work, 0);
 
+		usb_ld->if_usb_connected = 1;
 		usb_change_modem_state(usb_ld, STATE_ONLINE);
 	} else {
 		usb_change_modem_state(usb_ld, STATE_LOADER_DONE);
@@ -696,28 +754,49 @@ out:
 	return err;
 }
 
-static irqreturn_t usb_resume_irq(int irq, void *data)
+irqreturn_t usb_resume_irq(int irq, void *data)
 {
 	int ret;
 	struct usb_link_device *usb_ld = data;
-	int val;
+	int hwup;
+	static int wake_status = -1;
 	struct device *dev;
 
-	val = gpio_get_value(usb_ld->pdata->gpio_host_wakeup);
-	irq_set_irq_type(irq, val ? IRQF_TRIGGER_LOW : IRQF_TRIGGER_HIGH);
-	dev = &usb_ld->usbdev->dev;
-	wake_lock_timeout(&usb_ld->gpiolock, 100);
-
-	pr_debug("< H-WUP %d\n", val);
-
-	if (val == usb_ld->wake_status) {
-		pr_err("%s: Received spurious wake irq: %d", __func__, val);
+	hwup = gpio_get_value(usb_ld->pdata->gpio_host_wakeup);
+	if (hwup == wake_status) {
+		mif_err("Received spurious wake irq: %d", hwup);
 		return IRQ_HANDLED;
 	}
+	wake_status = hwup;
 
-	usb_ld->wake_status = val;
+	irq_set_irq_type(irq, hwup ? IRQF_TRIGGER_LOW : IRQF_TRIGGER_HIGH);
+	/*
+	 * exynos BSP has problem when using level interrupt.
+	 * If we change irq type from interrupt handler,
+	 * we can get level interrupt twice.
+	 * this is temporary solution until SYS.LSI resolve this problem.
+	 */
+	__raw_writel(eint_irq_to_bit(irq), S5P_EINT_PEND(EINT_REG_NR(irq)));
+	wake_lock_timeout(&usb_ld->gpiolock, 100);
 
-	if (val) {
+	mif_err("< H-WUP %d\n", hwup);
+
+	if (!link_pm_is_connected(usb_ld))
+		return IRQ_HANDLED;
+
+	if (hwup) {
+		dev = &usb_ld->usbdev->dev;
+		mif_info("runtime status=%d\n",
+				dev->power.runtime_status);
+
+		/* if usb3503 was on, usb_if was resumed by probe */
+		/*
+		if (has_hub(usb_ld) &&
+				(dev->power.runtime_status == RPM_ACTIVE ||
+				dev->power.runtime_status == RPM_RESUMING))
+			return IRQ_HANDLED;
+		*/
+
 		device_lock(dev);
 		if (dev->power.is_prepared || dev->power.is_suspended) {
 			pm_runtime_get_noresume(dev);
@@ -727,7 +806,7 @@ static irqreturn_t usb_resume_irq(int irq, void *data)
 		}
 		device_unlock(dev);
 		if (ret < 0) {
-			pr_err("%s pm_runtime_get fail (%d)\n", __func__, ret);
+			mif_err("pm_runtime_get fail (%d)\n", ret);
 			return IRQ_HANDLED;
 		}
 	} else {
@@ -763,7 +842,7 @@ static int if_usb_init(struct usb_link_device *usb_ld)
 
 	ret = usb_register(&if_usb_driver);
 	if (ret) {
-		pr_err("usb_register_driver() fail : %d\n", ret);
+		mif_err("usb_register_driver() fail : %d\n", ret);
 		return ret;
 	}
 
@@ -775,14 +854,14 @@ struct link_device *usb_create_link_device(void *data)
 	int ret;
 	struct modem_data *pdata;
 	struct platform_device *pdev = (struct platform_device *)data;
-	struct usb_link_device *usb_ld;
-	struct link_device *ld;
+	struct usb_link_device *usb_ld = NULL;
+	struct link_device *ld = NULL;
 
 	pdata = pdev->dev.platform_data;
 
 	usb_ld = kzalloc(sizeof(struct usb_link_device), GFP_KERNEL);
 	if (!usb_ld)
-		return NULL;
+		goto err;
 
 	INIT_LIST_HEAD(&usb_ld->list_of_io_devices);
 	skb_queue_head_init(&usb_ld->ld.sk_fmt_tx_q);
@@ -804,24 +883,41 @@ struct link_device *usb_create_link_device(void *data)
 		WQ_HIGHPRI | WQ_UNBOUND | WQ_RESCUER, 1);
 
 	if (!ld->tx_wq) {
-		pr_err("fail to create work Q.\n");
-		return NULL;
+		mif_err("fail to create work Q.\n");
+		goto err;
 	}
 
-	usb_ld->pdata->irq_host_wakeup = platform_get_irq(pdev, 1);
-	wake_lock_init(&usb_ld->gpiolock, WAKE_LOCK_SUSPEND, "modem_usb_gpio_wake");
-	wake_lock_init(&usb_ld->susplock, WAKE_LOCK_SUSPEND, "modem_usb_suspend_block");
+	usb_ld->pdata->irq_host_wakeup = gpio_to_irq(platform_get_irq(pdev, 1));
+	wake_lock_init(&usb_ld->gpiolock, WAKE_LOCK_SUSPEND,
+		"modem_usb_gpio_wake");
+	wake_lock_init(&usb_ld->susplock, WAKE_LOCK_SUSPEND,
+		"modem_usb_suspend_block");
 
 	INIT_DELAYED_WORK(&ld->tx_delayed_work, usb_tx_work);
 	INIT_DELAYED_WORK(&usb_ld->runtime_pm_work, runtime_pm_work);
+	/*
+	INIT_DELAYED_WORK(&usb_ld->post_resume_work, post_resume_work);
+	*/
 	INIT_DELAYED_WORK(&usb_ld->wait_enumeration, wait_enumeration_work);
 	INIT_WORK(&usb_ld->disconnect_work, if_usb_force_disconnect);
 
+	/* create link pm device */
+	ret = link_pm_init(usb_ld, data);
+	if (ret)
+		goto err;
+
 	ret = if_usb_init(usb_ld);
 	if (ret)
-		return NULL;
+		goto err;
 
 	return ld;
+err:
+	if (ld && ld->tx_wq)
+		destroy_workqueue(ld->tx_wq);
+
+	kfree(usb_ld);
+
+	return NULL;
 }
 
 static struct usb_driver if_usb_driver = {
@@ -841,6 +937,8 @@ static void __exit if_usb_exit(void)
 }
 
 
+/* lte specific functions */
+
 static int lte_wake_resume(struct device *pdev)
 {
 	struct modem_data *pdata = pdev->platform_data;
@@ -848,7 +946,7 @@ static int lte_wake_resume(struct device *pdev)
 
 	val = gpio_get_value(pdata->gpio_host_wakeup);
 	if (!val) {
-		pr_debug("%s: > S-WUP 1\n", __func__);
+		mif_debug("> S-WUP 1\n");
 		gpio_set_value(pdata->gpio_slave_wakeup, 1);
 	}
 
@@ -856,7 +954,7 @@ static int lte_wake_resume(struct device *pdev)
 }
 
 static const struct dev_pm_ops lte_wake_pm_ops = {
-	.resume     = lte_wake_resume,
+	.resume = lte_wake_resume,
 };
 
 static struct platform_driver lte_wake_driver = {

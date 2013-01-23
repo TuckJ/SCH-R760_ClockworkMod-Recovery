@@ -28,14 +28,9 @@
 #include <linux/regulator/machine.h>
 #include <linux/regulator/fixed.h>
 #include <linux/wl12xx.h>
-#include <linux/memblock.h>
 
 #include <mach/hardware.h>
 #include <mach/omap4-common.h>
-#include <mach/emif.h>
-#include <mach/lpddr2-elpida.h>
-#include <mach/dmm.h>
-
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -45,7 +40,6 @@
 #include <plat/common.h>
 #include <plat/usb.h>
 #include <plat/mmc.h>
-#include <plat/remoteproc.h>
 #include <video/omap-panel-generic-dpi.h>
 #include "timer-gp.h"
 
@@ -60,14 +54,6 @@
 #define GPIO_WIFI_IRQ		53
 #define HDMI_GPIO_HPD 60 /* Hot plug pin for HDMI */
 #define HDMI_GPIO_LS_OE 41 /* Level shifter for HDMI */
-
-
-#define PHYS_ADDR_SMC_SIZE	(SZ_1M * 3)
-#define PHYS_ADDR_SMC_MEM	(0x80000000 + SZ_1G - PHYS_ADDR_SMC_SIZE)
-#define OMAP_ION_HEAP_SECURE_INPUT_SIZE	(SZ_1M * 90)
-#define PHYS_ADDR_DUCATI_SIZE	(SZ_1M * 105)
-#define PHYS_ADDR_DUCATI_MEM	(PHYS_ADDR_SMC_MEM - PHYS_ADDR_DUCATI_SIZE - \
-				OMAP_ION_HEAP_SECURE_INPUT_SIZE)
 
 /* wl127x BT, FM, GPS connectivity chip */
 static int wl1271_gpios[] = {46, -1, -1};
@@ -165,11 +151,7 @@ static void __init omap4_ehci_init(void)
 
 static struct omap_musb_board_data musb_board_data = {
 	.interface_type		= MUSB_INTERFACE_UTMI,
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-	.mode			= MUSB_PERIPHERAL,
-#else
 	.mode			= MUSB_OTG,
-#endif
 	.power			= 100,
 };
 
@@ -398,24 +380,6 @@ static struct regulator_init_data omap4_panda_clk32kg = {
 	},
 };
 
-static void omap4_audio_conf(void)
-{
-	/* twl6040 naudint */
-	omap_mux_init_signal("sys_nirq2.sys_nirq2", \
-		OMAP_PIN_INPUT_PULLUP);
-}
-
-static struct twl4030_codec_audio_data twl6040_audio = {
-	/* Add audio only data */
-};
-
-static struct twl4030_codec_data twl6040_codec = {
-	.audio		= &twl6040_audio,
-	.audpwron_gpio	= 127,
-	.naudint_irq	= OMAP44XX_IRQ_SYS_2N,
-	.irq_base	= TWL6040_CODEC_IRQ_BASE,
-};
-
 static struct twl4030_platform_data omap4_panda_twldata = {
 	.irq_base	= TWL6030_IRQ_BASE,
 	.irq_end	= TWL6030_IRQ_END,
@@ -431,9 +395,6 @@ static struct twl4030_platform_data omap4_panda_twldata = {
 	.vaux3		= &omap4_panda_vaux3,
 	.clk32kg	= &omap4_panda_clk32kg,
 	.usb		= &omap4_usbphy_data,
-
-	/* children */
-	.codec		= &twl6040_codec,
 };
 
 /*
@@ -536,14 +497,71 @@ static struct omap_board_mux board_mux[] __initdata = {
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 
-static inline void __init board_serial_init(void)
+static struct omap_device_pad serial2_pads[] __initdata = {
+	OMAP_MUX_STATIC("uart2_cts.uart2_cts",
+			 OMAP_PIN_INPUT_PULLUP | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart2_rts.uart2_rts",
+			 OMAP_PIN_OUTPUT | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart2_rx.uart2_rx",
+			 OMAP_PIN_INPUT_PULLUP | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart2_tx.uart2_tx",
+			 OMAP_PIN_OUTPUT | OMAP_MUX_MODE0),
+};
+
+static struct omap_device_pad serial3_pads[] __initdata = {
+	OMAP_MUX_STATIC("uart3_cts_rctx.uart3_cts_rctx",
+			 OMAP_PIN_INPUT_PULLUP | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart3_rts_sd.uart3_rts_sd",
+			 OMAP_PIN_OUTPUT | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart3_rx_irrx.uart3_rx_irrx",
+			 OMAP_PIN_INPUT | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart3_tx_irtx.uart3_tx_irtx",
+			 OMAP_PIN_OUTPUT | OMAP_MUX_MODE0),
+};
+
+static struct omap_device_pad serial4_pads[] __initdata = {
+	OMAP_MUX_STATIC("uart4_rx.uart4_rx",
+			 OMAP_PIN_INPUT | OMAP_MUX_MODE0),
+	OMAP_MUX_STATIC("uart4_tx.uart4_tx",
+			 OMAP_PIN_OUTPUT | OMAP_MUX_MODE0),
+};
+
+static struct omap_board_data serial2_data __initdata = {
+	.id             = 1,
+	.pads           = serial2_pads,
+	.pads_cnt       = ARRAY_SIZE(serial2_pads),
+};
+
+static struct omap_board_data serial3_data __initdata = {
+	.id             = 2,
+	.pads           = serial3_pads,
+	.pads_cnt       = ARRAY_SIZE(serial3_pads),
+};
+
+static struct omap_board_data serial4_data __initdata = {
+	.id             = 3,
+	.pads           = serial4_pads,
+	.pads_cnt       = ARRAY_SIZE(serial4_pads),
+};
+
+static inline void board_serial_init(void)
 {
-	omap_serial_init();
+	struct omap_board_data bdata;
+	bdata.flags     = 0;
+	bdata.pads      = NULL;
+	bdata.pads_cnt  = 0;
+	bdata.id        = 0;
+	/* pass dummy data for UART1 */
+	omap_serial_init_port(&bdata);
+
+	omap_serial_init_port(&serial2_data);
+	omap_serial_init_port(&serial3_data);
+	omap_serial_init_port(&serial4_data);
 }
 #else
 #define board_mux	NULL
 
-static inline void __init board_serial_init(void)
+static inline void board_serial_init(void)
 {
 	omap_serial_init();
 }
@@ -565,7 +583,7 @@ static void omap4_panda_disable_dvi(struct omap_dss_device *dssdev)
 
 /* Using generic display panel */
 static struct panel_generic_dpi_data omap4_dvi_panel = {
-	.name			= "generic_720p",
+	.name			= "generic",
 	.platform_enable	= omap4_panda_enable_dvi,
 	.platform_disable	= omap4_panda_disable_dvi,
 };
@@ -651,23 +669,6 @@ static struct omap_dss_board_info omap4_panda_dss_data = {
 	.default_device	= &omap4_panda_dvi_device,
 };
 
-/*
- * LPDDR2 Configeration Data:
- * The memory organisation is as below :
- *	EMIF1 - CS0 -	2 Gb
- *		CS1 -	2 Gb
- *	EMIF2 - CS0 -	2 Gb
- *		CS1 -	2 Gb
- *	--------------------
- *	TOTAL -		8 Gb
- *
- * Same devices installed on EMIF1 and EMIF2
- */
-static __initdata struct emif_device_details emif_devices = {
-	.cs0_device = &lpddr2_elpida_2G_S4_dev,
-	.cs1_device = &lpddr2_elpida_2G_S4_dev
-};
-
 void omap4_panda_display_init(void)
 {
 	int r;
@@ -684,8 +685,6 @@ static void __init omap4_panda_init(void)
 {
 	int package = OMAP_PACKAGE_CBS;
 
-	omap_emif_setup_device_details(&emif_devices, &emif_devices);
-
 	if (omap_rev() == OMAP4430_REV_ES1_0)
 		package = OMAP_PACKAGE_CBL;
 	omap4_mux_init(board_mux, NULL, package);
@@ -694,21 +693,12 @@ static void __init omap4_panda_init(void)
 		pr_err("error setting wl12xx data\n");
 
 	omap4_panda_i2c_init();
-	omap4_audio_conf();
 	platform_add_devices(panda_devices, ARRAY_SIZE(panda_devices));
-/*
- * 	This is temporaray. With WLAN regsitering, we see that UART2 is not
- * 	idling on panda and CORE RET is not happening. So removing this FTM.
- * 	Later will be enabled.
- *
- *	platform_device_register(&omap_vwlan_device);
- */
+	platform_device_register(&omap_vwlan_device);
 	board_serial_init();
 	omap4_twl6030_hsmmc_init(mmc);
 	omap4_ehci_init();
 	usb_musb_init(&musb_board_data);
-
-	omap_dmm_init();
 	omap4_panda_display_init();
 }
 
@@ -718,22 +708,10 @@ static void __init omap4_panda_map_io(void)
 	omap44xx_map_common_io();
 }
 
-static void __init omap4_panda_reserve(void)
-{
-	/* do the static reservations first */
-	memblock_remove(PHYS_ADDR_SMC_MEM, PHYS_ADDR_SMC_SIZE);
-	memblock_remove(PHYS_ADDR_DUCATI_MEM, PHYS_ADDR_DUCATI_SIZE);
-	/* ipu needs to recognize secure input buffer area as well */
-	omap_ipu_set_static_mempool(PHYS_ADDR_DUCATI_MEM, PHYS_ADDR_DUCATI_SIZE +
-					OMAP_ION_HEAP_SECURE_INPUT_SIZE);
-
-	omap_reserve();
-}
-
 MACHINE_START(OMAP4_PANDA, "OMAP4 Panda board")
 	/* Maintainer: David Anders - Texas Instruments Inc */
 	.boot_params	= 0x80000100,
-	.reserve	= omap4_panda_reserve,
+	.reserve	= omap_reserve,
 	.map_io		= omap4_panda_map_io,
 	.init_early	= omap4_panda_init_early,
 	.init_irq	= gic_init_irq,

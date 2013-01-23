@@ -28,7 +28,7 @@
  */
 
 #include <linux/i2c.h>
-#include "mpu_v333.h"
+#include "mpu.h"
 
 int sensor_i2c_write(struct i2c_adapter *i2c_adap,
 		     unsigned char address,

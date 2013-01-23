@@ -10,9 +10,14 @@ config ION_TEGRA
 	help
 	  Choose this option if you wish to use ion on an nVidia Tegra.
 
-config ION_OMAP
-	tristate "Ion for OMAP"
-	depends on ARCH_OMAP4 && ION && TI_TILER
+config ION_EXYNOS
+	tristate "Ion for Exynos"
+	depends on ARCH_EXYNOS && ION
+	select CMA
 	help
-	  Choose this option if you wish to use ion on OMAP4.
+	  Choose this option if you wish to use ion on a Samsung Exynos.
 
+config ION_EXYNOS_CONTIGHEAP_SIZE
+	int "Size in Kilobytes of memory pool of EXYNOS_CONTIG_HEAP"
+	depends on ION_EXYNOS && CMA
+	default 45056

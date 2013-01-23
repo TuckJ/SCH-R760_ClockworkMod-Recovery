@@ -76,9 +76,9 @@ static int l2cap_ertm_data_rcv(struct sock *sk, struct sk_buff *skb);
 
 /* BEGIN SS_BLUEZ_BT +kjh 2011.06.23 : */
 /* workaround for a2dp chopping in multi connection. */
-static struct l2cap_conn *av_conn ;
-static struct l2cap_conn *hid_conn ;
-static struct l2cap_conn *rfc_conn ;
+static struct l2cap_conn *av_conn;
+static struct l2cap_conn *hid_conn;
+static struct l2cap_conn *rfc_conn;
 /* END SS_BLUEZ_BT */
 
 
@@ -320,7 +320,7 @@ static void __l2cap_chan_add(struct l2cap_conn *conn, struct l2cap_chan *chan)
 
 /* BEGIN SS_BLUEZ_BT +kjh 2011.06.23 : */
 /* workaround for a2dp chopping in multi connection.*/
-/* todo : now, we can't check obex properly.*/
+/* todo : now, we can't check obex properly. */
 	switch (chan->psm) {
 	case 0x03:
 		rfc_conn = conn;
@@ -417,12 +417,11 @@ static void l2cap_chan_del(struct l2cap_chan *chan, int err)
 	default:
 		break;
 	}
-		/* END SS_BLUEZ_BT */
+/* END SS_BLUEZ_BT */
 
-		if (conn->hcon) {
+		if (conn->hcon)
 			conn->hcon->out = 1;
-			hci_conn_put(conn->hcon);
-		}
+		hci_conn_put(conn->hcon);
 	}
 
 	l2cap_state_change(chan, BT_CLOSED);

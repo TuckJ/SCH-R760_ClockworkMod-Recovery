@@ -32,6 +32,12 @@
 #define MPUIRQ_SET_ACCEL_INFO        (6)
 #define MPUIRQ_SET_FREQUENCY_DIVIDER (7)
 
+#ifdef FEATURE_GYRO_SELFTEST_INTERRUPT
+#define MPUIRQ_GET_MPUIRQ_JIFFIES       (8)
+#define MPUIRQ_SET_SELFTEST_IRQ_HANDLER (9)
+#define MPUIRQ_SET_MPUIRQ_HANDLER       (10)
+#endif
+
 #ifdef __KERNEL__
 
 void mpuirq_exit(void);

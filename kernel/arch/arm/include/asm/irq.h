@@ -3,8 +3,6 @@
 
 #include <mach/irqs.h>
 
-#define ARCH_HAS_NMI_WATCHDOG
-
 #ifndef irq_canonicalize
 #define irq_canonicalize(i)	(i)
 #endif

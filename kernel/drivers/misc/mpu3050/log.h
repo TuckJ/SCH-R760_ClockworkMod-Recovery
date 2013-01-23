@@ -1,18 +1,22 @@
 /*
- * Copyright (C) 2010 InvenSense Inc
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+    Copyright (C) 1995-97 Simon G. Vogl
+    Copyright (C) 1998-99 Frodo Looijaard <frodol@dds.nl>
+    Copyright (C) 2003 Greg Kroah-Hartman <greg@kroah.com>
+    Copyright (C) 2010 InvenSense Corporation, All Rights Reserved.
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 /*
  * C/C++ logging functions.  See the logging documentation for API details.
@@ -228,7 +232,7 @@ extern "C" {
  */
 #ifndef MPL_LOG
 #define MPL_LOG(priority, tag, ...) \
-	MPL_LOG_PRI(priority, tag, __VA_ARGS__)
+    MPL_LOG_PRI(priority, tag, __VA_ARGS__)
 #endif
 
 /*
@@ -253,13 +257,13 @@ extern "C" {
 #ifndef MPL_LOG_PRI_VA
 #ifdef ANDROID
 #define MPL_LOG_PRI_VA(priority, tag, fmt, args) \
-	android_vprintLog(priority, NULL, tag, fmt, args)
+    android_vprintLog(priority, NULL, tag, fmt, args)
 #elif defined __KERNEL__
 #define MPL_LOG_PRI_VA(priority, tag, fmt, args) \
-	vprintk(MPL_##priority tag fmt, args)
+    vprintk(MPL_##priority tag fmt, args)
 #else
 #define MPL_LOG_PRI_VA(priority, tag, fmt, args) \
-	_MLPrintVaLog(priority, NULL, tag, fmt, args)
+    _MLPrintVaLog(priority, NULL, tag, fmt, args)
 #endif
 #endif
 

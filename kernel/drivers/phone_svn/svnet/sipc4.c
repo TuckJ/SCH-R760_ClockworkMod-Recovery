@@ -18,6 +18,12 @@
  * 02110-1301 USA
  */
 
+/* #define DEBUG */
+
+#if defined(DEBUG)
+#define NOISY_DEBUG
+#endif
+
 #include "pdp.h"
 #include "sipc.h"
 #include "sipc4.h"
@@ -40,13 +46,28 @@
 #endif
 #endif
 
+#if defined(CONFIG_KERNEL_DEBUG_SEC)
+#include <linux/kernel_sec_common.h>
+#define ERRMSG "Unknown CP Crash"
+static char cp_errmsg[65];
+static void _go_dump(struct sipc *si);
+#else
 #define _go_dump(si) do { } while (0)
+#endif
+
+#if defined(NOISY_DEBUG)
+static struct device *_dev;
+#  define _dbg(format, arg...) \
+	dev_dbg(_dev, format, ## arg)
+#else
+#  define _dbg(format, arg...) \
+	do { } while (0)
+#endif
 
 const char *sipc_version = "4.1";
 
 static const char hdlc_start[1] = { HDLC_START };
 static const char hdlc_end[1] = { HDLC_END };
-static int cp_state = 1;
 
 struct mailbox_data {
 	u16 mask_send;
@@ -91,6 +112,14 @@ struct ringbuf {
 	struct ringbuf_cont *cont;
 	struct ringbuf_info *info;
 };
+/*
+#define rb_size info->size
+#define rb_read info->read
+#define rb_out_head cont->out_head
+#define rb_out_tail cont->out_tail
+#define rb_in_head cont->in_head
+#define rb_in_tail cont->in_tail
+*/
 
 static int _read_fmt(struct sipc *si, int inbuf, struct ringbuf *rb);
 static int _read_raw(struct sipc *si, int inbuf, struct ringbuf *rb);
@@ -171,9 +200,11 @@ struct sipc {
 	struct sk_buff_head rfs_rx;
 };
 
+/* sizeof(struct phonethdr) + NET_SKB_PAD > SMP_CACHE_BYTES */
+
+/* SMP_CACHE_BYTES > sizeof(struct phonethdr) + NET_SKB_PAD */
 #define RFS_MTU (PAGE_SIZE - SMP_CACHE_BYTES)
 #define RFS_TX_RATE 4
-#define MAILBOX_INIT 0xc8
 
 /* set at storage device */
 unsigned int factory_test_force_sleep;
@@ -226,9 +257,42 @@ static const struct attribute_group pdp_group = {
 	.attrs = pdp_attributes,
 };
 
+
+#if defined(NOISY_DEBUG)
+#define DUMP_LIMIT 32
+static char dump_buf[64];
+void _dbg_dump(u8 *buf, int size)
+{
+	int i;
+	int len = 0;
+
+	if (!buf)
+		return;
+
+	if (size > DUMP_LIMIT)
+		size = DUMP_LIMIT;
+
+	for (i = 0; i < 32 && i < size; i++) {
+		len += sprintf(&dump_buf[len], "%02x ", buf[i]);
+		if ((i & 0xf) == 0xf) {
+			dump_buf[len] = '\0';
+			_dbg("dump %04x [ %s]\n", (i>>4), dump_buf);
+			len = 0;
+		}
+	}
+	if (len) {
+		dump_buf[len] = '\0';
+		_dbg("dump %04x [ %s]\n", i, dump_buf);
+	}
+}
+#else
+#  define _dbg_dump(buf, size) do { } while (0)
+#endif
+
+static int cp_state = 1;
 void modem_state_changed(int state)
 {
-	pr_info("cp state change. state : %d\n", state);
+	printk(KERN_ERR "cp state change. state : %d\n", state);
 
 	cp_state = state;
 }
@@ -278,6 +342,11 @@ static void _check_buffer(struct sipc *si)
 	int i;
 	u32 mailbox;
 
+#if 0
+	i = onedram_read_sem();
+	if (i != 0x1)
+		return;
+#endif
 	i = _get_auth_try();
 	if (i)
 		return;
@@ -325,11 +394,11 @@ static void _do_command(struct sipc *si, u32 mailbox)
 				| AP_OS_ANDROID);
 		break;
 	case MBC_RESET:
-		pr_info("svnet reset mailbox msg : 0x%08x\n", mailbox);
+		printk(KERN_ERR "svnet reset mailbox msg : 0x%08x\n", mailbox);
 		si->queue(SIPC_RESET_MB, si->queue_data);
 		break;
 	case MBC_ERR_DISPLAY:
-		pr_err("svnet error display mailbox msg : 0x%08x\n",
+		printk(KERN_ERR "svnet error display mailbox msg : 0x%08x\n",
 					mailbox);
 		si->queue(SIPC_EXIT_MB, si->queue_data);
 		break;
@@ -349,6 +418,11 @@ void sipc_handler(u32 mailbox, void *data)
 		return;
 
 	dev_dbg(&si->svndev->dev, "recv mailbox %x\n", mailbox);
+
+#if defined(CONFIG_KERNEL_DEBUG_SEC)
+	if (mailbox == KERNEL_SEC_DUMP_AP_DEAD_ACK)
+		kernel_sec_set_cp_ack();
+#endif
 
 	if ((mailbox & MB_VALID) == 0) {
 		dev_err(&si->svndev->dev, "Invalid mailbox message: %x\n",
@@ -400,15 +474,15 @@ static void _init_proc(struct sipc *si)
 	if (r)
 		return;
 
-	mailbox = MAILBOX_INIT;
+	mailbox = 0xc8;
 	sipc_handler(mailbox, si);
 }
 
-struct sipc *sipc_open(void (*queue)(u32, void *), struct net_device *ndev)
+struct sipc *sipc_open(void (*queue)(u32, void*), struct net_device *ndev)
 {
 	struct sipc *si;
 	struct resource *res;
-	int r, error;
+	int r;
 	void *onedram_vbase;
 
 	if (!queue || !ndev)
@@ -422,22 +496,22 @@ struct sipc *sipc_open(void (*queue)(u32, void *), struct net_device *ndev)
 	si->frag_buf = vmalloc(FMT_SZ);
 	memset(si->frag_buf, 0x00, FMT_SZ);
 	if (!si->frag_buf) {
-		error = -ENOMEM;
-		goto err;
+		sipc_close(&si);
+		return ERR_PTR(-ENOMEM);
 	}
 	INIT_LIST_HEAD(&si->frag_map.head);
 
 	res = onedram_request_region(0, SIPC_MAP_SIZE, SIPC_NAME);
 	if (!res) {
-		error = -EBUSY;
-		goto err;
+		sipc_close(&si);
+		return ERR_PTR(-EBUSY);
 	}
 	si->res = res;
 
 	r = onedram_register_handler(sipc_handler, si);
 	if (r) {
-		error = r;
-		goto err;
+		sipc_close(&si);
+		return ERR_PTR(r);
 	}
 	si->queue = queue;
 	si->queue_data = ndev;
@@ -449,10 +523,14 @@ struct sipc *sipc_open(void (*queue)(u32, void *), struct net_device *ndev)
 
 	r = sysfs_create_group(&si->svndev->dev.kobj, &pdp_group);
 	if (r) {
-		error = r;
-		goto err;
+		sipc_close(&si);
+		return ERR_PTR(r);
 	}
 	si->group = &pdp_group;
+
+#if defined(NOISY_DEBUG)
+	_dev = &si->svndev->dev;
+#endif
 
 	onedram_get_vbase(&onedram_vbase);
 
@@ -469,10 +547,6 @@ struct sipc *sipc_open(void (*queue)(u32, void *), struct net_device *ndev)
 	dev_dbg(&si->svndev->dev, "sipc_open Done.\n");
 
 	return si;
-
-err:
-	sipc_close(&si);
-	return ERR_PTR(error);
 }
 
 static void clear_pdp_wq(struct work_struct *work)
@@ -532,7 +606,6 @@ void sipc_close(struct sipc **psi)
 		onedram_release_region(0, SIPC_MAP_SIZE);
 
 	kfree(si);
-
 	*psi = NULL;
 }
 
@@ -552,9 +625,13 @@ static int __write(struct ringbuf *rb, u8 *buf, unsigned int size)
 	int len = 0;
 
 	if (!cp_state) {
-		pr_err("__write : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "__write : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
+
+	_dbg("%s b: size %u head %u tail %u\n", __func__,
+			size, rb->cont->out_head, rb->cont->out_tail);
+	_dbg_dump(buf, size);
 
 	while (1) {
 		c = CIRC_SPACE_TO_END(rb->cont->out_head,
@@ -571,6 +648,9 @@ static int __write(struct ringbuf *rb, u8 *buf, unsigned int size)
 		len += c;
 	}
 
+	_dbg("%s a: size %u head %u tail %u\n", __func__,
+			len, rb->cont->out_head, rb->cont->out_tail);
+
 	return len;
 }
 
@@ -586,6 +666,8 @@ static int _write_raw_buf(struct ringbuf *rb, int res, struct sk_buff *skb)
 {
 	int len;
 	struct raw_hdr h;
+
+	_dbg("%s: packet %p res 0x%02x\n", __func__, skb, res);
 
 	len = skb->len + sizeof(h);
 
@@ -604,9 +686,11 @@ static int _write_raw_skb(struct ringbuf *rb, int res, struct sk_buff *skb)
 	char *b;
 
 	if (!cp_state) {
-		pr_err("_write_raw_skb : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "_write_raw_skb : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
+
+	_dbg("%s: packet %p res 0x%02x\n", __func__, skb, res);
 
 	b = skb_put(skb, sizeof(hdlc_end));
 	memcpy(b, hdlc_end, sizeof(hdlc_end));
@@ -651,6 +735,7 @@ static int _write_rfs_buf(struct ringbuf *rb, struct sk_buff *skb)
 {
 	int len;
 
+	_dbg("%s: packet %p\n", __func__, skb);
 	len  = __write(rb, (u8 *)hdlc_start, sizeof(hdlc_start));
 	len += __write(rb, skb->data, skb->len);
 	len += __write(rb, (u8 *)hdlc_end, sizeof(hdlc_end));
@@ -663,10 +748,11 @@ static int _write_rfs_skb(struct ringbuf *rb, struct sk_buff *skb)
 	char *b;
 
 	if (!cp_state) {
-		pr_err("_write_rfs_skb : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "_write_rfs_skb : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
 
+	_dbg("%s: packet %p\n", __func__, skb);
 	b = skb_put(skb, sizeof(hdlc_end));
 	memcpy(b, hdlc_end, sizeof(hdlc_end));
 
@@ -705,7 +791,7 @@ static int _write_fmt_buf(char *frag_buf, struct ringbuf *rb,
 	struct fmt_hdr *h;
 
 	if (!cp_state) {
-		pr_err("_write_fmt_buf : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "_write_fmt_buf : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
 
@@ -741,6 +827,9 @@ static int _write_fmt(struct sipc *si, struct ringbuf *rb, struct sk_buff *skb)
 
 	len = 0;
 	remain = skb->len - fi->offset;
+
+	_dbg("%s: packet %p length %d sent %d\n",
+		__func__, skb, skb->len, fi->offset);
 
 	while (remain > 0) {
 		int wlen;
@@ -818,6 +907,7 @@ static int _write(struct sipc *si, int res, struct sk_buff *skb, u32 *mailbox)
 	if (r > 0)
 		*mailbox |= mb_data[rid].mask_send;
 
+	_dbg("%s: return %d\n", __func__, r);
 	return r;
 }
 
@@ -862,7 +952,7 @@ int sipc_write(struct sipc *si, struct sk_buff_head *sbh)
 	r = _get_auth();
 	if (r) {
 		if (factory_test_force_sleep) {
-			pr_info("tx ignored for factory force sleep\n");
+			printk(KERN_ERR "tx ignored for factory force sleep\n");
 			skb_queue_purge(sbh);
 			return 0;
 		} else {
@@ -923,9 +1013,12 @@ extern int __read(struct ringbuf *rb, unsigned char *buf, unsigned int size)
 	unsigned char *p = buf;
 
 	if (!cp_state) {
-		pr_err("__read : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "__read : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
+
+	_dbg("%s b: size %u head %u tail %u\n", __func__,
+			size, rb->cont->in_head, rb->cont->in_tail);
 
 	while (1) {
 		c = CIRC_CNT_TO_END(rb->cont->in_head,
@@ -943,6 +1036,10 @@ extern int __read(struct ringbuf *rb, unsigned char *buf, unsigned int size)
 		size -= c;
 		len += c;
 	}
+
+	_dbg("%s a: size %u head %u tail %u\n", __func__,
+			len, rb->cont->in_head, rb->cont->in_tail);
+	_dbg_dump(buf, len);
 
 	return len;
 }
@@ -983,6 +1080,7 @@ static inline void _phonet_rx(struct net_device *ndev,
 	if (r != NET_RX_SUCCESS)
 		dev_err(&ndev->dev, "phonet rx error: %d\n", r);
 
+	_dbg("%s: res 0x%02x packet %p len %d\n", __func__, res, skb, skb->len);
 }
 
 static int _read_pn(struct net_device *ndev, struct ringbuf *rb, int len,
@@ -992,6 +1090,8 @@ static int _read_pn(struct net_device *ndev, struct ringbuf *rb, int len,
 	struct sk_buff *skb;
 	char *p;
 	int read_len = len + sizeof(hdlc_end);
+
+	_dbg("%s: res 0x%02x data %d\n", __func__, res, len);
 
 	skb = netdev_alloc_skb(ndev, read_len + sizeof(struct phonethdr));
 	if (unlikely(!skb))
@@ -1096,9 +1196,11 @@ static int _read_rfs_data(struct sipc *si, struct ringbuf *rb, int len,
 	struct net_device *ndev = si->svndev;
 
 	if (!cp_state) {
-		pr_err("_read_rfs_data : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "_read_rfs_data : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
+
+	_dbg("%s: %d bytes\n", __func__, len);
 
 	/* alloc sk_buffs */
 	r = _alloc_rfs(ndev, &list, len + sizeof(struct rfs_hdr));
@@ -1142,6 +1244,8 @@ static int _read_pdp(struct ringbuf *rb, int len,
 	int read_len = len + sizeof(hdlc_end);
 	struct net_device *ndev;
 
+	_dbg("%s: res 0x%02x data %d\n", __func__, res, len);
+
 	mutex_lock(&pdp_mutex);
 
 	ndev = pdp_devs[PDP_ID(res)];
@@ -1175,6 +1279,8 @@ static int _read_pdp(struct ringbuf *rb, int len,
 	skb->protocol = __constant_htons(ETH_P_IP);
 
 	skb_reset_mac_header(skb);
+
+	_dbg("%s: pdp packet %p len %d\n", __func__, skb, skb->len);
 
 	r = netif_rx_ni(skb);
 	if (r != NET_RX_SUCCESS)
@@ -1286,7 +1392,7 @@ static int _fill_skb(struct sk_buff *skb, struct frag_list *fl)
 	char *p;
 
 	if (!cp_state) {
-		pr_err("_fill_skb : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "_fill_skb : cp_state : %d\n", cp_state);
 		return -EPERM;
 	}
 
@@ -1385,6 +1491,8 @@ static int _read_fmt_frag(struct frag_head *fh, struct fmt_hdr *h,
 	data_len = h->len - sizeof(struct fmt_hdr);
 	read_len = data_len + sizeof(hdlc_end);
 
+	_dbg("%s: data %d\n", __func__, data_len);
+
 	fl = _find_frag_list(h->control, fh);
 	if (!fl)
 		fl = _create_frag_list(h->control, fh);
@@ -1410,6 +1518,9 @@ static int _read_fmt_frag(struct frag_head *fh, struct fmt_hdr *h,
 	fb->len += data_len;
 	fl->len += data_len;
 
+	_dbg("%s: fl %p len %d fb %p ptr %p len %d\n", __func__,
+			fl, fl->len, fb, fb->ptr, fb->len);
+
 	return r;
 }
 
@@ -1430,6 +1541,8 @@ static int _read_fmt_last(struct frag_head *fh, struct fmt_hdr *h,
 	fl = _find_frag_list(h->control & FMT_ID_MASK, fh);
 	if (fl)
 		total_len += fl->len;
+
+	_dbg("%s: total %d data %d\n", __func__, total_len, data_len);
 
 	skb = netdev_alloc_skb(ndev, total_len
 			+ sizeof(struct phonethdr) + sizeof(hdlc_end));
@@ -1520,6 +1633,9 @@ int sipc_read(struct sipc *si, u32 mailbox, int *cond)
 		int inbuf;
 		struct ringbuf *rb;
 
+/*		if (!check_mailbox(mailbox, i))
+			continue; */
+
 		rb = &si->rb[i];
 		inbuf = CIRC_CNT(rb->cont->in_head,
 			rb->cont->in_tail, rb->info->size);
@@ -1530,6 +1646,8 @@ int sipc_read(struct sipc *si, u32 mailbox, int *cond)
 			_fmt_wakelock_timeout();
 		else
 			_non_fmt_wakelock_timeout();
+
+		_dbg("%s: %d bytes in %d\n", __func__, inbuf, i);
 
 		r = rb->info->read(si, inbuf, rb);
 		if (r < 0) {
@@ -1600,8 +1718,7 @@ static inline ssize_t _debug_show_buf(struct sipc *si, char *buf)
 			rb->cont->in_tail, rb->info->size);
 		outbuf = CIRC_CNT(rb->cont->out_head,
 			rb->cont->out_tail, rb->info->size);
-		p += sprintf(p,
-		"%d\tSize\t%8u\n\tIn\t%8u\t%8u\t%8u\n\tOut\t%8u\t%8u\t%8u\n",
+		p += sprintf(p, "%d\tSize\t%8u\n\tIn\t%8u\t%8u\t%8u\n\tOut\t%8u\t%8u\t%8u\n",
 				i, rb->info->size,
 				rb->cont->in_head, rb->cont->in_tail, inbuf,
 				rb->cont->out_head, rb->cont->out_tail, outbuf);
@@ -1656,7 +1773,7 @@ static void test_copy_buf(struct sipc *si, int idx)
 		return;
 
 	if (!cp_state) {
-		pr_err("test_copy_buf : cp_state : %d\n", cp_state);
+		printk(KERN_ERR "test_copy_buf : cp_state : %d\n", cp_state);
 		return;
 	}
 
@@ -1701,10 +1818,10 @@ int sipc_whitelist(struct sipc *si, const char *buf, size_t count)
 	int r;
 	struct ringbuf *rb;
 
-	pr_info("[%s]\n", __func__);
+	printk(KERN_ERR "[%s]\n", __func__);
 
 	if (factory_test_force_sleep) {
-		pr_info("[%s]factory test\n", __func__);
+		printk(KERN_ERR "[%s]factory test\n", __func__);
 		return count;
 	}
 
@@ -1718,7 +1835,7 @@ int sipc_whitelist(struct sipc *si, const char *buf, size_t count)
 	rb = (struct ringbuf *)&si->rb[IPCIDX_FMT];
 
 	/* write direct full-established-packet to buf */
-	r =  __write(rb, (u8 *)buf, (unsigned int)count);
+	r =  __write(rb, (u8 *) buf, (unsigned int)count);
 
 	_req_rel_auth(si);
 	_put_auth(si);
@@ -1734,9 +1851,9 @@ int sipc_check_skb(struct sipc *si, struct sk_buff *skb)
 	ph = pn_hdr(skb);
 
 	if (ph->pn_res == PN_CMD)
-		return true;
+		return 1;
 
-	return false;
+	return 0;
 }
 
 int sipc_do_cmd(struct sipc *si, struct sk_buff *skb)
@@ -1966,5 +2083,37 @@ static ssize_t store_resume(struct device *d,
 
 void sipc_ramdump(struct sipc *si)
 {
+#if defined(CONFIG_KERNEL_DEBUG_SEC)
+	/* silent reset at debug level low */
+	if (kernel_sec_get_debug_level() == KERNEL_SEC_DEBUG_LEVEL_LOW)
+		return;
+#endif
 	_go_dump(si);
 }
+
+#if defined(CONFIG_KERNEL_DEBUG_SEC)
+static void _go_dump(struct sipc *si)
+{
+	int r;
+	t_kernel_sec_mmu_info mmu_info;
+
+	memset(cp_errmsg, 0, sizeof(cp_errmsg));
+
+	r = _get_auth();
+	if (r)
+		strcpy(cp_errmsg, ERRMSG);
+	else {
+		char *p;
+		p = (char *)si->map + FATAL_DISP;
+		memcpy(cp_errmsg, p, sizeof(cp_errmsg));
+	}
+
+	printk(KERN_ERR "CP Dump Cause - %s\n", cp_errmsg);
+
+	kernel_sec_set_upload_magic_number();
+	kernel_sec_get_mmu_reg_dump(&mmu_info);
+	kernel_sec_set_upload_cause(UPLOAD_CAUSE_CP_ERROR_FATAL);
+	kernel_sec_hw_reset(false);
+
+}
+#endif

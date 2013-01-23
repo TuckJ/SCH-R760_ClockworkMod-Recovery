@@ -18,6 +18,14 @@ config SUSPEND_FREEZER
 
 	  Turning OFF this setting is NOT recommended! If in doubt, say Y.
 
+config PM_WATCHDOG_TIMEOUT
+	bool "PM Watchdog timeout"
+	depends on CPU_EXYNOS4210
+	default y
+	---help---
+	  Enable PM watchdog timer to catch lockup during early_suspend,
+	  late_resume and suspend_finish.
+
 config HAS_WAKELOCK
 	bool
 
@@ -294,10 +302,6 @@ config PM_OPP
 config PM_RUNTIME_CLK
 	def_bool y
 	depends on PM_RUNTIME && HAVE_CLK
-
-config CPU_PM
-	bool
-	depends on SUSPEND || CPU_IDLE
 
 config SUSPEND_TIME
 	bool "Log time spent in suspend"

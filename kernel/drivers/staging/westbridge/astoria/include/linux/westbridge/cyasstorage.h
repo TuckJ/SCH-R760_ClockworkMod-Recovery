@@ -2749,7 +2749,57 @@ cy_as_sdio_resume(
 	uint8_t		 *data_p
 	);
 
+/* Summary
+   Change the operating clock frequency on the SD port.
 
+   Description
+   This function is used to dynamically change the operating clock
+   frequency on the SD/MMC port(s) of the West Bridge device.  This
+   function should only be used in consultation with Cypress support,
+   as setting random clock values can cause errors.
+
+   The device firmware does not remember the clock value specified,
+   and will only make an instantaneous change to the frequency. If
+   the SD/MMC card has to be re-initialized due to a remove/insert
+   event or due to an access error, the frequency will be changed
+   back to the default value.
+
+   * Valid in Asynchronous Callback: Yes
+   * Valid on Antioch device: Yes
+
+   Returns
+   * CY_AS_ERROR_SUCCESS - the media information was returned
+   * CY_AS_ERROR_INVALID_HANDLE - an invalid handle was passed in
+   * CY_AS_ERROR_NOT_CONFIGURED - the West Bridge device has not
+     been configured
+   * CY_AS_ERROR_NO_FIRMWARE - the firmware has not been loaded
+     into West Bridge
+   * CY_AS_ERROR_NOT_RUNNING - the storage stack has not been
+     started
+   * CY_AS_ERROR_IN_SUSPEND - the West Bridge device is in suspend mode
+   * CY_AS_ERROR_TIMEOUT - a timeout occurred communicating with the
+     West Bridge device
+   * CY_AS_ERROR_OUT_OF_MEMORY - insufficient memory available
+   * CY_AS_ERROR_INVALID_RESPONSE - an error message was recieved from
+     the firmware
+*/
+cy_as_return_status_t
+cy_as_storage_change_sd_frequency (
+        /* Handle to the West Bridge device. */
+        cy_as_device_handle     handle,
+        /* Target bus number on which to make the change. */
+        cy_as_bus_number_t      bus,
+        /* Clock source setting (can be 0x03, 0x01 or 0x11). */
+        uint8_t                 clk_source,
+        /* Factor by which to divide the source clock. The caller
+           should make sure that the effective clock speed is
+           greater than or equal to 5 MHz. */
+        uint8_t                 clk_divider,
+        /* Callback function to call on completion. */
+        cy_as_function_callback cb,
+        /* Client data to send to the callback. */
+        uint32_t                client
+        );
 
 /* For supporting deprecated functions */
 #include "cyasstorage_dep.h"

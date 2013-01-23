@@ -163,8 +163,9 @@ static struct ir_raw_handler sony_handler = {
 static int __init ir_sony_decode_init(void)
 {
 	ir_raw_handler_register(&sony_handler);
-
+#ifndef PRODUCT_SHIP
 	printk(KERN_INFO "IR Sony protocol handler initialized\n");
+#endif	
 	return 0;
 }
 

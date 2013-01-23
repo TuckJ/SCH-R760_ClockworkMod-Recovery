@@ -51,6 +51,17 @@ DECLARE_MODEM_INIT(cbp71);
 DECLARE_MODEM_INIT_DUMMY(cbp71)
 #endif
 
+#ifdef CONFIG_LTE_MODEM_CMC220
+DECLARE_MODEM_INIT(cmc220);
+#else
+DECLARE_MODEM_INIT_DUMMY(cmc220)
+#endif
+
+#ifdef CONFIG_CDMA_MODEM_QSC6085
+DECLARE_MODEM_INIT(qsc6085);
+#else
+DECLARE_MODEM_INIT_DUMMY(qsc6085)
+#endif
 /* link device support */
 #ifdef CONFIG_UMTS_LINK_MIPI
 DECLARE_LINK_INIT(mipi);
@@ -58,13 +69,13 @@ DECLARE_LINK_INIT(mipi);
 DECLARE_LINK_INIT_DUMMY(mipi)
 #endif
 
-#ifdef CONFIG_CDMA_LINK_DPRAM
+#ifdef CONFIG_LINK_DEVICE_DPRAM
 DECLARE_LINK_INIT(dpram);
 #else
 DECLARE_LINK_INIT_DUMMY(dpram)
 #endif
 
-#ifdef CONFIG_LTE_LINK_USB
+#ifdef CONFIG_LINK_DEVICE_USB
 DECLARE_LINK_INIT(usb);
 #else
 DECLARE_LINK_INIT_DUMMY(usb)
@@ -87,6 +98,8 @@ modem_init_call modem_init_func[] = {
 	MODEM_INIT_CALL(xmm6260),
 	MODEM_INIT_CALL(cbp71),
 	MODEM_INIT_CALL(cmc221),
+	MODEM_INIT_CALL(cmc220),
+	MODEM_INIT_CALL(qsc6085),
 };
 
 typedef struct link_device *(*link_init_call)(struct platform_device *);
@@ -116,4 +129,3 @@ static struct link_device *call_link_init_func(struct platform_device *pdev,
 }
 
 #endif
-

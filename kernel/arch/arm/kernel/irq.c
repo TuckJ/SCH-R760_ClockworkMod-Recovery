@@ -42,8 +42,6 @@
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 
-#include <mach/sec_addon.h>
-
 /*
  * No architecture-specific irq_finish function defined in arm/arch/irqs.h.
  */
@@ -52,8 +50,6 @@
 #endif
 
 unsigned long irq_err_count;
-
-ATOMIC_NOTIFIER_HEAD(touch_watchdog_notifier_head);
 
 int arch_show_interrupts(struct seq_file *p, int prec)
 {
@@ -98,7 +94,6 @@ asm_do_IRQ(unsigned int irq, struct pt_regs *regs)
 	irq_finish(irq);
 
 	irq_exit();
-	sec_debug_irq_last_exit_log();
 	set_irq_regs(old_regs);
 }
 
@@ -182,8 +177,11 @@ void migrate_irqs(void)
 		} while (0);
 		raw_spin_unlock(&desc->lock);
 
-		if (affinity_broken && printk_ratelimit())
+		if (affinity_broken && printk_ratelimit()){
+#ifndef PRODUCT_SHIP
 			pr_warning("IRQ%u no longer affine to CPU%u\n", i, cpu);
+#endif               
+		}
 	}
 
 	local_irq_restore(flags);

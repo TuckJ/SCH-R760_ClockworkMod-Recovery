@@ -24,9 +24,13 @@
 #include <linux/android_pmem.h>
 #include <linux/mempolicy.h>
 #include <linux/sched.h>
+#include <linux/vmalloc.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
+#if defined(CONFIG_S5P_MEM_CMA)
+#include <linux/cma.h>
+#endif
 
 #define PMEM_MAX_DEVICES 10
 #define PMEM_MAX_ORDER 128
@@ -337,7 +341,7 @@ static int pmem_open(struct inode *inode, struct file *file)
 	DLOG("current %u file %p(%d)\n", current->pid, file, file_count(file));
 	/* setup file->private_data to indicate its unmapped */
 	/*  you can only open a pmem device one time */
-	if (file->private_data != NULL)
+	if (file->private_data != NULL && file_count(file) != 1)
 		return -1;
 	data = kmalloc(sizeof(struct pmem_data), GFP_KERNEL);
 	if (!data) {
@@ -802,7 +806,16 @@ void flush_pmem_file(struct file *file, unsigned long offset, unsigned long len)
 	vaddr = pmem_start_vaddr(id, data);
 	/* if this isn't a submmapped file, flush the whole thing */
 	if (unlikely(!(data->flags & PMEM_FLAGS_CONNECTED))) {
-		dmac_flush_range(vaddr, vaddr + pmem_len(id, data));
+		if (pmem_len(id, data) >= SZ_1M) {
+			flush_all_cpu_caches();
+			outer_flush_all();
+		} else if (pmem_len(id, data) >= SZ_64K) {
+			flush_all_cpu_caches();
+			outer_flush_range(virt_to_phys(vaddr), virt_to_phys(vaddr + pmem_len(id, data)));
+		} else {
+			dmac_flush_range(vaddr, vaddr + pmem_len(id, data));
+			outer_flush_range(virt_to_phys(vaddr), virt_to_phys(vaddr + pmem_len(id, data)));
+		}
 		goto end;
 	}
 	/* otherwise, flush the region of the file we are drawing */
@@ -813,7 +826,17 @@ void flush_pmem_file(struct file *file, unsigned long offset, unsigned long len)
 			region_node->region.len))) {
 			flush_start = vaddr + region_node->region.offset;
 			flush_end = flush_start + region_node->region.len;
-			dmac_flush_range(flush_start, flush_end);
+
+			if (pmem_len(id, data) >= SZ_1M) {
+				flush_all_cpu_caches();
+				outer_flush_all();
+			} else if (pmem_len(id, data) >= SZ_64K) {
+				flush_all_cpu_caches();
+				outer_flush_range(virt_to_phys(flush_start), virt_to_phys(flush_end));
+			} else {
+				dmac_flush_range(flush_start, flush_end);
+				outer_flush_range(virt_to_phys(flush_start), virt_to_phys(flush_end));
+			}
 			break;
 		}
 	}
@@ -902,7 +925,6 @@ lock_mm:
 	 * once */
 	if (PMEM_IS_SUBMAP(data) && !mm) {
 		pmem_unlock_data_and_mm(data, mm);
-		up_write(&data->sem);
 		goto lock_mm;
 	}
 	/* now check that vma.mm is still there, it could have been
@@ -1087,8 +1109,10 @@ static long pmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 				region.offset = pmem_start_addr(id, data);
 				region.len = pmem_len(id, data);
 			}
-			printk(KERN_INFO "pmem: request for physical address of pmem region "
+			#ifndef PRODUCT_SHIP
+			printk(KERN_DEBUG "pmem: request for physical address of pmem region "
 					"from process %d.\n", current->pid);
+			#endif		
 			if (copy_to_user((void __user *)arg, &region,
 						sizeof(struct pmem_region)))
 				return -EFAULT;
@@ -1232,7 +1256,14 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 	int err = 0;
 	int i, index = 0;
 	int id = id_count;
+	struct page **pages;
+	int nr_pages;
+	int prot;
 	id_count++;
+
+#if defined(CONFIG_S5P_MEM_CMA)
+	pdata->start = cma_alloc_from(pdata->name, pdata->size, 0);
+#endif
 
 	pmem[id].no_allocator = pdata->no_allocator;
 	pmem[id].cached = pdata->cached;
@@ -1271,16 +1302,24 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 		}
 	}
 
+	nr_pages = pmem[id].size >> PAGE_SHIFT;
+	pages = kmalloc(nr_pages * sizeof(*pages), GFP_KERNEL);
+	if (!pages)
+		goto err_no_mem_for_pages;
+
+	for (i = 0; i < nr_pages; i++)
+		pages[i] = phys_to_page(pmem[id].base + i * PAGE_SIZE);
+
 	if (pmem[id].cached)
-		pmem[id].vbase = ioremap_cached(pmem[id].base,
-						pmem[id].size);
-#ifdef ioremap_ext_buffered
+		prot = PAGE_KERNEL;
 	else if (pmem[id].buffered)
-		pmem[id].vbase = ioremap_ext_buffered(pmem[id].base,
-						      pmem[id].size);
-#endif
+		prot = pgprot_writecombine(PAGE_KERNEL);
 	else
-		pmem[id].vbase = ioremap(pmem[id].base, pmem[id].size);
+		prot = pgprot_noncached(PAGE_KERNEL);
+
+	pmem[id].vbase = vmap(pages, nr_pages, VM_MAP, prot);
+
+	kfree(pages);
 
 	if (pmem[id].vbase == 0)
 		goto error_cant_remap;
@@ -1295,6 +1334,7 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 #endif
 	return 0;
 error_cant_remap:
+err_no_mem_for_pages:
 	kfree(pmem[id].bitmap);
 err_no_mem_for_metadata:
 	misc_deregister(&pmem[id].dev);
@@ -1319,6 +1359,9 @@ static int pmem_remove(struct platform_device *pdev)
 {
 	int id = pdev->id;
 	__free_page(pfn_to_page(pmem[id].garbage_pfn));
+#if defined(CONFIG_S5P_MEM_CMA)
+	cma_free(((struct android_pmem_platform_data *)(pdev->dev.platform_data))->start);
+#endif
 	misc_deregister(&pmem[id].dev);
 	return 0;
 }

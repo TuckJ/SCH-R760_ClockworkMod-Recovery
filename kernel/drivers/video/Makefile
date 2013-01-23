@@ -117,8 +117,18 @@ obj-$(CONFIG_FB_BROADSHEET)       += broadsheetfb.o
 obj-$(CONFIG_FB_S1D13XXX)	  += s1d13xxxfb.o
 obj-$(CONFIG_FB_SH7760)		  += sh7760fb.o
 obj-$(CONFIG_FB_IMX)              += imxfb.o
+obj-$(CONFIG_FB_MIPI_DSIM)	  += s5p_mipi_dsi.o s5p_mipi_dsi_lowlevel.o
 obj-$(CONFIG_FB_S3C)		  += s3c-fb.o
+obj-$(CONFIG_S5P_DP)		  += s5p-dp.o s5p-dp-reg.o
 obj-$(CONFIG_FB_S3C2410)	  += s3c2410fb.o
+obj-$(CONFIG_FB_S5P)              += samsung/
+ifeq ($(CONFIG_NAPLES_COMMON),y)
+obj-$(CONFIG_S5P_MIPI_DSI2)	  += samsung/dsim2_tmp/
+else
+obj-$(CONFIG_S5P_MIPI_DSI2)	  += samsung/dsim2/
+endif
+obj-$(CONFIG_FB_S5P_EXTDSP)       += samsung_extdisp/
+obj-$(CONFIG_FIMD_EXT_SUPPORT)    += samsung/extension/
 obj-$(CONFIG_FB_FSL_DIU)	  += fsl-diu-fb.o
 obj-$(CONFIG_FB_COBALT)           += cobalt_lcdfb.o
 obj-$(CONFIG_FB_PNX4008_DUM)	  += pnx4008/
@@ -134,7 +144,6 @@ obj-$(CONFIG_FB_SH_MOBILE_MERAM)  += sh_mobile_meram.o
 obj-$(CONFIG_FB_SH_MOBILE_LCDC)	  += sh_mobile_lcdcfb.o
 obj-$(CONFIG_FB_OMAP)             += omap/
 obj-y                             += omap2/
-obj-$(CONFIG_HDMI_TI_4XXX_IP)     += hdmi_ti_4xxx_ip.o
 obj-$(CONFIG_XEN_FBDEV_FRONTEND)  += xen-fbfront.o
 obj-$(CONFIG_FB_CARMINE)          += carminefb.o
 obj-$(CONFIG_FB_MB862XX)	  += mb862xx/
@@ -158,10 +167,12 @@ obj-$(CONFIG_FB_MX3)		  += mx3fb.o
 obj-$(CONFIG_FB_DA8XX)		  += da8xx-fb.o
 obj-$(CONFIG_FB_MXS)		  += mxsfb.o
 
-obj-$(CONFIG_SII9234)  += sii9234.o
-
 # the test framebuffer is last
 obj-$(CONFIG_FB_VIRTUAL)          += vfb.o
 
 #video output switch sysfs driver
 obj-$(CONFIG_VIDEO_OUTPUT_CONTROL) += output.o
+
+ifeq ($(CONFIG_VITHAR),y)
+    EXTRA_CFLAGS += -Idrivers/gpu/vithar
+endif
