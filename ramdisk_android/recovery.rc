@@ -5,21 +5,19 @@ on init
     export PATH /sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin
     export ANDROID_ROOT /system
     export ANDROID_DATA /data
-    export ANDROID_CACHE /cache
-    export SECONDARY_STORAGE /emmc
     export EXTERNAL_STORAGE /sdcard
 
-    symlink /system/etc /etc
+    #symlink /system/etc /etc
 
-    mkdir /emmc
     mkdir /sdcard
-    mkdir /usbdisk
+    mkdir /sdcard1
     mkdir /system
     mkdir /data
     mkdir /cache
-    mkdir /preload
+    mkdir /preload    
+    mkdir /tmp
     mkdir /mnt 0775 root root
-    mount /tmp /tmp tmpfs
+    mount /tmp /tmp tmpfs   
 
 on fs
     mount ext4 /dev/block/mmcblk0p9 /system noatime wait
